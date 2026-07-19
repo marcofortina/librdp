@@ -36,6 +36,19 @@ int rdp_socket_set_nonblocking(int fd, int enabled)
     return fcntl(fd, F_SETFL, flags);
 }
 
+int rdp_socket_get_nonblocking(int fd, int* enabled)
+{
+    int flags = 0;
+
+    if (fd < 0 || !enabled)
+        return -1;
+    flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+        return -1;
+    *enabled = (flags & O_NONBLOCK) != 0;
+    return 0;
+}
+
 int rdp_socket_set_nodelay(int fd)
 {
     int enabled = 1;

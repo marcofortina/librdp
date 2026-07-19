@@ -34,6 +34,7 @@ typedef struct x509_st X509;
 typedef struct rdp_transport_tls_config
 {
     const char* host;
+    int timeout_ms;
     int use_system_store;
     X509* trust_anchor;
     librdp_tls_policy_mode policy_mode;
@@ -80,8 +81,20 @@ librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t le
 librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t length, size_t* read_len);
 librdp_status rdp_transport_write(rdp_transport* transport, const void* data, size_t length, size_t* written_len);
 librdp_status rdp_transport_read_exact(rdp_transport* transport, void* data, size_t length);
+librdp_status rdp_transport_deadline_create(int timeout_ms, uint64_t* deadline_ns);
+librdp_status rdp_transport_read_exact_until(rdp_transport* transport,
+                                             void* data,
+                                             size_t length,
+                                             uint64_t deadline_ns);
+librdp_status rdp_transport_read_exact_timeout(rdp_transport* transport,
+                                               void* data,
+                                               size_t length,
+                                               int timeout_ms);
 librdp_status rdp_transport_write_all(rdp_transport* transport, const void* data, size_t length);
 librdp_status rdp_transport_read_tpkt(rdp_transport* transport, rdp_buffer* packet);
+librdp_status rdp_transport_read_tpkt_timeout(rdp_transport* transport,
+                                              rdp_buffer* packet,
+                                              int timeout_ms);
 void rdp_transport_close(rdp_transport* transport);
 
 #endif

@@ -24,6 +24,11 @@ static int run_settings(void)
     return test_settings_surface_input_session();
 }
 
+static int run_timeouts(void)
+{
+    return test_connect_timeout();
+}
+
 static int run_features(void)
 {
     if (test_optional_feature_runtime_paths() != 0 || test_feature_runtime_gates() != 0)
@@ -140,6 +145,8 @@ int test_client_core_named(const char* name)
         return 2;
     if (strcmp(name, "settings") == 0)
         return run_settings();
+    if (strcmp(name, "timeouts") == 0)
+        return run_timeouts();
     if (strcmp(name, "features") == 0)
         return run_features();
     if (strcmp(name, "channels") == 0)

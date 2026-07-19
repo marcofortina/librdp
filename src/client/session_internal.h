@@ -88,6 +88,7 @@ typedef struct rdp_session_usb_worker rdp_session_usb_worker;
 #endif
 
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
+#define RDP_SESSION_HANDSHAKE_TIMEOUT_MS 5000
 #define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
 #define RDP_SESSION_MAX_DYNAMIC_MESSAGE (64u * 1024u * 1024u)
 #define RDP_SESSION_ECHO_MAX_TIMEOUT_MS 600000u

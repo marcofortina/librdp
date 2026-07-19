@@ -330,11 +330,12 @@ librdp_status rdp_session_send_clipboard_packet(librdp_session* session,
 }
 
 
-librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
-                                              rdp_buffer* packet,
-                                              const uint8_t** pdu,
-                                              size_t* pdu_len,
-                                              const char* event)
+static librdp_status rdp_session_read_mcs_pdu_internal(librdp_session* session,
+                                                       rdp_buffer* packet,
+                                                       const uint8_t** pdu,
+                                                       size_t* pdu_len,
+                                                       const char* event,
+                                                       int timeout_ms)
 {
     rdp_tpkt parsed;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -342,7 +343,9 @@ librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
     if (!session || !packet || !pdu || !pdu_len || !event)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    status = rdp_transport_read_tpkt(&session->transport, packet);
+    status = timeout_ms >= 0 ?
+                 rdp_transport_read_tpkt_timeout(&session->transport, packet, timeout_ms) :
+                 rdp_transport_read_tpkt(&session->transport, packet);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (packet->length > session->limits.pdu_buffer_bytes)
@@ -357,6 +360,37 @@ librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
     if (status != LIBRDP_STATUS_OK)
         return status;
     return rdp_x224_parse_data(parsed.payload, parsed.payload_len, pdu, pdu_len);
+}
+
+librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
+                                       rdp_buffer* packet,
+                                       const uint8_t** pdu,
+                                       size_t* pdu_len,
+                                       const char* event)
+{
+    return rdp_session_read_mcs_pdu_internal(session,
+                                             packet,
+                                             pdu,
+                                             pdu_len,
+                                             event,
+                                             -1);
+}
+
+librdp_status rdp_session_read_mcs_pdu_timeout(librdp_session* session,
+                                               rdp_buffer* packet,
+                                               const uint8_t** pdu,
+                                               size_t* pdu_len,
+                                               const char* event,
+                                               int timeout_ms)
+{
+    if (timeout_ms < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_session_read_mcs_pdu_internal(session,
+                                             packet,
+                                             pdu,
+                                             pdu_len,
+                                             event,
+                                             timeout_ms);
 }
 
 
@@ -432,7 +466,7 @@ librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_b
     size_t header_len = 0;
     size_t content_len = 0;
     size_t i = 0;
-    short revents = 0;
+    uint64_t deadline_ns = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !packet || timeout_ms < 0)
@@ -441,13 +475,11 @@ librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_b
     rdp_buffer_free(packet);
     rdp_buffer_init(packet);
 
-    status = rdp_transport_wait(&session->transport, timeout_ms, POLLIN, &revents);
+    status = rdp_transport_deadline_create(timeout_ms, &deadline_ns);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if ((revents & POLLIN) == 0)
-        return LIBRDP_STATUS_TIMEOUT;
 
-    status = rdp_transport_read_exact(&session->transport, header, 2);
+    status = rdp_transport_read_exact_until(&session->transport, header, 2, deadline_ns);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (header[0] != 0x30)
@@ -463,7 +495,10 @@ librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_b
         uint8_t count = (uint8_t)(first_len & 0x7fu);
         if (count == 0 || count > 4)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        status = rdp_transport_read_exact(&session->transport, header + 2, count);
+        status = rdp_transport_read_exact_until(&session->transport,
+                                                header + 2,
+                                                count,
+                                                deadline_ns);
         if (status != LIBRDP_STATUS_OK)
             return status;
         header_len += count;
@@ -479,7 +514,10 @@ librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_b
     if (status != LIBRDP_STATUS_OK)
         return status;
     packet->length = header_len + content_len;
-    return rdp_transport_read_exact(&session->transport, packet->data + header_len, content_len);
+    return rdp_transport_read_exact_until(&session->transport,
+                                          packet->data + header_len,
+                                          content_len,
+                                          deadline_ns);
 }
 
 librdp_status rdp_session_apply_bitmap_update(librdp_session* session, const rdp_bitmap_update* update)

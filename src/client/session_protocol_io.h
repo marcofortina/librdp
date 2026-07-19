@@ -56,6 +56,12 @@ librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
                                        const uint8_t** pdu,
                                        size_t* pdu_len,
                                        const char* event);
+librdp_status rdp_session_read_mcs_pdu_timeout(librdp_session* session,
+                                               rdp_buffer* packet,
+                                               const uint8_t** pdu,
+                                               size_t* pdu_len,
+                                               const char* event,
+                                               int timeout_ms);
 librdp_status rdp_session_read_fastpath_packet(librdp_session* session, rdp_buffer* packet);
 librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_buffer* packet, int timeout_ms);
 librdp_status rdp_session_apply_bitmap_update(librdp_session* session, const rdp_bitmap_update* update);

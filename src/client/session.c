@@ -510,7 +510,12 @@ static librdp_status rdp_session_join_mcs_channel(librdp_session* session,
 
     rdp_buffer_free(reply);
     rdp_buffer_init(reply);
-    status = rdp_session_read_mcs_pdu(session, reply, &pdu, &pdu_len, "mcs.channel_join.confirm");
+    status = rdp_session_read_mcs_pdu_timeout(session,
+                                              reply,
+                                              &pdu,
+                                              &pdu_len,
+                                              "mcs.channel_join.confirm",
+                                              RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
     if (status != LIBRDP_STATUS_OK)
         return status;
     status = rdp_mcs_parse_channel_join_confirm(pdu, pdu_len, &confirm);
@@ -3348,7 +3353,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         status = rdp_transport_connect(&session->transport,
                                        librdp_settings_target(session->settings),
                                        librdp_settings_port(session->settings),
-                                       5000);
+                                       RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
     if (status == LIBRDP_STATUS_OK)
         rdp_session_transport_cancel_arm(session);
     if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
@@ -3387,9 +3392,19 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (status != LIBRDP_STATUS_OK)
         goto fail;
 
-    status = rdp_transport_read_tpkt(&session->transport, &reply);
+    status = rdp_transport_read_tpkt_timeout(&session->transport,
+                                             &reply,
+                                             RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
     if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_session_set_last_error(session,
+                                   status,
+                                   status == LIBRDP_STATUS_IO_ERROR ? errno : 0,
+                                   LIBRDP_ERROR_COMPONENT_TRANSPORT,
+                                   "x224.negotiation.read",
+                                   "x224 negotiation response failed");
         goto fail;
+    }
     rdp_trace_hexdump("x224.negotiation.response",
                       RDP_TRACE_SENSITIVITY_HEADER,
                       reply.data,
@@ -3441,6 +3456,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         if (status != LIBRDP_STATUS_OK)
             goto fail;
         tls_config.host = librdp_settings_target(session->settings);
+        tls_config.timeout_ms = RDP_SESSION_HANDSHAKE_TIMEOUT_MS;
         tls_config.use_system_store = tls_policy.use_system_store;
         tls_config.policy_mode = tls_policy.mode;
         tls_config.pinned_sha256 = tls_policy.pinned_sha256;
@@ -3531,7 +3547,9 @@ librdp_status librdp_session_connect(librdp_session* session)
             status = rdp_transport_write_all(&session->transport, credssp_request.data, credssp_request.length);
         }
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_session_read_credssp_ts_request(session, &credssp_reply, 5000);
+            status = rdp_session_read_credssp_ts_request(session,
+                                                         &credssp_reply,
+                                                         RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_credssp_parse_ts_request(credssp_reply.data, credssp_reply.length, &ts_response);
         if (status == LIBRDP_STATUS_OK)
@@ -3621,7 +3639,9 @@ librdp_status librdp_session_connect(librdp_session* session)
                                                  credssp_request.length);
             }
             if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_read_credssp_ts_request(session, &credssp_reply, 5000);
+                status = rdp_session_read_credssp_ts_request(session,
+                                                             &credssp_reply,
+                                                             RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
             if (status == LIBRDP_STATUS_OK)
                 status = rdp_credssp_parse_ts_request(credssp_reply.data, credssp_reply.length, &pub_key_response);
             if (status == LIBRDP_STATUS_OK)
@@ -3780,7 +3800,12 @@ librdp_status librdp_session_connect(librdp_session* session)
 
     rdp_buffer_free(&reply);
     rdp_buffer_init(&reply);
-    status = rdp_session_read_mcs_pdu(session, &reply, &mcs_pdu, &mcs_pdu_len, "mcs.connect.response");
+    status = rdp_session_read_mcs_pdu_timeout(session,
+                                              &reply,
+                                              &mcs_pdu,
+                                              &mcs_pdu_len,
+                                              "mcs.connect.response",
+                                              RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     status = rdp_mcs_parse_connect_response(mcs_pdu, mcs_pdu_len, &mcs_response);
@@ -3978,7 +4003,12 @@ librdp_status librdp_session_connect(librdp_session* session)
 
     rdp_buffer_free(&reply);
     rdp_buffer_init(&reply);
-    status = rdp_session_read_mcs_pdu(session, &reply, &mcs_pdu, &mcs_pdu_len, "mcs.attach_user.confirm");
+    status = rdp_session_read_mcs_pdu_timeout(session,
+                                              &reply,
+                                              &mcs_pdu,
+                                              &mcs_pdu_len,
+                                              "mcs.attach_user.confirm",
+                                              RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     status = rdp_mcs_parse_attach_user_confirm(mcs_pdu, mcs_pdu_len, &attach_confirm);

@@ -1054,6 +1054,34 @@ out:
     return ok;
 }
 
+/*
+ * A peer that accepts TCP but never speaks TLS must not block the caller.
+ * The timeout path also restores the descriptor mode expected by later plain
+ * transport cleanup.
+ */
+static int test_tls_handshake_timeout(void)
+{
+    int pair[2] = {-1, -1};
+    int nonblocking = 1;
+    rdp_transport transport;
+    rdp_transport_tls_config config;
+
+    rdp_transport_init(&transport);
+    memset(&config, 0, sizeof(config));
+    config.host = "localhost";
+    config.timeout_ms = 25;
+    config.policy_mode = LIBRDP_TLS_POLICY_INSECURE_LAB;
+    TCHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    rdp_transport_attach_fd(&transport, pair[0], 1);
+    pair[0] = -1;
+    TCHECK(rdp_transport_start_tls_with_config(&transport, &config) == LIBRDP_STATUS_TIMEOUT);
+    TCHECK(rdp_socket_get_nonblocking(transport.fd, &nonblocking) == 0);
+    TCHECK(nonblocking == 0);
+    rdp_transport_close(&transport);
+    close(pair[1]);
+    return 0;
+}
+
 static int run_tls_client_case(EVP_PKEY* key,
                                X509* cert,
                                X509* trust_anchor,
@@ -1786,6 +1814,7 @@ int test_transport(void)
     rdp_transport transport;
     char data[8];
     size_t got = 0;
+    int nonblocking = 0;
     rdp_buffer packet;
     rdp_buffer wire;
     rdp_buffer tls_public_key;
@@ -1808,7 +1837,12 @@ int test_transport(void)
     TCHECK(rdp_socket_close(-1) == 0);
     TCHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
     TCHECK(rdp_socket_set_nonblocking(pair[0], 1) == 0);
+    TCHECK(rdp_socket_get_nonblocking(pair[0], &nonblocking) == 0);
+    TCHECK(nonblocking == 1);
     TCHECK(rdp_socket_set_nonblocking(pair[0], 0) == 0);
+    TCHECK(rdp_socket_get_nonblocking(pair[0], &nonblocking) == 0);
+    TCHECK(nonblocking == 0);
+    TCHECK(rdp_socket_get_nonblocking(pair[0], NULL) != 0);
     TCHECK(rdp_socket_close(pair[0]) == 0);
     TCHECK(rdp_socket_close(pair[1]) == 0);
     pair[0] = -1;
@@ -1840,6 +1874,9 @@ int test_transport(void)
     TCHECK(got == 2 && memcmp(data, "ab", 2) == 0);
     TCHECK(rdp_transport_read_exact(&transport, data, 3) == LIBRDP_STATUS_OK);
     TCHECK(memcmp(data, "abc", 3) == 0);
+    TCHECK(rdp_transport_read_exact_timeout(&transport, data, 1, 25) == LIBRDP_STATUS_TIMEOUT);
+    TCHECK(rdp_socket_get_nonblocking(transport.fd, &nonblocking) == 0);
+    TCHECK(nonblocking == 0);
 
     TCHECK(rdp_transport_write(&transport, "xy", 2, &got) == LIBRDP_STATUS_OK);
     TCHECK(got == 2);
@@ -1848,7 +1885,7 @@ int test_transport(void)
 
     TCHECK(rdp_tpkt_write(&wire, payload, sizeof(payload)) == LIBRDP_STATUS_OK);
     TCHECK(write(pair[1], wire.data, wire.length) == (ssize_t)wire.length);
-    TCHECK(rdp_transport_read_tpkt(&transport, &packet) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_read_tpkt_timeout(&transport, &packet, 1000) == LIBRDP_STATUS_OK);
     TCHECK(packet.length == wire.length);
     TCHECK(memcmp(packet.data, wire.data, wire.length) == 0);
 
@@ -1862,6 +1899,7 @@ int test_transport(void)
     rdp_transport_close(&transport);
 
     rdp_transport_init(&transport);
+    TCHECK(test_tls_handshake_timeout() == 0);
     TCHECK(make_test_ca_certificate(&ca_key, &ca_cert));
     TCHECK(make_test_server_certificate(&server_key,
                                         &server_cert,

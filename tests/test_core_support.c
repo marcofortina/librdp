@@ -2729,7 +2729,7 @@ int start_stalling_handshake_server(uint16_t* port, pid_t* child_pid)
         int client = -1;
         ssize_t got = 0;
 
-        alarm(5);
+        alarm(8);
         client = accept(listener, NULL, NULL);
         close(listener);
         if (client < 0)

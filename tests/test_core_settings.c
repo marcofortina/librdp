@@ -1791,6 +1791,51 @@ int test_connect_cancellation(void)
 }
 
 /*
+ * Coverage: verifies that a peer withholding its first X.224 response reaches
+ * the transport deadline, records the exact failure boundary, and closes the
+ * connection without relying on peer EOF.
+ */
+int test_connect_timeout(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_error_info error_info;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+
+    CHECK(start_stalling_handshake_server(&test_port, &server_pid));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.trace_id = "connect-timeout";
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) == LIBRDP_STATUS_OK);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_TIMEOUT);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_FAILED);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(session), &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_TIMEOUT);
+    CHECK(error_info.os_errno == 0);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_TRANSPORT);
+    CHECK(error_info.phase != NULL && strcmp(error_info.phase, "x224.negotiation.read") == 0);
+    CHECK(error_info.trace_id != NULL && strcmp(error_info.trace_id, "connect-timeout") == 0);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates reconnect success against a deterministic loopback peer
  * that accepts two handshakes on the same listener. It catches stale state,
  * missed activation transitions, and reconnect metrics drift without requiring

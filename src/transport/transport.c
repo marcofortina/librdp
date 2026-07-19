@@ -38,7 +38,10 @@
 #include <poll.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
+
+#define RDP_TRANSPORT_TLS_DEFAULT_TIMEOUT_MS 5000
 
 void rdp_transport_init(rdp_transport* transport)
 {
@@ -118,6 +121,95 @@ static librdp_status rdp_transport_tls_status(SSL* tls, int rc)
     if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE)
         return LIBRDP_STATUS_AGAIN;
     return LIBRDP_STATUS_IO_ERROR;
+}
+
+static uint64_t rdp_transport_now_ns(void)
+{
+    struct timespec value;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0)
+        return 0;
+    return ((uint64_t)value.tv_sec * 1000000000u) + (uint64_t)value.tv_nsec;
+}
+
+librdp_status rdp_transport_deadline_create(int timeout_ms, uint64_t* deadline_ns)
+{
+    uint64_t now_ns = 0;
+    uint64_t interval_ns = 0;
+
+    if (timeout_ms < 0 || !deadline_ns)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    now_ns = rdp_transport_now_ns();
+    if (now_ns == 0)
+        return LIBRDP_STATUS_IO_ERROR;
+    interval_ns = (uint64_t)timeout_ms * 1000000u;
+    if (now_ns > UINT64_MAX - interval_ns)
+        return LIBRDP_STATUS_IO_ERROR;
+    *deadline_ns = now_ns + interval_ns;
+    return LIBRDP_STATUS_OK;
+}
+
+static int rdp_transport_deadline_remaining_ms(uint64_t deadline_ns)
+{
+    uint64_t now_ns = rdp_transport_now_ns();
+    uint64_t remaining_ns = 0;
+    uint64_t remaining_ms = 0;
+
+    if (now_ns == 0 || now_ns >= deadline_ns)
+        return 0;
+    remaining_ns = deadline_ns - now_ns;
+    remaining_ms = (remaining_ns + 999999u) / 1000000u;
+    return remaining_ms > (uint64_t)INT_MAX ? INT_MAX : (int)remaining_ms;
+}
+
+static librdp_status rdp_transport_begin_timed_io(rdp_transport* transport,
+                                                   int* changed_nonblocking)
+{
+    int nonblocking = 0;
+
+    if (!transport || !changed_nonblocking)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *changed_nonblocking = 0;
+    if (transport->backend_ops || transport->curl_active)
+        return LIBRDP_STATUS_OK;
+    if (transport->fd < 0 ||
+        rdp_socket_get_nonblocking(transport->fd, &nonblocking) != 0)
+        return LIBRDP_STATUS_IO_ERROR;
+    if (!nonblocking)
+    {
+        if (rdp_socket_set_nonblocking(transport->fd, 1) != 0)
+            return LIBRDP_STATUS_IO_ERROR;
+        *changed_nonblocking = 1;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_transport_end_timed_io(rdp_transport* transport,
+                                                 int changed_nonblocking,
+                                                 librdp_status status)
+{
+    if (changed_nonblocking &&
+        rdp_socket_set_nonblocking(transport->fd, 0) != 0 &&
+        status == LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_IO_ERROR;
+    return status;
+}
+
+static librdp_status rdp_transport_wait_until(rdp_transport* transport,
+                                              uint64_t deadline_ns,
+                                              short events)
+{
+    for (;;)
+    {
+        int remaining_ms = rdp_transport_deadline_remaining_ms(deadline_ns);
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (remaining_ms <= 0)
+            return LIBRDP_STATUS_TIMEOUT;
+        status = rdp_transport_wait(transport, remaining_ms, events, NULL);
+        if (status != LIBRDP_STATUS_AGAIN)
+            return status;
+    }
 }
 
 /*
@@ -358,12 +450,17 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
     SSL_CTX* context = NULL;
     SSL* tls = NULL;
     int rc = 0;
+    int changed_nonblocking = 0;
+    int timeout_ms = RDP_TRANSPORT_TLS_DEFAULT_TIMEOUT_MS;
+    uint64_t deadline_ns = 0;
     librdp_status status = LIBRDP_STATUS_OK;
     long verify_result = X509_V_OK;
 
     if (!transport || transport->fd < 0 || !config || !config->host || config->host[0] == '\0' ||
-        transport->tls_active)
+        config->timeout_ms < 0 || transport->tls_active)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (config->timeout_ms > 0)
+        timeout_ms = config->timeout_ms;
 
     rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.connect.start", "host=%s", config->host);
     context = SSL_CTX_new(TLS_client_method());
@@ -400,30 +497,38 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
         }
     }
 
-    rc = SSL_connect(tls);
-    if (rc != 1)
+    status = rdp_transport_begin_timed_io(transport, &changed_nonblocking);
+    if (status != LIBRDP_STATUS_OK)
+        goto handshake_failed;
+    status = rdp_transport_deadline_create(timeout_ms, &deadline_ns);
+    if (status != LIBRDP_STATUS_OK)
+        goto handshake_failed;
+    for (;;)
     {
-        verify_result = SSL_get_verify_result(tls);
-        status = rdp_transport_tls_verify_status(verify_result);
-        if (status == LIBRDP_STATUS_OK)
-        {
-            librdp_status io_status = rdp_transport_tls_status(tls, rc);
+        int tls_error = SSL_ERROR_NONE;
 
-            status = LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
-            if (io_status == LIBRDP_STATUS_CLOSED || io_status == LIBRDP_STATUS_AGAIN ||
-                io_status == LIBRDP_STATUS_IO_ERROR)
-                status = io_status == LIBRDP_STATUS_IO_ERROR ? LIBRDP_STATUS_TLS_HANDSHAKE_FAILED : io_status;
+        rc = SSL_connect(tls);
+        if (rc == 1)
+            break;
+        tls_error = SSL_get_error(tls, rc);
+        if (tls_error == SSL_ERROR_WANT_READ || tls_error == SSL_ERROR_WANT_WRITE)
+        {
+            status = rdp_transport_wait_until(transport,
+                                              deadline_ns,
+                                              tls_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT);
+            if (status == LIBRDP_STATUS_OK)
+                continue;
         }
-        rdp_trace_event(RDP_TRACE_TRANSPORT,
-                        "transport.tls.connect.failed",
-                        "status=%s verify_result=%ld",
-                        librdp_status_string(status),
-                        verify_result);
-        SSL_free(tls);
-        SSL_CTX_free(context);
-        ERR_clear_error();
-        return status;
+        else if (tls_error == SSL_ERROR_ZERO_RETURN)
+            status = LIBRDP_STATUS_CLOSED;
+        else
+            status = LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+        goto handshake_failed;
     }
+    status = rdp_transport_end_timed_io(transport, changed_nonblocking, LIBRDP_STATUS_OK);
+    changed_nonblocking = 0;
+    if (status != LIBRDP_STATUS_OK)
+        goto handshake_failed;
     verify_result = SSL_get_verify_result(tls);
     status = rdp_transport_tls_evaluate_certificate(tls, config, verify_result);
     if (status != LIBRDP_STATUS_OK)
@@ -448,6 +553,28 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
                     SSL_get_version(tls),
                     SSL_get_cipher(tls));
     return LIBRDP_STATUS_OK;
+
+handshake_failed:
+    status = rdp_transport_end_timed_io(transport, changed_nonblocking, status);
+    verify_result = SSL_get_verify_result(tls);
+    if (status != LIBRDP_STATUS_TIMEOUT && status != LIBRDP_STATUS_CLOSED)
+    {
+        librdp_status verify_status = rdp_transport_tls_verify_status(verify_result);
+
+        if (verify_status != LIBRDP_STATUS_OK)
+            status = verify_status;
+        else if (status == LIBRDP_STATUS_IO_ERROR)
+            status = LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+    }
+    rdp_trace_event(RDP_TRACE_TRANSPORT,
+                    "transport.tls.connect.failed",
+                    "status=%s verify_result=%ld",
+                    librdp_status_string(status),
+                    verify_result);
+    SSL_free(tls);
+    SSL_CTX_free(context);
+    ERR_clear_error();
+    return status;
 }
 
 librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host)
@@ -456,6 +583,7 @@ librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host
 
     memset(&config, 0, sizeof(config));
     config.host = host;
+    config.timeout_ms = RDP_TRANSPORT_TLS_DEFAULT_TIMEOUT_MS;
     config.use_system_store = 1;
     config.policy_mode = LIBRDP_TLS_POLICY_STRICT;
     return rdp_transport_start_tls_with_config(transport, &config);
@@ -864,6 +992,65 @@ librdp_status rdp_transport_read_exact(rdp_transport* transport, void* data, siz
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_transport_read_exact_until(rdp_transport* transport,
+                                             void* data,
+                                             size_t length,
+                                             uint64_t deadline_ns)
+{
+    uint8_t* out = (uint8_t*)data;
+    size_t offset = 0;
+    int changed_nonblocking = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!transport || (!data && length > 0) || deadline_ns == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length == 0)
+        return LIBRDP_STATUS_OK;
+    status = rdp_transport_begin_timed_io(transport, &changed_nonblocking);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    while (offset < length)
+    {
+        size_t got = 0;
+
+        status = rdp_transport_read(transport, out + offset, length - offset, &got);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            if (got == 0)
+            {
+                status = LIBRDP_STATUS_CLOSED;
+                break;
+            }
+            offset += got;
+            continue;
+        }
+        if (status != LIBRDP_STATUS_AGAIN)
+            break;
+        status = rdp_transport_wait_until(transport, deadline_ns, POLLIN);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+    }
+    return rdp_transport_end_timed_io(transport, changed_nonblocking, status);
+}
+
+librdp_status rdp_transport_read_exact_timeout(rdp_transport* transport,
+                                               void* data,
+                                               size_t length,
+                                               int timeout_ms)
+{
+    uint64_t deadline_ns = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!transport || (!data && length > 0) || timeout_ms < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length == 0)
+        return LIBRDP_STATUS_OK;
+    status = rdp_transport_deadline_create(timeout_ms, &deadline_ns);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_transport_read_exact_until(transport, data, length, deadline_ns);
+}
+
 librdp_status rdp_transport_write_all(rdp_transport* transport, const void* data, size_t length)
 {
     const uint8_t* in = (const uint8_t*)data;
@@ -909,6 +1096,47 @@ librdp_status rdp_transport_read_tpkt(rdp_transport* transport, rdp_buffer* pack
         return status;
     packet->length = total;
     return rdp_transport_read_exact(transport, packet->data + 4, (size_t)total - 4u);
+}
+
+librdp_status rdp_transport_read_tpkt_timeout(rdp_transport* transport,
+                                              rdp_buffer* packet,
+                                              int timeout_ms)
+{
+    uint8_t header[4];
+    uint16_t total = 0;
+    uint64_t deadline_ns = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!transport || !packet || timeout_ms < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_free(packet);
+    rdp_buffer_init(packet);
+    status = rdp_transport_deadline_create(timeout_ms, &deadline_ns);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_transport_read_exact_until(transport, header, sizeof(header), deadline_ns);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    total = (uint16_t)(((uint16_t)header[2] << 8) | header[3]);
+    if (header[0] != 3 || header[1] != 0 || total < 4)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_buffer_append(packet, header, sizeof(header));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_reserve(packet, total);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    packet->length = total;
+    status = rdp_transport_read_exact_until(transport,
+                                            packet->data + 4,
+                                            (size_t)total - 4u,
+                                            deadline_ns);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(packet);
+        rdp_buffer_init(packet);
+    }
+    return status;
 }
 
 void rdp_transport_close(rdp_transport* transport)

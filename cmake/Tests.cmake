@@ -299,6 +299,7 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME common COMMAND test_common)
     add_test(NAME core COMMAND test_core)
     add_test(NAME core_settings_session_error_metrics COMMAND test_core settings)
+    add_test(NAME core_connect_timeout COMMAND test_core timeouts)
     add_test(NAME core_features COMMAND test_core features)
     add_test(NAME core_channels COMMAND test_core channels)
     add_test(NAME core_storage_devices COMMAND test_core storage)
@@ -382,6 +383,7 @@ if(LIBRDP_BUILD_TESTS)
     set_tests_properties(
         core
         core_settings_session_error_metrics
+        core_connect_timeout
         core_channels
         core_storage_devices
         core_graphics

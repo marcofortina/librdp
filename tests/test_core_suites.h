@@ -23,6 +23,7 @@ int test_pointer_decode(void);
 int test_settings_surface_input_session(void);
 int test_reconnect_policy(void);
 int test_connect_cancellation(void);
+int test_connect_timeout(void);
 int test_reconnect_success(void);
 int test_dynamic_channel_duplicate_create(void);
 int test_dynamic_channel_close_pending_fragment(void);
