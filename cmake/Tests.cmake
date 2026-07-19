@@ -243,6 +243,10 @@ if(LIBRDP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
     )
     target_link_libraries(test_server_client_smoke PRIVATE
+        "$<TARGET_FILE:librdp_server_common>"
+        "$<TARGET_FILE:librdp_viewer_common>"
+    )
+    add_dependencies(test_server_client_smoke
         librdp_server_common
         librdp_viewer_common
     )
