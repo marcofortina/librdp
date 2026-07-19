@@ -164,6 +164,9 @@ def property_entry(name: str, value: object) -> dict[str, str]:
 
 
 def application_backend(cache: dict[str, str]) -> str:
+    configured = cache.get("LIBRDP_NATIVE_APP_BACKEND")
+    if configured in {"cocoa", "x11", "none"}:
+        return configured
     if cache.get("CMAKE_SYSTEM_NAME") == "Darwin":
         return "cocoa"
     if cache.get("CMAKE_SYSTEM_NAME") in {

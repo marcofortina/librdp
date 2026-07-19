@@ -60,18 +60,26 @@ foreach(required IN ITEMS
         "librdp:cmake:LIBRDP_BUILD_VIEWER"
         "librdp:cmake:LIBRDP_BUILD_WORKSPACE"
         "librdp:application-backend"
-        "librdp:install:application-directory"
-        "librdp-admin"
-        "librdp-server"
-        "librdp-viewer"
-        "librdp-workspace")
+        "librdp:install:application-directory")
     string(FIND "${sbom_content}" "\"${required}\"" required_position)
     if(required_position EQUAL -1)
         message(FATAL_ERROR "SBOM is missing ${required}")
     endif()
 endforeach()
 
-if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|FreeBSD|OpenBSD|NetBSD|SunOS)$")
+foreach(application IN ITEMS ADMIN SERVER VIEWER WORKSPACE)
+    if(LIBRDP_TEST_BUILD_${application})
+        string(TOLOWER "${application}" application_name)
+        set(required "librdp-${application_name}")
+        string(FIND "${sbom_content}" "\"${required}\"" required_position)
+        if(required_position EQUAL -1)
+            message(FATAL_ERROR "SBOM is missing ${required}")
+        endif()
+    endif()
+endforeach()
+
+if(LIBRDP_TEST_BUILD_SERVER AND
+   LIBRDP_TEST_SYSTEM_NAME MATCHES "^(Linux|FreeBSD|OpenBSD|NetBSD|SunOS)$")
     foreach(required IN ITEMS
             "librdp:install:session-broker"
             "librdp:install:session-agent"

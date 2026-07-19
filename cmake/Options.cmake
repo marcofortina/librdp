@@ -40,6 +40,10 @@ elseif(LIBRDP_BUILD_APPLICATIONS)
 else()
     set(LIBRDP_NATIVE_APP_BACKEND none)
 endif()
+set(LIBRDP_NATIVE_APP_BACKEND
+    "${LIBRDP_NATIVE_APP_BACKEND}"
+    CACHE INTERNAL "Native application backend selected for this build"
+    FORCE)
 
 function(librdp_set_application_backend target backend)
     get_property(existing_backend
