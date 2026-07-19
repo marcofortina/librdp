@@ -1,7 +1,27 @@
 # Copyright (C) 2026 Marco Fortina
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-if(LIBRDP_BUILD_VIEWER AND NOT APPLE)
+if(LIBRDP_BUILD_TESTS OR LIBRDP_BUILD_VIEWER)
+    add_library(librdp_viewer_common STATIC
+        apps/viewer/client_callbacks.c
+        apps/viewer/client_credentials.c
+        apps/viewer/client_options.c
+        apps/viewer/client_providers.c
+        apps/viewer/client_runtime.c
+        apps/viewer/client_tls.c
+    )
+    target_include_directories(librdp_viewer_common PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(librdp_viewer_common PUBLIC librdp)
+    librdp_apply_system_definitions(librdp_viewer_common)
+    librdp_apply_warning_options(librdp_viewer_common)
+    librdp_apply_sanitizer_compile_options(librdp_viewer_common)
+    librdp_apply_sanitizer_link_options(librdp_viewer_common)
+endif()
+
+if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
     find_package(X11 REQUIRED COMPONENTS Xcursor Xfixes)
     if(NOT "${LIBRDP_WITH_XSHM}" STREQUAL "OFF")
         find_package(X11 QUIET COMPONENTS Xext)
@@ -38,6 +58,7 @@ if(LIBRDP_BUILD_VIEWER AND NOT APPLE)
         apps/viewer/x11_window.c
         apps/common/x11_keymap.c
     )
+    librdp_set_application_backend(librdp-viewer x11)
     target_include_directories(librdp-viewer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
@@ -46,7 +67,7 @@ if(LIBRDP_BUILD_VIEWER AND NOT APPLE)
         ${XKBCOMMON_INCLUDE_DIRS}
     )
     target_link_libraries(librdp-viewer PRIVATE
-        librdp_app_common
+        librdp_viewer_common
         Iconv::Iconv
         ${X11_LIBRARIES}
         X11::Xcursor
@@ -234,5 +255,82 @@ if(LIBRDP_BUILD_VIEWER AND NOT APPLE)
             add_test(NAME viewer_display COMMAND test_viewer_display)
             set_tests_properties(viewer_display PROPERTIES TIMEOUT 30)
         endif()
+    endif()
+endif()
+
+if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
+    enable_language(OBJC)
+    find_library(LIBRDP_VIEWER_COCOA_FRAMEWORK Cocoa REQUIRED)
+    find_library(LIBRDP_VIEWER_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+    find_library(LIBRDP_VIEWER_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
+    find_library(LIBRDP_VIEWER_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    find_library(LIBRDP_VIEWER_COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
+    find_library(LIBRDP_VIEWER_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
+    find_library(LIBRDP_VIEWER_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+    find_library(LIBRDP_VIEWER_IMAGEIO_FRAMEWORK ImageIO REQUIRED)
+    add_executable(librdp-viewer
+        apps/viewer/cocoa_cli.c
+        apps/viewer/cocoa_session_loop.c
+        apps/viewer/cocoa_main.m
+        apps/viewer/cocoa_media.m
+    )
+    librdp_set_application_backend(librdp-viewer cocoa)
+    target_include_directories(librdp-viewer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+    )
+    target_link_libraries(librdp-viewer PRIVATE
+        librdp_viewer_common
+        ${LIBRDP_VIEWER_COCOA_FRAMEWORK}
+        ${LIBRDP_VIEWER_AUDIOTOOLBOX_FRAMEWORK}
+        ${LIBRDP_VIEWER_AVFOUNDATION_FRAMEWORK}
+        ${LIBRDP_VIEWER_COREFOUNDATION_FRAMEWORK}
+        ${LIBRDP_VIEWER_COREGRAPHICS_FRAMEWORK}
+        ${LIBRDP_VIEWER_COREMEDIA_FRAMEWORK}
+        ${LIBRDP_VIEWER_COREVIDEO_FRAMEWORK}
+        ${LIBRDP_VIEWER_IMAGEIO_FRAMEWORK}
+    )
+    target_compile_options(librdp-viewer PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJC>:-fblocks>
+    )
+    librdp_apply_system_definitions(librdp-viewer)
+    librdp_apply_warning_options(librdp-viewer)
+    librdp_apply_sanitizer_compile_options(librdp-viewer)
+    librdp_apply_sanitizer_link_options(librdp-viewer)
+    install(TARGETS librdp-viewer
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+    if(LIBRDP_BUILD_TESTS)
+        add_executable(test_cocoa_media
+            tests/test_cocoa_media.m
+            apps/viewer/cocoa_cli.c
+            apps/viewer/cocoa_media.m
+        )
+        target_include_directories(test_cocoa_media PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+        )
+        target_link_libraries(test_cocoa_media PRIVATE
+            librdp_viewer_common
+            ${LIBRDP_VIEWER_COCOA_FRAMEWORK}
+            ${LIBRDP_VIEWER_AUDIOTOOLBOX_FRAMEWORK}
+            ${LIBRDP_VIEWER_AVFOUNDATION_FRAMEWORK}
+            ${LIBRDP_VIEWER_COREFOUNDATION_FRAMEWORK}
+            ${LIBRDP_VIEWER_COREGRAPHICS_FRAMEWORK}
+            ${LIBRDP_VIEWER_COREMEDIA_FRAMEWORK}
+            ${LIBRDP_VIEWER_COREVIDEO_FRAMEWORK}
+            ${LIBRDP_VIEWER_IMAGEIO_FRAMEWORK}
+        )
+        target_compile_options(test_cocoa_media PRIVATE
+            $<$<COMPILE_LANGUAGE:OBJC>:-fblocks>
+        )
+        librdp_apply_system_definitions(test_cocoa_media)
+        librdp_apply_warning_options(test_cocoa_media)
+        librdp_apply_sanitizer_compile_options(test_cocoa_media)
+        librdp_apply_sanitizer_link_options(test_cocoa_media)
+        add_test(NAME cocoa_media COMMAND test_cocoa_media)
+        set_tests_properties(cocoa_media PROPERTIES TIMEOUT 30)
+        add_test(NAME viewer_cli COMMAND librdp-viewer --help)
+        set_tests_properties(viewer_cli PROPERTIES TIMEOUT 30)
     endif()
 endif()

@@ -149,7 +149,7 @@ if(LIBRDP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(test_app_client PRIVATE librdp_app_common)
+    target_link_libraries(test_app_client PRIVATE librdp_viewer_common)
     librdp_apply_system_definitions(test_app_client)
     librdp_apply_warning_options(test_app_client)
     librdp_apply_sanitizer_compile_options(test_app_client)
@@ -162,7 +162,10 @@ if(LIBRDP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/workspace
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(test_app_policy PRIVATE librdp_app_common)
+    target_link_libraries(test_app_policy PRIVATE
+        librdp_admin_common
+        librdp_workspace_common
+    )
     librdp_apply_system_definitions(test_app_policy)
     if(LIBRDP_LIBXML2_FOUND)
         target_compile_definitions(test_app_policy PRIVATE
@@ -178,7 +181,7 @@ if(LIBRDP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(test_app_server PRIVATE librdp_app_common)
+    target_link_libraries(test_app_server PRIVATE librdp_server_common)
     librdp_apply_system_definitions(test_app_server)
     librdp_apply_warning_options(test_app_server)
     librdp_apply_sanitizer_compile_options(test_app_server)
@@ -189,7 +192,7 @@ if(LIBRDP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(test_app_server_drive PRIVATE librdp_app_common)
+    target_link_libraries(test_app_server_drive PRIVATE librdp_server_common)
     librdp_apply_system_definitions(test_app_server_drive)
     librdp_apply_warning_options(test_app_server_drive)
     librdp_apply_sanitizer_compile_options(test_app_server_drive)
@@ -204,7 +207,10 @@ if(LIBRDP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
     )
-    target_link_libraries(test_app_server_smoke PRIVATE librdp_app_common)
+    target_link_libraries(test_app_server_smoke PRIVATE
+        librdp_server_common
+        librdp_viewer_common
+    )
     librdp_configure_test_executable(test_app_server_smoke)
 
     add_executable(test_viewer_backends
@@ -236,7 +242,7 @@ if(LIBRDP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     librdp_apply_system_definitions(test_viewer_cli)
-    target_link_libraries(test_viewer_cli PRIVATE librdp_app_common)
+    target_link_libraries(test_viewer_cli PRIVATE librdp_viewer_common)
     librdp_apply_warning_options(test_viewer_cli)
     librdp_apply_sanitizer_compile_options(test_viewer_cli)
     librdp_apply_sanitizer_link_options(test_viewer_cli)
@@ -249,9 +255,41 @@ if(LIBRDP_BUILD_TESTS)
     librdp_apply_sanitizer_compile_options(test_abi_probe)
     librdp_apply_sanitizer_link_options(test_abi_probe)
 
-    add_custom_target(librdp_tests
-        DEPENDS test_common test_core test_protocol test_transport test_server test_interop_smoke test_optional_backend_probe test_app_client test_app_policy test_app_server test_app_server_drive test_app_server_smoke test_viewer_backends test_viewer_cli test_abi_probe
+    add_dependencies(librdp_tests
+        test_common
+        test_core
+        test_protocol
+        test_transport
+        test_server
+        test_interop_smoke
+        test_optional_backend_probe
+        test_app_client
+        test_app_policy
+        test_app_server
+        test_app_server_drive
+        test_app_server_smoke
+        test_viewer_backends
+        test_viewer_cli
+        test_abi_probe
     )
+    foreach(LIBRDP_NATIVE_TEST_TARGET IN ITEMS
+        test_viewer_render
+        test_viewer_audio
+        test_viewer_camera
+        test_viewer_keyboard
+        test_viewer_clipboard
+        test_viewer_display
+        test_cocoa_media
+        test_cocoa_server_cli
+        test_cocoa_server_input
+        test_cocoa_server_capture
+        test_cocoa_server_permission
+        test_cocoa_server_clipboard
+    )
+        if(TARGET ${LIBRDP_NATIVE_TEST_TARGET})
+            add_dependencies(librdp_tests ${LIBRDP_NATIVE_TEST_TARGET})
+        endif()
+    endforeach()
 
     add_test(NAME common COMMAND test_common)
     add_test(NAME core COMMAND test_core)

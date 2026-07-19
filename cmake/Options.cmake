@@ -22,13 +22,38 @@ option(LIBRDP_ENABLE_WERROR "Treat project compiler warnings as errors" OFF)
 option(LIBRDP_ENABLE_SANITIZERS "Enable selected compiler sanitizers on project targets" OFF)
 set(LIBRDP_SANITIZERS "address;undefined" CACHE STRING "Sanitizers enabled when LIBRDP_ENABLE_SANITIZERS is ON")
 
-if((LIBRDP_BUILD_VIEWER OR
-    LIBRDP_BUILD_SERVER OR
-    LIBRDP_BUILD_ADMIN OR
-    LIBRDP_BUILD_WORKSPACE) AND NOT UNIX)
-    message(FATAL_ERROR
-        "librdp applications require macOS or a supported X11 Unix platform")
+set(LIBRDP_BUILD_APPLICATIONS OFF)
+if(LIBRDP_BUILD_VIEWER OR
+   LIBRDP_BUILD_SERVER OR
+   LIBRDP_BUILD_ADMIN OR
+   LIBRDP_BUILD_WORKSPACE)
+    set(LIBRDP_BUILD_APPLICATIONS ON)
 endif()
+
+if(APPLE)
+    set(LIBRDP_NATIVE_APP_BACKEND cocoa)
+elseif(CMAKE_SYSTEM_NAME MATCHES "^(Linux|FreeBSD|OpenBSD|NetBSD|SunOS)$")
+    set(LIBRDP_NATIVE_APP_BACKEND x11)
+elseif(LIBRDP_BUILD_APPLICATIONS)
+    message(FATAL_ERROR
+        "librdp applications support macOS Cocoa or X11 on Linux, FreeBSD, OpenBSD, NetBSD and Solaris")
+else()
+    set(LIBRDP_NATIVE_APP_BACKEND none)
+endif()
+
+function(librdp_set_application_backend target backend)
+    get_property(existing_backend
+        TARGET ${target}
+        PROPERTY LIBRDP_APPLICATION_BACKEND
+    )
+    if(existing_backend AND NOT existing_backend STREQUAL backend)
+        message(FATAL_ERROR
+            "${target} cannot combine ${existing_backend} and ${backend} application backends")
+    endif()
+    set_property(TARGET ${target}
+        PROPERTY LIBRDP_APPLICATION_BACKEND "${backend}"
+    )
+endfunction()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
