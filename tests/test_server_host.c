@@ -116,7 +116,7 @@ static int check_int(int condition, const char* expression, int line)
 {
     if (condition)
         return 0;
-    fprintf(stderr, "test_app_server:%d: check failed: %s\n", line, expression);
+    fprintf(stderr, "test_server_host:%d: check failed: %s\n", line, expression);
     return 1;
 }
 

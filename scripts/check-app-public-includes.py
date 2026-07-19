@@ -18,7 +18,6 @@ APP_ROOTS = (
     ROOT / "apps" / "server",
     ROOT / "apps" / "viewer",
     ROOT / "apps" / "workspace",
-    ROOT / "apps" / "x11",
 )
 INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^>\"]+)[>\"]")
 

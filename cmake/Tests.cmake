@@ -143,109 +143,75 @@ if(LIBRDP_BUILD_TESTS)
     add_executable(test_optional_backend_probe tests/optional_backend_probe.c)
     librdp_configure_test_executable(test_optional_backend_probe)
 
-    add_executable(test_app_client tests/test_app_client.c)
-    target_include_directories(test_app_client PRIVATE
+    add_executable(test_viewer_common tests/test_viewer_common.c)
+    target_include_directories(test_viewer_common PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(test_app_client PRIVATE librdp_viewer_common)
-    librdp_apply_system_definitions(test_app_client)
-    librdp_apply_warning_options(test_app_client)
-    librdp_apply_sanitizer_compile_options(test_app_client)
-    librdp_apply_sanitizer_link_options(test_app_client)
+    target_link_libraries(test_viewer_common PRIVATE librdp_viewer_common)
+    librdp_apply_system_definitions(test_viewer_common)
+    librdp_apply_warning_options(test_viewer_common)
+    librdp_apply_sanitizer_compile_options(test_viewer_common)
+    librdp_apply_sanitizer_link_options(test_viewer_common)
 
-    add_executable(test_app_policy tests/test_app_policy.c)
-    target_include_directories(test_app_policy PRIVATE
+    add_executable(test_admin_workspace tests/test_admin_workspace.c)
+    target_include_directories(test_admin_workspace PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/admin
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/workspace
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(test_app_policy PRIVATE
+    target_link_libraries(test_admin_workspace PRIVATE
         librdp_admin_common
         librdp_workspace_common
     )
-    librdp_apply_system_definitions(test_app_policy)
+    librdp_apply_system_definitions(test_admin_workspace)
     if(LIBRDP_LIBXML2_FOUND)
-        target_compile_definitions(test_app_policy PRIVATE
+        target_compile_definitions(test_admin_workspace PRIVATE
             RDP_HAVE_LIBXML2=1
         )
     endif()
-    librdp_apply_warning_options(test_app_policy)
-    librdp_apply_sanitizer_compile_options(test_app_policy)
-    librdp_apply_sanitizer_link_options(test_app_policy)
+    librdp_apply_warning_options(test_admin_workspace)
+    librdp_apply_sanitizer_compile_options(test_admin_workspace)
+    librdp_apply_sanitizer_link_options(test_admin_workspace)
 
-    add_executable(test_app_server tests/test_app_server.c)
-    target_include_directories(test_app_server PRIVATE
+    add_executable(test_server_host tests/test_server_host.c)
+    target_include_directories(test_server_host PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(test_app_server PRIVATE librdp_server_common)
-    librdp_apply_system_definitions(test_app_server)
-    librdp_apply_warning_options(test_app_server)
-    librdp_apply_sanitizer_compile_options(test_app_server)
-    librdp_apply_sanitizer_link_options(test_app_server)
+    target_link_libraries(test_server_host PRIVATE librdp_server_common)
+    librdp_apply_system_definitions(test_server_host)
+    librdp_apply_warning_options(test_server_host)
+    librdp_apply_sanitizer_compile_options(test_server_host)
+    librdp_apply_sanitizer_link_options(test_server_host)
 
-    add_executable(test_app_server_drive tests/test_app_server_drive.c)
-    target_include_directories(test_app_server_drive PRIVATE
+    add_executable(test_server_host_drive tests/test_server_host_drive.c)
+    target_include_directories(test_server_host_drive PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(test_app_server_drive PRIVATE librdp_server_common)
-    librdp_apply_system_definitions(test_app_server_drive)
-    librdp_apply_warning_options(test_app_server_drive)
-    librdp_apply_sanitizer_compile_options(test_app_server_drive)
-    librdp_apply_sanitizer_link_options(test_app_server_drive)
+    target_link_libraries(test_server_host_drive PRIVATE librdp_server_common)
+    librdp_apply_system_definitions(test_server_host_drive)
+    librdp_apply_warning_options(test_server_host_drive)
+    librdp_apply_sanitizer_compile_options(test_server_host_drive)
+    librdp_apply_sanitizer_link_options(test_server_host_drive)
 
-    add_executable(test_app_server_smoke
-        tests/test_app_server_smoke.c
+    add_executable(test_server_client_smoke
+        tests/test_server_client_smoke.c
         tests/test_server_support.c
     )
-    target_include_directories(test_app_server_smoke PRIVATE
+    target_include_directories(test_server_client_smoke PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
     )
-    target_link_libraries(test_app_server_smoke PRIVATE
+    target_link_libraries(test_server_client_smoke PRIVATE
         librdp_server_common
         librdp_viewer_common
     )
-    librdp_configure_test_executable(test_app_server_smoke)
-
-    add_executable(test_viewer_backends
-        tests/test_viewer_backends.c
-        apps/viewer/x11_camera_v4l2.c
-        apps/viewer/x11_device_backends.c
-        apps/viewer/x11_trace.c
-    )
-    target_include_directories(test_viewer_backends PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-    )
-    librdp_apply_system_definitions(test_viewer_backends)
-    target_link_libraries(test_viewer_backends PRIVATE librdp)
-    librdp_apply_x11_camera_backends(test_viewer_backends)
-    librdp_apply_x11_device_backends(test_viewer_backends)
-    librdp_apply_warning_options(test_viewer_backends)
-    librdp_apply_sanitizer_compile_options(test_viewer_backends)
-    librdp_apply_sanitizer_link_options(test_viewer_backends)
-
-    add_executable(test_viewer_cli
-        tests/test_viewer_cli.c
-        apps/viewer/x11_cli.c
-        apps/viewer/x11_trace.c
-    )
-    target_include_directories(test_viewer_cli PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-    )
-    librdp_apply_system_definitions(test_viewer_cli)
-    target_link_libraries(test_viewer_cli PRIVATE librdp_viewer_common)
-    librdp_apply_warning_options(test_viewer_cli)
-    librdp_apply_sanitizer_compile_options(test_viewer_cli)
-    librdp_apply_sanitizer_link_options(test_viewer_cli)
+    librdp_configure_test_executable(test_server_client_smoke)
 
     add_executable(test_abi_probe tests/abi_probe.c)
     target_include_directories(test_abi_probe PRIVATE
@@ -263,22 +229,22 @@ if(LIBRDP_BUILD_TESTS)
         test_server
         test_interop_smoke
         test_optional_backend_probe
-        test_app_client
-        test_app_policy
-        test_app_server
-        test_app_server_drive
-        test_app_server_smoke
-        test_viewer_backends
-        test_viewer_cli
+        test_viewer_common
+        test_admin_workspace
+        test_server_host
+        test_server_host_drive
+        test_server_client_smoke
         test_abi_probe
     )
     foreach(LIBRDP_NATIVE_TEST_TARGET IN ITEMS
-        test_viewer_render
-        test_viewer_audio
-        test_viewer_camera
-        test_viewer_keyboard
-        test_viewer_clipboard
-        test_viewer_display
+        test_x11_viewer_render
+        test_x11_viewer_audio
+        test_x11_viewer_camera
+        test_x11_viewer_keyboard
+        test_x11_viewer_clipboard
+        test_x11_viewer_display
+        test_x11_viewer_backends
+        test_x11_viewer_cli
         test_cocoa_media
         test_cocoa_server_cli
         test_cocoa_server_input
@@ -331,23 +297,29 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME smoke_workspace COMMAND test_core smoke-workspace)
     add_test(NAME smoke_admin COMMAND test_core smoke-admin)
     add_test(NAME interop_smoke COMMAND test_interop_smoke)
-    add_test(NAME app_client COMMAND test_app_client)
-    add_test(NAME app_policy COMMAND test_app_policy)
-    add_test(NAME app_server COMMAND test_app_server)
-    add_test(NAME app_server_drive COMMAND test_app_server_drive)
-    add_test(NAME app_server_smoke_standard
-        COMMAND test_app_server_smoke standard)
-    add_test(NAME app_server_smoke_tls
-        COMMAND test_app_server_smoke tls)
-    add_test(NAME app_server_smoke_nla
-        COMMAND test_app_server_smoke nla)
-    add_test(NAME viewer_backends COMMAND test_viewer_backends)
-    add_test(NAME viewer_cli COMMAND test_viewer_cli)
-    set_tests_properties(common transport app_client app_policy app_server app_server_drive PROPERTIES TIMEOUT 30)
+    add_test(NAME viewer_common COMMAND test_viewer_common)
+    add_test(NAME admin_workspace COMMAND test_admin_workspace)
+    add_test(NAME server_host COMMAND test_server_host)
+    add_test(NAME server_host_drive COMMAND test_server_host_drive)
+    add_test(NAME server_client_smoke_standard
+        COMMAND test_server_client_smoke standard)
+    add_test(NAME server_client_smoke_tls
+        COMMAND test_server_client_smoke tls)
+    add_test(NAME server_client_smoke_nla
+        COMMAND test_server_client_smoke nla)
     set_tests_properties(
-        app_server_smoke_standard
-        app_server_smoke_tls
-        app_server_smoke_nla
+        common
+        transport
+        viewer_common
+        admin_workspace
+        server_host
+        server_host_drive
+        PROPERTIES TIMEOUT 30
+    )
+    set_tests_properties(
+        server_client_smoke_standard
+        server_client_smoke_tls
+        server_client_smoke_nla
         PROPERTIES TIMEOUT 60
     )
     set_tests_properties(
@@ -405,7 +377,6 @@ if(LIBRDP_BUILD_TESTS)
         smoke_admin
         PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77
     )
-    set_tests_properties(viewer_backends viewer_cli PROPERTIES TIMEOUT 30)
     set_tests_properties(interop_smoke PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
     add_test(NAME core_optional_backends_off
         COMMAND ${CMAKE_COMMAND}
@@ -522,8 +493,8 @@ if(LIBRDP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-fuzz-corpus.py)
         add_test(NAME feature_status_reasons
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-feature-status-reasons.py)
-        add_test(NAME viewer_public_includes
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-viewer-public-includes.py)
+        add_test(NAME application_public_includes
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-app-public-includes.py)
         add_test(NAME examples_docs
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-examples.py)
         add_test(NAME docs
@@ -536,7 +507,7 @@ if(LIBRDP_BUILD_TESTS)
             test_fuzz_comments
             fuzz_corpus
             feature_status_reasons
-            viewer_public_includes
+            application_public_includes
             examples_docs
             docs
             PROPERTIES TIMEOUT 60

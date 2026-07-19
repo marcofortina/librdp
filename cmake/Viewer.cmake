@@ -118,142 +118,181 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
     if(LIBRDP_BUILD_TESTS)
-        add_executable(test_viewer_render
-            tests/test_viewer_render.c
+        add_executable(test_x11_viewer_backends
+            tests/test_x11_viewer_backends.c
+            apps/viewer/x11_camera_v4l2.c
+            apps/viewer/x11_device_backends.c
+            apps/viewer/x11_trace.c
+        )
+        target_include_directories(test_x11_viewer_backends PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        librdp_apply_system_definitions(test_x11_viewer_backends)
+        target_link_libraries(test_x11_viewer_backends PRIVATE librdp)
+        librdp_apply_x11_camera_backends(test_x11_viewer_backends)
+        librdp_apply_x11_device_backends(test_x11_viewer_backends)
+        librdp_apply_warning_options(test_x11_viewer_backends)
+        librdp_apply_sanitizer_compile_options(test_x11_viewer_backends)
+        librdp_apply_sanitizer_link_options(test_x11_viewer_backends)
+        add_test(NAME x11_viewer_backends COMMAND test_x11_viewer_backends)
+        set_tests_properties(x11_viewer_backends PROPERTIES TIMEOUT 30)
+
+        add_executable(test_x11_viewer_cli
+            tests/test_x11_viewer_cli.c
+            apps/viewer/x11_cli.c
+            apps/viewer/x11_trace.c
+        )
+        target_include_directories(test_x11_viewer_cli PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        librdp_apply_system_definitions(test_x11_viewer_cli)
+        target_link_libraries(test_x11_viewer_cli PRIVATE
+            librdp_viewer_common
+        )
+        librdp_apply_warning_options(test_x11_viewer_cli)
+        librdp_apply_sanitizer_compile_options(test_x11_viewer_cli)
+        librdp_apply_sanitizer_link_options(test_x11_viewer_cli)
+        add_test(NAME x11_viewer_cli COMMAND test_x11_viewer_cli)
+        set_tests_properties(x11_viewer_cli PROPERTIES TIMEOUT 30)
+
+        add_executable(test_x11_viewer_render
+            tests/test_x11_viewer_render.c
             apps/viewer/x11_render.c
             apps/viewer/x11_trace.c
             apps/viewer/x11_window.c
         )
-        target_include_directories(test_viewer_render PRIVATE
+        target_include_directories(test_x11_viewer_render PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
         )
-        librdp_apply_system_definitions(test_viewer_render)
-        target_link_libraries(test_viewer_render PRIVATE librdp ${X11_LIBRARIES})
+        librdp_apply_system_definitions(test_x11_viewer_render)
+        target_link_libraries(test_x11_viewer_render PRIVATE librdp ${X11_LIBRARIES})
         if(LIBRDP_XSHM_FOUND)
-            target_compile_definitions(test_viewer_render PRIVATE LIBRDP_HAVE_XSHM=1)
+            target_compile_definitions(test_x11_viewer_render PRIVATE LIBRDP_HAVE_XSHM=1)
             if(TARGET X11::Xext)
-                target_link_libraries(test_viewer_render PRIVATE X11::Xext)
+                target_link_libraries(test_x11_viewer_render PRIVATE X11::Xext)
             else()
-                target_link_libraries(test_viewer_render PRIVATE ${X11_Xext_LIB})
+                target_link_libraries(test_x11_viewer_render PRIVATE ${X11_Xext_LIB})
             endif()
         endif()
-        librdp_apply_warning_options(test_viewer_render)
-        librdp_apply_sanitizer_compile_options(test_viewer_render)
-        librdp_apply_sanitizer_link_options(test_viewer_render)
-        add_test(NAME viewer_render COMMAND test_viewer_render)
-        set_tests_properties(viewer_render PROPERTIES TIMEOUT 30)
-        add_executable(test_viewer_audio
-            tests/test_viewer_audio.c
+        librdp_apply_warning_options(test_x11_viewer_render)
+        librdp_apply_sanitizer_compile_options(test_x11_viewer_render)
+        librdp_apply_sanitizer_link_options(test_x11_viewer_render)
+        add_test(NAME x11_viewer_render COMMAND test_x11_viewer_render)
+        set_tests_properties(x11_viewer_render PROPERTIES TIMEOUT 30)
+        add_executable(test_x11_viewer_audio
+            tests/test_x11_viewer_audio.c
             apps/viewer/x11_audio_pipewire.c
             apps/viewer/x11_trace.c
         )
-        target_include_directories(test_viewer_audio PRIVATE
+        target_include_directories(test_x11_viewer_audio PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
-        target_compile_definitions(test_viewer_audio PRIVATE
+        target_compile_definitions(test_x11_viewer_audio PRIVATE
             LIBRDP_X11_AUDIO_TESTING=1
         )
-        librdp_apply_system_definitions(test_viewer_audio)
-        librdp_apply_warning_options(test_viewer_audio)
-        librdp_apply_sanitizer_compile_options(test_viewer_audio)
-        librdp_apply_sanitizer_link_options(test_viewer_audio)
-        add_test(NAME viewer_audio COMMAND test_viewer_audio)
-        set_tests_properties(viewer_audio PROPERTIES TIMEOUT 30)
-        add_executable(test_viewer_camera
-            tests/test_viewer_camera.c
+        librdp_apply_system_definitions(test_x11_viewer_audio)
+        librdp_apply_warning_options(test_x11_viewer_audio)
+        librdp_apply_sanitizer_compile_options(test_x11_viewer_audio)
+        librdp_apply_sanitizer_link_options(test_x11_viewer_audio)
+        add_test(NAME x11_viewer_audio COMMAND test_x11_viewer_audio)
+        set_tests_properties(x11_viewer_audio PROPERTIES TIMEOUT 30)
+        add_executable(test_x11_viewer_camera
+            tests/test_x11_viewer_camera.c
             apps/viewer/x11_camera_v4l2.c
             apps/viewer/x11_trace.c
         )
-        target_include_directories(test_viewer_camera PRIVATE
+        target_include_directories(test_x11_viewer_camera PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
-        target_compile_definitions(test_viewer_camera PRIVATE
+        target_compile_definitions(test_x11_viewer_camera PRIVATE
             LIBRDP_X11_CAMERA_TESTING=1
         )
-        librdp_apply_system_definitions(test_viewer_camera)
-        librdp_apply_x11_camera_backends(test_viewer_camera)
-        librdp_apply_warning_options(test_viewer_camera)
-        librdp_apply_sanitizer_compile_options(test_viewer_camera)
-        librdp_apply_sanitizer_link_options(test_viewer_camera)
-        add_test(NAME viewer_camera COMMAND test_viewer_camera)
-        set_tests_properties(viewer_camera PROPERTIES TIMEOUT 30)
-        add_executable(test_viewer_keyboard
-            tests/test_viewer_keyboard.c
+        librdp_apply_system_definitions(test_x11_viewer_camera)
+        librdp_apply_x11_camera_backends(test_x11_viewer_camera)
+        librdp_apply_warning_options(test_x11_viewer_camera)
+        librdp_apply_sanitizer_compile_options(test_x11_viewer_camera)
+        librdp_apply_sanitizer_link_options(test_x11_viewer_camera)
+        add_test(NAME x11_viewer_camera COMMAND test_x11_viewer_camera)
+        set_tests_properties(x11_viewer_camera PROPERTIES TIMEOUT 30)
+        add_executable(test_x11_viewer_keyboard
+            tests/test_x11_viewer_keyboard.c
             apps/common/x11_keymap.c
             apps/viewer/x11_keyboard.c
             apps/viewer/x11_trace.c
             apps/viewer/x11_window.c
         )
-        target_include_directories(test_viewer_keyboard PRIVATE
+        target_include_directories(test_x11_viewer_keyboard PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
             ${XKBCOMMON_INCLUDE_DIRS}
         )
-        librdp_apply_system_definitions(test_viewer_keyboard)
-        target_link_libraries(test_viewer_keyboard PRIVATE
+        librdp_apply_system_definitions(test_x11_viewer_keyboard)
+        target_link_libraries(test_x11_viewer_keyboard PRIVATE
             librdp
             ${X11_LIBRARIES}
             ${XKBCOMMON_LIBRARIES}
         )
-        librdp_apply_warning_options(test_viewer_keyboard)
-        librdp_apply_sanitizer_compile_options(test_viewer_keyboard)
-        librdp_apply_sanitizer_link_options(test_viewer_keyboard)
-        add_test(NAME viewer_keyboard COMMAND test_viewer_keyboard)
-        set_tests_properties(viewer_keyboard PROPERTIES TIMEOUT 30)
-        add_executable(test_viewer_clipboard
-            tests/test_viewer_clipboard.c
+        librdp_apply_warning_options(test_x11_viewer_keyboard)
+        librdp_apply_sanitizer_compile_options(test_x11_viewer_keyboard)
+        librdp_apply_sanitizer_link_options(test_x11_viewer_keyboard)
+        add_test(NAME x11_viewer_keyboard COMMAND test_x11_viewer_keyboard)
+        set_tests_properties(x11_viewer_keyboard PROPERTIES TIMEOUT 30)
+        add_executable(test_x11_viewer_clipboard
+            tests/test_x11_viewer_clipboard.c
             apps/viewer/x11_clipboard.c
             apps/viewer/x11_trace.c
         )
-        target_include_directories(test_viewer_clipboard PRIVATE
+        target_include_directories(test_x11_viewer_clipboard PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
         )
-        librdp_apply_system_definitions(test_viewer_clipboard)
-        target_link_libraries(test_viewer_clipboard PRIVATE
+        librdp_apply_system_definitions(test_x11_viewer_clipboard)
+        target_link_libraries(test_x11_viewer_clipboard PRIVATE
             librdp
             Iconv::Iconv
             ${X11_LIBRARIES}
             X11::Xfixes
         )
-        librdp_apply_warning_options(test_viewer_clipboard)
-        librdp_apply_sanitizer_compile_options(test_viewer_clipboard)
-        librdp_apply_sanitizer_link_options(test_viewer_clipboard)
-        add_test(NAME viewer_clipboard COMMAND test_viewer_clipboard)
-        set_tests_properties(viewer_clipboard PROPERTIES TIMEOUT 30)
+        librdp_apply_warning_options(test_x11_viewer_clipboard)
+        librdp_apply_sanitizer_compile_options(test_x11_viewer_clipboard)
+        librdp_apply_sanitizer_link_options(test_x11_viewer_clipboard)
+        add_test(NAME x11_viewer_clipboard COMMAND test_x11_viewer_clipboard)
+        set_tests_properties(x11_viewer_clipboard PROPERTIES TIMEOUT 30)
         if(LIBRDP_XRANDR_FOUND)
-            add_executable(test_viewer_display
-                tests/test_viewer_display.c
+            add_executable(test_x11_viewer_display
+                tests/test_x11_viewer_display.c
                 apps/viewer/x11_display.c
                 apps/viewer/x11_trace.c
             )
-            target_include_directories(test_viewer_display PRIVATE
+            target_include_directories(test_x11_viewer_display PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
                 ${X11_INCLUDE_DIR}
             )
-            target_compile_definitions(test_viewer_display PRIVATE
+            target_compile_definitions(test_x11_viewer_display PRIVATE
                 LIBRDP_HAVE_XRANDR=1
             )
-            librdp_apply_system_definitions(test_viewer_display)
-            target_link_libraries(test_viewer_display PRIVATE librdp ${X11_LIBRARIES})
+            librdp_apply_system_definitions(test_x11_viewer_display)
+            target_link_libraries(test_x11_viewer_display PRIVATE librdp ${X11_LIBRARIES})
             if(TARGET X11::Xrandr)
-                target_link_libraries(test_viewer_display PRIVATE X11::Xrandr)
+                target_link_libraries(test_x11_viewer_display PRIVATE X11::Xrandr)
             else()
-                target_link_libraries(test_viewer_display PRIVATE ${X11_Xrandr_LIB})
+                target_link_libraries(test_x11_viewer_display PRIVATE ${X11_Xrandr_LIB})
             endif()
-            librdp_apply_warning_options(test_viewer_display)
-            librdp_apply_sanitizer_compile_options(test_viewer_display)
-            librdp_apply_sanitizer_link_options(test_viewer_display)
-            add_test(NAME viewer_display COMMAND test_viewer_display)
-            set_tests_properties(viewer_display PROPERTIES TIMEOUT 30)
+            librdp_apply_warning_options(test_x11_viewer_display)
+            librdp_apply_sanitizer_compile_options(test_x11_viewer_display)
+            librdp_apply_sanitizer_link_options(test_x11_viewer_display)
+            add_test(NAME x11_viewer_display COMMAND test_x11_viewer_display)
+            set_tests_properties(x11_viewer_display PROPERTIES TIMEOUT 30)
         endif()
     endif()
 endif()

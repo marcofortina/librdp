@@ -34,7 +34,7 @@ static int check_int(int condition, const char* expression, int line)
 {
     if (condition)
         return 0;
-    fprintf(stderr, "test_app_client:%d: check failed: %s\n", line, expression);
+    fprintf(stderr, "test_viewer_common:%d: check failed: %s\n", line, expression);
     return 1;
 }
 
@@ -451,7 +451,7 @@ static void* test_runtime_server_main(void* user_data)
             fixture->status != LIBRDP_STATUS_AGAIN)
         {
             fprintf(stderr,
-                    "test_app_client: server peer failed: status=%s state=%d\n",
+                    "test_viewer_common: server peer failed: status=%s state=%d\n",
                     librdp_status_name(fixture->status),
                     (int)librdp_server_peer_get_state(peer));
             break;

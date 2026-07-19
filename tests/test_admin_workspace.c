@@ -25,7 +25,7 @@ static int check_int(int condition, const char* expression, int line)
 {
     if (condition)
         return 0;
-    fprintf(stderr, "test_app_policy:%d: check failed: %s\n", line, expression);
+    fprintf(stderr, "test_admin_workspace:%d: check failed: %s\n", line, expression);
     return 1;
 }
 

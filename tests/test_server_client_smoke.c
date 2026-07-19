@@ -76,7 +76,7 @@ static int smoke_check(int condition, const char* expression, int line)
     if (condition)
         return 0;
     fprintf(stderr,
-            "test_app_server_smoke:%d: check failed: %s\n",
+            "test_server_client_smoke:%d: check failed: %s\n",
             line,
             expression);
     return 1;
@@ -889,7 +889,7 @@ int main(int argc, char** argv)
     if (argc != 2 || !smoke_parse_security(argv[1], &security))
     {
         fprintf(stderr,
-                "usage: test_app_server_smoke standard|tls|nla\n");
+                "usage: test_server_client_smoke standard|tls|nla\n");
         return 2;
     }
     return smoke_run_profile(security);

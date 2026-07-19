@@ -61,7 +61,7 @@ static int drive_test_check(int condition,
     if (condition)
         return 0;
     fprintf(stderr,
-            "test_app_server_drive:%d: check failed: %s\n",
+            "test_server_host_drive:%d: check failed: %s\n",
             line,
             expression);
     return 1;

@@ -23,7 +23,7 @@ static int check_int(int condition, const char* expression, int line)
 {
     if (condition)
         return 0;
-    fprintf(stderr, "test_viewer_cli:%d: check failed: %s\n", line, expression);
+    fprintf(stderr, "test_x11_viewer_cli:%d: check failed: %s\n", line, expression);
     return 1;
 }
 
