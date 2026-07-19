@@ -709,6 +709,13 @@ int x11_viewer_run(int argc, char** argv)
         librdp_settings_free(settings);
         return 2;
     }
+    if (cli_options.show_help)
+    {
+        fprintf(stdout, x11_cli_usage(), argv[0]);
+        x11_cli_options_free(&cli_options);
+        librdp_settings_free(settings);
+        return 0;
+    }
     app.clipboard_file_path = cli_options.clipboard_file_path;
     cli_options.clipboard_file_path = NULL;
 

@@ -63,6 +63,25 @@ static int test_webauthn_rp_id_cli(void)
     return 0;
 }
 
+static int test_help_cli(void)
+{
+    char* argv[] = {
+        (char*)"viewer",
+        (char*)"--help",
+    };
+    librdp_settings* settings = librdp_settings_new();
+    x11_cli_options options;
+
+    memset(&options, 0, sizeof(options));
+    CHECK(settings != NULL);
+    CHECK(x11_cli_configure(settings, &options, (int)(sizeof(argv) / sizeof(argv[0])), argv) == 1);
+    CHECK(options.show_help == 1);
+    CHECK(librdp_settings_target(settings) == NULL);
+    x11_cli_options_free(&options);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 static int test_webauthn_rp_id_requires_value(void)
 {
     char* argv[] = {
@@ -305,6 +324,8 @@ static int test_gateway_cli_rejects_credentials_without_gateway(void)
 
 int main(void)
 {
+    if (test_help_cli() != 0)
+        return 1;
     if (test_webauthn_rp_id_cli() != 0)
         return 1;
     if (test_webauthn_rp_id_requires_value() != 0)

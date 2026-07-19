@@ -67,6 +67,7 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
     policy.default_audio_output_device = "pipewire";
     policy.default_audio_input_device = "pipewire";
     policy.normalize_camera_source = x11_cli_camera_source;
+    policy.allow_help = 1;
     policy.allow_clipboard_file = 1;
     return client_options_configure(settings, options, &policy, argc, argv);
 }

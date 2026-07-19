@@ -118,6 +118,9 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
     if(LIBRDP_BUILD_TESTS)
+        add_test(NAME viewer_cli COMMAND librdp-viewer --help)
+        set_tests_properties(viewer_cli PROPERTIES TIMEOUT 30)
+
         add_executable(test_x11_viewer_backends
             tests/test_x11_viewer_backends.c
             apps/viewer/x11_camera_v4l2.c
