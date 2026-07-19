@@ -29,17 +29,18 @@ jobs:
             export PKG_PATH="https://ftp.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r)/All/"
             pkg_add \
               cmake ninja-build pkgconf openssl libiconv python312 \
-              libXcursor libxkbcommon
+              libX11 libXau libXcomposite libXcursor libXdamage libXfixes \
+              libXext libXrandr libXtst libxkbcommon
             if command -v python3.12 >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
               ln -sf /usr/pkg/bin/python3.12 /usr/pkg/bin/python3
             fi
-            test -f /usr/X11R7/include/X11/Xlib.h
+            test -f /usr/pkg/include/X11/Xlib.h
           run: |
-            export PKG_CONFIG_PATH="/usr/pkg/lib/pkgconfig:/usr/X11R7/lib/pkgconfig"
+            export PKG_CONFIG_PATH="/usr/pkg/lib/pkgconfig"
             cmake -S . -B build-netbsd-x11-apps -G Ninja \
               -DCMAKE_BUILD_TYPE=Debug \
               -DOPENSSL_ROOT_DIR=/usr/pkg \
-              -DCMAKE_PREFIX_PATH="/usr/pkg;/usr/X11R7" \
+              -DCMAKE_PREFIX_PATH=/usr/pkg \
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
               -DLIBRDP_BUILD_VIEWER=ON \
@@ -70,7 +71,7 @@ jobs:
           usesh: true
           prepare: |
             export PKG_PATH="https://ftp.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r)/All/"
-            pkg_add cmake ninja-build pkgconf openssl libiconv python312 doxygen graphviz
+            pkg_add cmake ninja-build pkgconf openssl libiconv python312 doxygen
             if command -v python3.12 >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
               ln -sf /usr/pkg/bin/python3.12 /usr/pkg/bin/python3
             fi
@@ -110,7 +111,7 @@ jobs:
           usesh: true
           prepare: |
             export PKG_PATH="https://ftp.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r)/All/"
-            pkg_add cmake ninja-build pkgconf openssl libiconv python312 doxygen graphviz
+            pkg_add cmake ninja-build pkgconf openssl libiconv python312 doxygen
             if command -v python3.12 >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
               ln -sf /usr/pkg/bin/python3.12 /usr/pkg/bin/python3
             fi
