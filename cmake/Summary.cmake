@@ -18,17 +18,17 @@ librdp_summary_build_target(tests LIBRDP_BUILD_TESTS librdp_tests)
 librdp_summary_build_target(examples LIBRDP_BUILD_EXAMPLES examples)
 librdp_summary_build_target(fuzz LIBRDP_BUILD_FUZZ fuzz-targets)
 if(LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
-    set(LIBRDP_BUILD_X11_VIEWER_NATIVE OFF)
-    set(LIBRDP_BUILD_X11_SERVER_NATIVE OFF)
-    set(LIBRDP_BUILD_COCOA_SERVER_NATIVE ${LIBRDP_BUILD_SERVER})
+    set(LIBRDP_X11_VIEWER_TARGET_ENABLED OFF)
+    set(LIBRDP_X11_SERVER_TARGET_ENABLED OFF)
+    set(LIBRDP_COCOA_SERVER_TARGET_ENABLED ${LIBRDP_BUILD_SERVER})
 elseif(LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
-    set(LIBRDP_BUILD_X11_VIEWER_NATIVE ${LIBRDP_BUILD_VIEWER})
-    set(LIBRDP_BUILD_X11_SERVER_NATIVE ${LIBRDP_BUILD_SERVER})
-    set(LIBRDP_BUILD_COCOA_SERVER_NATIVE OFF)
+    set(LIBRDP_X11_VIEWER_TARGET_ENABLED ${LIBRDP_BUILD_VIEWER})
+    set(LIBRDP_X11_SERVER_TARGET_ENABLED ${LIBRDP_BUILD_SERVER})
+    set(LIBRDP_COCOA_SERVER_TARGET_ENABLED OFF)
 else()
-    set(LIBRDP_BUILD_X11_VIEWER_NATIVE OFF)
-    set(LIBRDP_BUILD_X11_SERVER_NATIVE OFF)
-    set(LIBRDP_BUILD_COCOA_SERVER_NATIVE OFF)
+    set(LIBRDP_X11_VIEWER_TARGET_ENABLED OFF)
+    set(LIBRDP_X11_SERVER_TARGET_ENABLED OFF)
+    set(LIBRDP_COCOA_SERVER_TARGET_ENABLED OFF)
 endif()
 
 foreach(LIBRDP_APP_NAME IN ITEMS admin server viewer workspace)
@@ -59,7 +59,7 @@ if(DOXYGEN_FOUND)
 else()
     librdp_summary_line(docs-api AUTO missing docs-api no dependency-not-found)
 endif()
-if(LIBRDP_BUILD_X11_VIEWER_NATIVE)
+if(LIBRDP_X11_VIEWER_TARGET_ENABLED)
     set(LIBRDP_DEVICE_BACKEND_TARGETS librdp+librdp-viewer)
 else()
     set(LIBRDP_DEVICE_BACKEND_TARGETS librdp)
@@ -84,23 +84,23 @@ librdp_summary_optional_backend(jpeg LIBRDP_WITH_JPEG LIBRDP_JPEG_FOUND librdp)
 librdp_summary_viewer_backend(xshm LIBRDP_WITH_XSHM LIBRDP_XSHM_FOUND)
 librdp_summary_target_backend(
     xshm-server LIBRDP_WITH_XSHM LIBRDP_X11_SERVER_XSHM_FOUND
-    LIBRDP_BUILD_X11_SERVER_NATIVE librdp-server
+    LIBRDP_X11_SERVER_TARGET_ENABLED librdp-server
 )
 librdp_summary_viewer_backend(xrandr LIBRDP_WITH_XRANDR LIBRDP_XRANDR_FOUND)
 librdp_summary_target_backend(
     fuse3-x11-server LIBRDP_WITH_FUSE3 LIBRDP_FUSE3_FOUND
-    LIBRDP_BUILD_X11_SERVER_NATIVE librdp-server
+    LIBRDP_X11_SERVER_TARGET_ENABLED librdp-server
 )
 librdp_summary_target_backend(
     fuse3-cocoa-server LIBRDP_WITH_FUSE3 LIBRDP_FUSE3_FOUND
-    LIBRDP_BUILD_COCOA_SERVER_NATIVE librdp-server
+    LIBRDP_COCOA_SERVER_TARGET_ENABLED librdp-server
 )
 librdp_summary_target_backend(
     pam-managed-server LIBRDP_WITH_PAM LIBRDP_PAM_FOUND
-    LIBRDP_BUILD_X11_SERVER_NATIVE librdp-session-supervisor
+    LIBRDP_X11_SERVER_TARGET_ENABLED librdp-session-supervisor
 )
 librdp_summary_target_backend(
     bsdauth-managed-server LIBRDP_WITH_BSDAUTH LIBRDP_BSDAUTH_FOUND
-    LIBRDP_BUILD_X11_SERVER_NATIVE librdp-session-supervisor
+    LIBRDP_X11_SERVER_TARGET_ENABLED librdp-session-supervisor
 )
 message(STATUS "librdp feature summary end")

@@ -208,7 +208,7 @@ endfunction()
 function(librdp_summary_viewer_backend name option found)
     librdp_summary_target_backend(
         "${name}" "${option}" "${found}"
-        LIBRDP_BUILD_X11_VIEWER_NATIVE librdp-viewer
+        LIBRDP_X11_VIEWER_TARGET_ENABLED librdp-viewer
     )
 endfunction()
 
