@@ -353,6 +353,14 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke nla-expired)
     add_test(NAME server_client_smoke_nla_locked
              COMMAND test_server_client_smoke nla-locked)
+    add_test(NAME server_client_smoke_nla_no_domain
+             COMMAND test_server_client_smoke nla-no-domain)
+    add_test(NAME server_client_smoke_nla_empty_domain
+             COMMAND test_server_client_smoke nla-empty-domain)
+    add_test(NAME server_client_smoke_nla_upn
+             COMMAND test_server_client_smoke nla-upn)
+    add_test(NAME server_client_smoke_nla_utf8
+             COMMAND test_server_client_smoke nla-utf8)
     set_tests_properties(
         common
         transport
@@ -369,6 +377,10 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_nla_invalid
         server_client_smoke_nla_expired
         server_client_smoke_nla_locked
+        server_client_smoke_nla_no_domain
+        server_client_smoke_nla_empty_domain
+        server_client_smoke_nla_upn
+        server_client_smoke_nla_utf8
         PROPERTIES TIMEOUT 60
     )
     set_tests_properties(

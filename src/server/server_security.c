@@ -1318,7 +1318,7 @@ static librdp_status rdp_server_credssp_resolve_expected_credentials(
             status = LIBRDP_STATUS_UNSUPPORTED;
         else
             status = rdp_server_credssp_expected_set(peer,
-                                                     peer->nla_domain ? peer->nla_domain : claimed_domain,
+                                                     peer->nla_domain,
                                                      peer->nla_username,
                                                      peer->nla_password);
     }
