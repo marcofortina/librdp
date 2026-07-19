@@ -41,7 +41,8 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
     endif()
     find_package(PkgConfig REQUIRED)
     find_package(Threads REQUIRED)
-    pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
+    pkg_check_modules(
+        LIBRDP_XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
     add_executable(librdp-viewer
         apps/viewer/x11_audio_pipewire.c
         apps/viewer/x11_camera_v4l2.c
@@ -64,7 +65,6 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${X11_INCLUDE_DIR}
-        ${XKBCOMMON_INCLUDE_DIRS}
     )
     target_link_libraries(librdp-viewer PRIVATE
         librdp_viewer_common
@@ -72,7 +72,7 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         ${X11_LIBRARIES}
         X11::Xcursor
         X11::Xfixes
-        ${XKBCOMMON_LIBRARIES}
+        PkgConfig::LIBRDP_XKBCOMMON
         Threads::Threads
     )
     librdp_apply_system_definitions(librdp-viewer)
@@ -232,13 +232,12 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
-            ${XKBCOMMON_INCLUDE_DIRS}
         )
         librdp_apply_system_definitions(test_x11_viewer_keyboard)
         target_link_libraries(test_x11_viewer_keyboard PRIVATE
             librdp
             ${X11_LIBRARIES}
-            ${XKBCOMMON_LIBRARIES}
+            PkgConfig::LIBRDP_XKBCOMMON
         )
         librdp_apply_warning_options(test_x11_viewer_keyboard)
         librdp_apply_sanitizer_compile_options(test_x11_viewer_keyboard)
