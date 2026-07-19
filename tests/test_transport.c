@@ -933,6 +933,15 @@ typedef struct test_tls_callback_state
     char fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
 } test_tls_callback_state;
 
+typedef struct test_tls_tofu_store
+{
+    int calls;
+    int first_use;
+    int repeat;
+    int changed;
+    char fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
+} test_tls_tofu_store;
+
 static librdp_tls_certificate_decision test_tls_certificate_callback(const librdp_tls_certificate_info* certificate,
                                                                     void* user_data)
 {
@@ -952,6 +961,38 @@ static librdp_tls_certificate_decision test_tls_certificate_callback(const librd
     if (state->accept)
         return LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT;
     return LIBRDP_TLS_CERTIFICATE_DECISION_DEFAULT;
+}
+
+/*
+ * Models an application-owned TOFU store across independent connections.
+ * First use persists the fingerprint, an exact repeat is accepted, and a
+ * changed certificate is rejected without replacing trusted state.
+ */
+static librdp_tls_certificate_decision test_tls_tofu_store_callback(
+  const librdp_tls_certificate_info* certificate,
+  void* user_data)
+{
+    test_tls_tofu_store* store = (test_tls_tofu_store*)user_data;
+
+    if (!certificate || !store || certificate->version != LIBRDP_TLS_CERTIFICATE_INFO_VERSION ||
+        certificate->size < sizeof(*certificate) || certificate->sha256_fingerprint[0] == '\0')
+        return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
+    store->calls++;
+    if (store->fingerprint[0] == '\0')
+    {
+        memcpy(store->fingerprint,
+               certificate->sha256_fingerprint,
+               LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u);
+        store->first_use++;
+        return LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT;
+    }
+    if (strcmp(store->fingerprint, certificate->sha256_fingerprint) == 0)
+    {
+        store->repeat++;
+        return LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT;
+    }
+    store->changed++;
+    return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
 }
 
 /*
@@ -1140,6 +1181,31 @@ static void run_tls_wrong_pin_trace(void* user_data)
                                    NULL,
                                    LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
                                    0,
+                                   NULL);
+    unsetenv("LIBRDP_TRACE_TRANSPORT");
+    rdp_trace_reset_for_tests();
+}
+
+static void run_tls_insecure_trace(void* user_data)
+{
+    test_tls_trace_case* test = (test_tls_trace_case*)user_data;
+
+    if (!test)
+        return;
+    setenv("LIBRDP_TRACE_TRANSPORT", "1", 1);
+    unsetenv("LIBRDP_TRACE_LEVEL");
+    rdp_trace_reset_for_tests();
+    test->ok = run_tls_client_case(test->key,
+                                   test->cert,
+                                   NULL,
+                                   "localhost",
+                                   LIBRDP_TLS_POLICY_INSECURE_LAB,
+                                   0,
+                                   NULL,
+                                   NULL,
+                                   NULL,
+                                   LIBRDP_STATUS_OK,
+                                   1,
                                    NULL);
     unsetenv("LIBRDP_TRACE_TRANSPORT");
     rdp_trace_reset_for_tests();
@@ -1699,17 +1765,20 @@ int test_transport(void)
     EVP_PKEY* ca_key = NULL;
     EVP_PKEY* server_key = NULL;
     EVP_PKEY* self_signed_key = NULL;
+    EVP_PKEY* rotated_key = NULL;
     EVP_PKEY* wrong_host_key = NULL;
     EVP_PKEY* expired_key = NULL;
     EVP_PKEY* not_yet_valid_key = NULL;
     X509* ca_cert = NULL;
     X509* server_cert = NULL;
     X509* self_signed_cert = NULL;
+    X509* rotated_cert = NULL;
     X509* wrong_host_cert = NULL;
     X509* expired_cert = NULL;
     X509* not_yet_valid_cert = NULL;
     test_tls_callback_state tofu_accept;
     test_tls_callback_state tofu_reject;
+    test_tls_tofu_store tofu_store;
     test_tls_trace_case trace_case;
     char self_signed_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
     char wrong_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
@@ -1831,6 +1900,7 @@ int test_transport(void)
                                         3600,
                                         7200));
     TCHECK(make_test_self_signed_server_certificate(&self_signed_key, &self_signed_cert));
+    TCHECK(make_test_self_signed_server_certificate(&rotated_key, &rotated_cert));
     TCHECK(test_certificate_fingerprint(self_signed_cert, self_signed_fingerprint));
     memcpy(wrong_fingerprint, self_signed_fingerprint, sizeof(wrong_fingerprint));
     wrong_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH - 1u] =
@@ -1962,6 +2032,46 @@ int test_transport(void)
                               0,
                               NULL));
     TCHECK(tofu_reject.calls == 1);
+    memset(&tofu_store, 0, sizeof(tofu_store));
+    TCHECK(run_tls_client_case(self_signed_key,
+                              self_signed_cert,
+                              NULL,
+                              "localhost",
+                              LIBRDP_TLS_POLICY_TOFU,
+                              1,
+                              NULL,
+                              test_tls_tofu_store_callback,
+                              &tofu_store,
+                              LIBRDP_STATUS_OK,
+                              1,
+                              NULL));
+    TCHECK(run_tls_client_case(self_signed_key,
+                              self_signed_cert,
+                              NULL,
+                              "localhost",
+                              LIBRDP_TLS_POLICY_TOFU,
+                              1,
+                              NULL,
+                              test_tls_tofu_store_callback,
+                              &tofu_store,
+                              LIBRDP_STATUS_OK,
+                              1,
+                              NULL));
+    TCHECK(run_tls_client_case(rotated_key,
+                              rotated_cert,
+                              NULL,
+                              "localhost",
+                              LIBRDP_TLS_POLICY_TOFU,
+                              1,
+                              NULL,
+                              test_tls_tofu_store_callback,
+                              &tofu_store,
+                              LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
+                              0,
+                              NULL));
+    TCHECK(tofu_store.calls == 3);
+    TCHECK(tofu_store.first_use == 1 && tofu_store.repeat == 1 && tofu_store.changed == 1);
+    TCHECK(strcmp(tofu_store.fingerprint, self_signed_fingerprint) == 0);
     TCHECK(run_tls_client_case(self_signed_key,
                               self_signed_cert,
                               NULL,
@@ -1974,6 +2084,15 @@ int test_transport(void)
                               LIBRDP_STATUS_OK,
                               1,
                               NULL));
+    memset(&trace_case, 0, sizeof(trace_case));
+    memset(trace_output, 0, sizeof(trace_output));
+    trace_case.key = self_signed_key;
+    trace_case.cert = self_signed_cert;
+    TCHECK(capture_stderr_fn(run_tls_insecure_trace, &trace_case, trace_output, sizeof(trace_output)));
+    TCHECK(trace_case.ok);
+    TCHECK(strstr(trace_output, "transport.tls.insecure_lab.warning") != NULL);
+    TCHECK(strstr(trace_output, self_signed_fingerprint) == NULL);
+    TCHECK(strstr(trace_output, "BEGIN CERTIFICATE") == NULL);
     expected_public_key_len = i2d_PublicKey(server_key, NULL);
     TCHECK(expected_public_key_len > 0);
     expected_public_key = (unsigned char*)malloc((size_t)expected_public_key_len);
@@ -1986,12 +2105,14 @@ int test_transport(void)
     X509_free(expired_cert);
     X509_free(not_yet_valid_cert);
     X509_free(wrong_host_cert);
+    X509_free(rotated_cert);
     X509_free(self_signed_cert);
     X509_free(server_cert);
     X509_free(ca_cert);
     EVP_PKEY_free(expired_key);
     EVP_PKEY_free(not_yet_valid_key);
     EVP_PKEY_free(wrong_host_key);
+    EVP_PKEY_free(rotated_key);
     EVP_PKEY_free(self_signed_key);
     EVP_PKEY_free(server_key);
     EVP_PKEY_free(ca_key);
