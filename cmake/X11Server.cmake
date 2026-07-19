@@ -26,6 +26,16 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
         endif()
     endif()
 
+    set(LIBRDP_X11_SESSION_LIBEXEC_DIR
+        "${CMAKE_INSTALL_FULL_LIBEXECDIR}/librdp")
+
+    function(librdp_apply_x11_managed_paths target)
+        target_compile_definitions(${target} PRIVATE
+            LIBRDP_X11_SESSION_SUPERVISOR_PATH="${LIBRDP_X11_SESSION_LIBEXEC_DIR}/librdp-session-supervisor"
+            LIBRDP_X11_SESSION_AGENT_PATH="${LIBRDP_X11_SESSION_LIBEXEC_DIR}/librdp-session-agent"
+        )
+    endfunction()
+
     set(LIBRDP_X11_SERVER_PLATFORM_SOURCES
         apps/common/x11_keymap.c
         apps/server/x11_capture.c
@@ -84,10 +94,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             OpenSSL::Crypto
             Threads::Threads
         )
-        target_compile_definitions(${target} PRIVATE
-            LIBRDP_X11_SESSION_SUPERVISOR_PATH="${CMAKE_INSTALL_FULL_BINDIR}/librdp-session-supervisor"
-            LIBRDP_X11_SESSION_AGENT_PATH="${CMAKE_INSTALL_FULL_BINDIR}/librdp-session-agent"
-        )
+        librdp_apply_x11_managed_paths(${target})
         librdp_apply_system_definitions(${target})
         librdp_apply_warning_options(${target})
         librdp_apply_sanitizer_compile_options(${target})
@@ -138,15 +145,38 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
     librdp_apply_x11_managed_auth(
         librdp-session-supervisor)
 
-    install(TARGETS
-        librdp-server
-        librdp-session-agent
-        librdp-session-broker
-        librdp-session-supervisor
+    install(TARGETS librdp-server
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+    install(TARGETS librdp-session-broker
+        RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR}
+    )
+    install(TARGETS
+        librdp-session-agent
+        librdp-session-supervisor
+        RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/librdp
     )
     if(LIBRDP_BUILD_TESTS)
         find_program(LIBRDP_XVFB_EXECUTABLE NAMES Xvfb)
+
+        if(Python3_FOUND)
+            add_test(NAME app_install_layout
+                COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_app_install_layout.py
+                    --cmake ${CMAKE_COMMAND}
+                    --build-dir ${CMAKE_CURRENT_BINARY_DIR}
+                    --destdir ${CMAKE_CURRENT_BINARY_DIR}/app-install-layout
+                    --bindir ${CMAKE_INSTALL_FULL_BINDIR}
+                    --sbindir ${CMAKE_INSTALL_FULL_SBINDIR}
+                    --libexecdir ${LIBRDP_X11_SESSION_LIBEXEC_DIR}
+                    --datadir ${CMAKE_INSTALL_FULL_DATADIR}/librdp
+                    --config $<CONFIG>
+            )
+            set_tests_properties(app_install_layout PROPERTIES
+                RUN_SERIAL TRUE
+                TIMEOUT 60
+            )
+        endif()
 
         add_executable(test_x11_managed
             tests/test_x11_managed.c
@@ -203,6 +233,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             librdp
             OpenSSL::Crypto
         )
+        librdp_apply_x11_managed_paths(test_x11_managed_policy)
         librdp_apply_system_definitions(test_x11_managed_policy)
         librdp_apply_warning_options(test_x11_managed_policy)
         librdp_apply_sanitizer_compile_options(
@@ -229,6 +260,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             librdp
             OpenSSL::Crypto
         )
+        librdp_apply_x11_managed_paths(test_x11_managed_config)
         librdp_apply_system_definitions(test_x11_managed_config)
         librdp_apply_warning_options(test_x11_managed_config)
         librdp_apply_sanitizer_compile_options(
@@ -246,7 +278,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
         file(MAKE_DIRECTORY
             ${LIBRDP_X11_MANAGED_TEST_CONFIG_DIR})
         file(COPY
-            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/librdp-session-broker.conf.example
+            ${CMAKE_CURRENT_BINARY_DIR}/librdp-session-broker.conf.example
             DESTINATION ${LIBRDP_X11_MANAGED_TEST_CONFIG_DIR}
             FILE_PERMISSIONS OWNER_READ OWNER_WRITE
         )
@@ -389,6 +421,8 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
                 OpenSSL::Crypto
                 PkgConfig::LIBRDP_X11_SERVER
             )
+            librdp_apply_x11_managed_paths(
+                test_x11_managed_supervisor)
             librdp_apply_x11_managed_auth(
                 test_x11_managed_supervisor)
             librdp_apply_system_definitions(

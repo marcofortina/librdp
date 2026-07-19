@@ -41,6 +41,11 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef LIBRDP_X11_SESSION_AGENT_PATH
+#define LIBRDP_X11_SESSION_AGENT_PATH \
+    "/usr/libexec/librdp/librdp-session-agent"
+#endif
+
 typedef struct x11_managed_supervisor
 {
     const x11_managed_supervisor_config* config;
@@ -159,7 +164,7 @@ void x11_managed_supervisor_config_init(
     config->version = X11_MANAGED_SUPERVISOR_VERSION;
     config->size = sizeof(*config);
     x11_managed_auth_config_init(&config->authentication);
-    config->agent_path = "/usr/bin/librdp-session-agent";
+    config->agent_path = LIBRDP_X11_SESSION_AGENT_PATH;
     config->authentication_timeout_ms = 30000;
     config->startup_timeout_ms = 30000;
     config->command_timeout_ms = 5000;

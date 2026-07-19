@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+"""Validate installed application and managed-session privilege boundaries."""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+import sys
+
+
+def staged_path(destdir: Path, logical_path: Path) -> Path:
+    if not logical_path.is_absolute():
+        raise ValueError(f"install path is not absolute: {logical_path}")
+    return destdir / logical_path.relative_to(logical_path.anchor)
+
+
+def executable(path: Path) -> None:
+    info = path.stat()
+    mode = stat.S_IMODE(info.st_mode)
+    if not stat.S_ISREG(info.st_mode):
+        raise RuntimeError(f"installed path is not a regular file: {path}")
+    if mode & 0o111 == 0:
+        raise RuntimeError(f"installed path is not executable: {path}")
+    if mode & (stat.S_ISUID | stat.S_ISGID):
+        raise RuntimeError(f"installed path has elevated mode bits: {path}")
+
+
+def contains_path(binary: Path, expected: Path) -> None:
+    if os.fsencode(str(expected)) not in binary.read_bytes():
+        raise RuntimeError(
+            f"{binary} does not contain configured helper path {expected}"
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cmake", required=True)
+    parser.add_argument("--build-dir", required=True, type=Path)
+    parser.add_argument("--destdir", required=True, type=Path)
+    parser.add_argument("--bindir", required=True, type=Path)
+    parser.add_argument("--sbindir", required=True, type=Path)
+    parser.add_argument("--libexecdir", required=True, type=Path)
+    parser.add_argument("--datadir", required=True, type=Path)
+    parser.add_argument("--config", default="", nargs="?")
+    args = parser.parse_args()
+
+    shutil.rmtree(args.destdir, ignore_errors=True)
+    environment = os.environ.copy()
+    environment["DESTDIR"] = str(args.destdir)
+    command = [args.cmake, "--install", str(args.build_dir)]
+    if args.config:
+        command.extend(["--config", args.config])
+    subprocess.run(command, check=True, env=environment)
+
+    server = staged_path(args.destdir, args.bindir / "librdp-server")
+    broker = staged_path(
+        args.destdir, args.sbindir / "librdp-session-broker"
+    )
+    agent = staged_path(
+        args.destdir, args.libexecdir / "librdp-session-agent"
+    )
+    supervisor = staged_path(
+        args.destdir, args.libexecdir / "librdp-session-supervisor"
+    )
+    for path in (server, broker, agent, supervisor):
+        executable(path)
+
+    forbidden = (
+        args.bindir / "librdp-session-broker",
+        args.bindir / "librdp-session-agent",
+        args.bindir / "librdp-session-supervisor",
+        args.sbindir / "librdp-session-agent",
+        args.sbindir / "librdp-session-supervisor",
+    )
+    for logical in forbidden:
+        if staged_path(args.destdir, logical).exists():
+            raise RuntimeError(
+                f"managed-session helper installed in public command path: {logical}"
+            )
+
+    configured_agent = args.libexecdir / "librdp-session-agent"
+    configured_supervisor = args.libexecdir / "librdp-session-supervisor"
+    contains_path(broker, configured_agent)
+    contains_path(broker, configured_supervisor)
+    contains_path(supervisor, configured_agent)
+
+    config = staged_path(
+        args.destdir, args.datadir / "librdp-session-broker.conf.example"
+    ).read_text(encoding="utf-8")
+    expected_lines = {
+        "socket=/run/librdp/session-broker.sock",
+        "runtime-root=/run/librdp/sessions",
+        f"supervisor={configured_supervisor}",
+        f"agent={configured_agent}",
+        "auth-service=librdp",
+    }
+    actual_lines = set(config.splitlines())
+    missing = sorted(expected_lines - actual_lines)
+    if missing:
+        raise RuntimeError(
+            "installed broker configuration is missing: " + ", ".join(missing)
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(1)

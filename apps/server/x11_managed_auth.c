@@ -398,7 +398,6 @@ static librdp_status x11_managed_auth_open_bsd(
     void* cancel_user_data,
     x11_managed_auth_outcome* outcome)
 {
-    (void)config;
     if (x11_managed_auth_cancelled(cancelled, cancel_user_data))
     {
         *outcome = X11_MANAGED_AUTH_CANCELLED;
@@ -406,7 +405,7 @@ static librdp_status x11_managed_auth_open_bsd(
     }
     *outcome = auth_userokay(username,
                              NULL,
-                             "auth-librdp-x11",
+                             config->service_name,
                              password)
                    ? X11_MANAGED_AUTH_AUTHENTICATED
                    : X11_MANAGED_AUTH_DENIED;

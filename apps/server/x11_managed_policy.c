@@ -31,12 +31,12 @@
 
 #ifndef LIBRDP_X11_SESSION_SUPERVISOR_PATH
 #define LIBRDP_X11_SESSION_SUPERVISOR_PATH \
-    "/usr/bin/librdp-session-supervisor"
+    "/usr/libexec/librdp/librdp-session-supervisor"
 #endif
 
 #ifndef LIBRDP_X11_SESSION_AGENT_PATH
 #define LIBRDP_X11_SESSION_AGENT_PATH \
-    "/usr/bin/librdp-session-agent"
+    "/usr/libexec/librdp/librdp-session-agent"
 #endif
 
 static int x11_managed_policy_copy(char* output,
@@ -119,11 +119,11 @@ void x11_managed_policy_init(x11_managed_policy* policy)
     (void)x11_managed_policy_copy(
         policy->socket_path,
         sizeof(policy->socket_path),
-        "/run/librdp/x11-broker.sock");
+        "/run/librdp/session-broker.sock");
     (void)x11_managed_policy_copy(
         policy->runtime_root,
         sizeof(policy->runtime_root),
-        "/run/librdp/x11-sessions");
+        "/run/librdp/sessions");
     (void)x11_managed_policy_copy(
         policy->supervisor_path,
         sizeof(policy->supervisor_path),

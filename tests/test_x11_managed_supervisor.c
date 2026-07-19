@@ -260,6 +260,8 @@ static int test_managed_lifecycle(void)
     CHECK(length > 0 && (size_t)length < sizeof(display));
     CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, bootstrap) == 0);
     x11_managed_supervisor_config_init(&config);
+    CHECK(strcmp(config.agent_path,
+                 LIBRDP_X11_SESSION_AGENT_PATH) == 0);
     config.authentication.provider = test_auth_provider;
     config.agent_path = LIBRDP_TEST_MANAGED_SUPERVISOR_PATH;
     config.startup_timeout_ms = 10000;

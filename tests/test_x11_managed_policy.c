@@ -85,6 +85,15 @@ static int test_defaults_and_authorization(void)
     x11_managed_ipc_message authenticated;
 
     x11_managed_policy_init(&policy);
+    CHECK(strcmp(policy.socket_path,
+                 "/run/librdp/session-broker.sock") == 0);
+    CHECK(strcmp(policy.runtime_root,
+                 "/run/librdp/sessions") == 0);
+    CHECK(strcmp(policy.supervisor_path,
+                 LIBRDP_X11_SESSION_SUPERVISOR_PATH) == 0);
+    CHECK(strcmp(policy.agent_path,
+                 LIBRDP_X11_SESSION_AGENT_PATH) == 0);
+    CHECK(strcmp(policy.authentication_service, "librdp") == 0);
     CHECK(!x11_managed_policy_valid(&policy));
     CHECK(test_configure_policy(&policy));
     CHECK(x11_managed_policy_valid(&policy));

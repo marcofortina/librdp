@@ -1,10 +1,10 @@
 # Copyright (C) 2026 Marco Fortina
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-socket=/run/librdp/x11-broker.sock
-runtime-root=/run/librdp/x11-sessions
-supervisor=/usr/bin/librdp-session-supervisor
-agent=/usr/bin/librdp-session-agent
+socket=/run/librdp/session-broker.sock
+runtime-root=/run/librdp/sessions
+supervisor=@CMAKE_INSTALL_FULL_LIBEXECDIR@/librdp/librdp-session-supervisor
+agent=@CMAKE_INSTALL_FULL_LIBEXECDIR@/librdp/librdp-session-agent
 xserver=/usr/bin/Xorg
 desktop=/usr/bin/startxfce4
 auth-service=librdp

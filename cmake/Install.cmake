@@ -77,6 +77,11 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/librdp.pc
     @ONLY
 )
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/packaging/librdp-session-broker.conf.example
+    ${CMAKE_CURRENT_BINARY_DIR}/librdp-session-broker.conf.example
+    @ONLY
+)
 
 install(TARGETS ${LIBRDP_LIBRARY_TARGETS}
     EXPORT librdpTargets
@@ -109,7 +114,7 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
 )
 install(FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/packaging/librdp-session-broker.conf.example
+    ${CMAKE_CURRENT_BINARY_DIR}/librdp-session-broker.conf.example
     DESTINATION ${CMAKE_INSTALL_DATADIR}/librdp
 )
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs/

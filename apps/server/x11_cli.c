@@ -28,7 +28,7 @@ void x11_server_options_init(x11_server_options* options)
         return;
     memset(options, 0, sizeof(*options));
     options->bind_address = "127.0.0.1";
-    options->broker_socket = "/run/librdp/x11-broker.sock";
+    options->broker_socket = "/run/librdp/session-broker.sock";
     options->password_environment = "LIBRDP_SERVER_PASSWORD";
     options->reconnect_token_environment =
         "LIBRDP_MANAGED_RECONNECT_TOKEN";

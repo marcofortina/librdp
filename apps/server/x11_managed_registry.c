@@ -279,7 +279,7 @@ void x11_managed_registry_config_init(
     memset(config, 0, sizeof(*config));
     config->version = X11_MANAGED_REGISTRY_CONFIG_VERSION;
     config->size = sizeof(*config);
-    config->runtime_root = "/run/librdp/x11-sessions";
+    config->runtime_root = "/run/librdp/sessions";
     config->max_sessions = 32u;
     config->max_sessions_per_user = 2u;
     config->first_display = X11_MANAGED_REGISTRY_MIN_DISPLAY;
