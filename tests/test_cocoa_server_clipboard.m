@@ -245,6 +245,7 @@ static int test_local_content(cocoa_server_clipboard* clipboard,
                               size_t file_data_len)
 {
     NSPasteboardItem* item = nil;
+    NSArray* objects = nil;
     NSData* png = test_png_data();
     NSURL* file_url = nil;
     server_platform_clipboard_file_request file_request;
@@ -262,8 +263,9 @@ static int test_local_content(cocoa_server_clipboard* clipboard,
     CHECK([item setData:png forType:NSPasteboardTypePNG]);
     file_url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
     CHECK(file_url != nil);
+    objects = @[ item, file_url ];
     [pasteboard clearContents];
-    CHECK([pasteboard writeObjects:@[ item, file_url ]]);
+    CHECK([pasteboard writeObjects:objects]);
     CHECK(test_dispatch(clipboard));
     CHECK(state->format_events == 1u);
     CHECK(state->format_count == 4u);
