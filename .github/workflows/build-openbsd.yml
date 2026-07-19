@@ -47,7 +47,10 @@ jobs:
                 fi
               done
             fi
-            for package in ffmpeg openh264 pcsc-lite libusb1 libfido2 libcbor cups libarchive; do
+            libusb_package="$(pkg_info -Q libusb1 | grep '^libusb1-[0-9]' | grep -v -- '-debug$' | LC_ALL=C sort | tail -n 1)"
+            test -n "${libusb_package}"
+            pkg_add "${libusb_package}"
+            for package in ffmpeg openh264 pcsc-lite libarchive; do
               pkg_add "${package}" || true
             done
           run: |
@@ -71,6 +74,10 @@ jobs:
               -DLIBRDP_BUILD_X11_ADMIN=OFF \
               -DLIBRDP_BUILD_X11_WORKSPACE=OFF \
               -DLIBRDP_ENABLE_WERROR=ON \
+              -DLIBRDP_WITH_FIDO2=OFF \
+              -DLIBRDP_WITH_CBOR=OFF \
+              -DLIBRDP_WITH_CUPS=OFF \
+              -DLIBRDP_WITH_CURL=OFF \
               -DLIBRDP_WITH_PIPEWIRE=OFF \
               -DLIBRDP_WITH_PNG=OFF \
               -DLIBRDP_WITH_JPEG=OFF \
