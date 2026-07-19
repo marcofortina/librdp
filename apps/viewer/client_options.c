@@ -370,9 +370,7 @@ int client_options_configure(librdp_settings* settings,
         {
             options->tls.mode = CLIENT_TLS_DECISION_PROMPT;
         }
-        else if (strcmp(argv[i], "--tls-accept-any-cert") == 0 ||
-                 (policy->allow_tls_accept_alias &&
-                  strcmp(argv[i], "--accept-tls-certificate") == 0))
+        else if (strcmp(argv[i], "--tls-accept-any-cert") == 0)
         {
             options->tls.mode = CLIENT_TLS_DECISION_ACCEPT_ONCE;
         }

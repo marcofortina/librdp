@@ -5,7 +5,7 @@
 /*
  * Module: Cocoa viewer command-line policy implementation.
  * Invariants: connection and feature syntax remains identical to the X11
- * viewer except for native media defaults and the documented TLS alias.
+ * viewer except for native media defaults.
  * Ownership: argv and streams remain caller-owned; public settings copy every
  * value needed beyond startup.
  * Threading: startup-only and serialized before AppKit session dispatch.
@@ -23,7 +23,7 @@ void cocoa_viewer_usage(FILE* stream, const char* program)
     fprintf(stream,
             "usage: %s --target host [--port port] [--user name] [--password value] "
             "[--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] "
-            "[--tls-prompt-cert] [--tls-accept-any-cert] [--accept-tls-certificate] "
+            "[--tls-prompt-cert] [--tls-accept-any-cert] "
             "[--gateway url] [--gateway-mode http-connect|rdg-http] "
             "[--gateway-user name] [--gateway-password value] [--gateway-domain name] "
             "[--gateway-timeout ms] [--gateway-no-session-credentials] [--drive name=path] "
@@ -58,7 +58,6 @@ int cocoa_viewer_configure_settings(librdp_settings* settings,
     policy.normalize_camera_source = cocoa_viewer_camera_normalizer;
     policy.error_stream = stderr;
     policy.allow_help = 1;
-    policy.allow_tls_accept_alias = 1;
     policy.rail_requires_app_prefix = 1;
     return client_options_configure(settings, options, &policy, argc, argv);
 }

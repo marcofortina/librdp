@@ -34,7 +34,6 @@ typedef struct client_option_policy
     FILE* error_stream;
     int allow_help;
     int allow_clipboard_file;
-    int allow_tls_accept_alias;
     int rail_requires_app_prefix;
 } client_option_policy;
 
