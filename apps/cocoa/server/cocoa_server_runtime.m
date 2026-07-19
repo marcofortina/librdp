@@ -25,11 +25,18 @@
 #include <string.h>
 
 static server_host* cocoa_server_signal_host = NULL;
+static volatile sig_atomic_t cocoa_server_revoke_requested = 0;
 
 static void cocoa_server_signal_handler(int signal_number)
 {
-    (void)signal_number;
-    if (cocoa_server_signal_host)
+    if (!cocoa_server_signal_host)
+        return;
+    if (signal_number == SIGUSR1)
+    {
+        cocoa_server_revoke_requested = 1;
+        (void)server_host_wakeup(cocoa_server_signal_host);
+    }
+    else
         (void)server_host_cancel(cocoa_server_signal_host);
 }
 
@@ -41,7 +48,28 @@ static int cocoa_server_install_signals(void)
     action.sa_handler = cocoa_server_signal_handler;
     sigemptyset(&action.sa_mask);
     return sigaction(SIGINT, &action, NULL) == 0 &&
-           sigaction(SIGTERM, &action, NULL) == 0;
+           sigaction(SIGTERM, &action, NULL) == 0 &&
+           sigaction(SIGUSR1, &action, NULL) == 0;
+}
+
+static librdp_status cocoa_server_apply_revocation(server_host* host)
+{
+    server_platform_permission_kind kind =
+        SERVER_PLATFORM_PERMISSION_CAPTURE;
+
+    if (!host)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (kind = SERVER_PLATFORM_PERMISSION_CAPTURE;
+         kind <= SERVER_PLATFORM_PERMISSION_DRIVE;
+         kind = (server_platform_permission_kind)((int)kind + 1))
+    {
+        librdp_status status =
+            server_host_revoke_permission(host, kind);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 static void cocoa_server_trace(
@@ -236,6 +264,7 @@ int cocoa_server_run(const cocoa_server_options* options)
         return 1;
     }
     cocoa_server_signal_host = host;
+    cocoa_server_revoke_requested = 0;
     if (!cocoa_server_install_signals())
         status = LIBRDP_STATUS_IO_ERROR;
     else
@@ -250,8 +279,19 @@ int cocoa_server_run(const cocoa_server_options* options)
                 cocoa_server_context_width(native),
                 cocoa_server_context_height(native));
         while (status == LIBRDP_STATUS_OK ||
+               status == LIBRDP_STATUS_TIMEOUT ||
                status == LIBRDP_STATUS_AGAIN)
+        {
             status = server_host_run_once(host, -1);
+            if (cocoa_server_revoke_requested &&
+                (status == LIBRDP_STATUS_OK ||
+                 status == LIBRDP_STATUS_TIMEOUT ||
+                 status == LIBRDP_STATUS_AGAIN))
+            {
+                cocoa_server_revoke_requested = 0;
+                status = cocoa_server_apply_revocation(host);
+            }
+        }
         if (status == LIBRDP_STATUS_CANCELLED ||
             status == LIBRDP_STATUS_CLOSED)
             result = 0;
@@ -266,6 +306,7 @@ int cocoa_server_run(const cocoa_server_options* options)
     }
     (void)server_host_stop(host);
     cocoa_server_signal_host = NULL;
+    cocoa_server_revoke_requested = 0;
     server_host_free(host);
     cocoa_server_context_free(native);
     server_fuse_free(drive);

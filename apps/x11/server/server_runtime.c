@@ -31,6 +31,7 @@ struct x11_server_runtime
     x11_server_context* native;
     server_host* host;
     librdp_security_mode security_mode;
+    volatile sig_atomic_t revoke_requested;
     int started;
 };
 
@@ -38,9 +39,17 @@ static x11_server_runtime* x11_server_signal_runtime = NULL;
 
 static void x11_server_signal_handler(int signal_number)
 {
-    (void)signal_number;
-    if (x11_server_signal_runtime)
-        (void)x11_server_runtime_cancel(x11_server_signal_runtime);
+    x11_server_runtime* runtime = x11_server_signal_runtime;
+
+    if (!runtime)
+        return;
+    if (signal_number == SIGUSR1)
+    {
+        runtime->revoke_requested = 1;
+        (void)x11_server_runtime_wakeup(runtime);
+    }
+    else
+        (void)x11_server_runtime_cancel(runtime);
 }
 
 static void x11_server_trace(const server_host_trace_event* event,
@@ -71,7 +80,29 @@ static int x11_server_install_signals(void)
     action.sa_handler = x11_server_signal_handler;
     sigemptyset(&action.sa_mask);
     return sigaction(SIGINT, &action, NULL) == 0 &&
-           sigaction(SIGTERM, &action, NULL) == 0;
+           sigaction(SIGTERM, &action, NULL) == 0 &&
+           sigaction(SIGUSR1, &action, NULL) == 0;
+}
+
+static librdp_status x11_server_runtime_apply_revocation(
+    x11_server_runtime* runtime)
+{
+    server_platform_permission_kind kind =
+        SERVER_PLATFORM_PERMISSION_CAPTURE;
+
+    if (!runtime || !runtime->host)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (kind = SERVER_PLATFORM_PERMISSION_CAPTURE;
+         kind <= SERVER_PLATFORM_PERMISSION_DRIVE;
+         kind = (server_platform_permission_kind)((int)kind + 1))
+    {
+        librdp_status status =
+            server_host_revoke_permission(runtime->host, kind);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 x11_server_runtime* x11_server_runtime_new(
@@ -199,9 +230,20 @@ librdp_status x11_server_runtime_start(x11_server_runtime* runtime)
 librdp_status x11_server_runtime_run_once(x11_server_runtime* runtime,
                                           int timeout_ms)
 {
+    librdp_status status = LIBRDP_STATUS_OK;
+
     if (!runtime || !runtime->host || !runtime->started)
         return LIBRDP_STATUS_STATE;
-    return server_host_run_once(runtime->host, timeout_ms);
+    status = server_host_run_once(runtime->host, timeout_ms);
+    if (runtime->revoke_requested &&
+        (status == LIBRDP_STATUS_OK ||
+         status == LIBRDP_STATUS_TIMEOUT ||
+         status == LIBRDP_STATUS_AGAIN))
+    {
+        runtime->revoke_requested = 0;
+        status = x11_server_runtime_apply_revocation(runtime);
+    }
+    return status;
 }
 
 librdp_status x11_server_runtime_wakeup(x11_server_runtime* runtime)

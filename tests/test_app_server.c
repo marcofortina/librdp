@@ -46,6 +46,8 @@ typedef struct mock_platform_context
     unsigned int clipboard_releases;
     unsigned int drive_peer_removals;
     unsigned int drive_completions;
+    unsigned int permission_requests;
+    unsigned int permission_revocations;
     uint32_t last_cleanup_peer_id;
     uint32_t last_clipboard_generation;
     uint32_t last_clipboard_peer_id;
@@ -517,15 +519,46 @@ static librdp_status mock_permission_query(
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status mock_permission_change(
+static librdp_status mock_permission_request(
     void* context,
     server_platform_permission_kind kind)
 {
-    (void)context;
-    return kind >= SERVER_PLATFORM_PERMISSION_CAPTURE &&
-                   kind <= SERVER_PLATFORM_PERMISSION_DRIVE
-               ? LIBRDP_STATUS_OK
-               : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
+        kind > SERVER_PLATFORM_PERMISSION_DRIVE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->permission_requests++;
+    mock->permissions[(size_t)kind - 1u] =
+        SERVER_PLATFORM_PERMISSION_GRANTED;
+    if (mock->permission_sink.changed)
+    {
+        mock->permission_sink.changed(kind,
+                                      SERVER_PLATFORM_PERMISSION_GRANTED,
+                                      mock->permission_sink.user_data);
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status mock_permission_revoke(
+    void* context,
+    server_platform_permission_kind kind)
+{
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
+        kind > SERVER_PLATFORM_PERMISSION_DRIVE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->permission_revocations++;
+    mock->permissions[(size_t)kind - 1u] =
+        SERVER_PLATFORM_PERMISSION_DENIED;
+    if (mock->permission_sink.changed)
+    {
+        mock->permission_sink.changed(kind,
+                                      SERVER_PLATFORM_PERMISSION_DENIED,
+                                      mock->permission_sink.user_data);
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_clipboard_send_monitor_ready(void* context,
@@ -766,8 +799,8 @@ static const server_platform_permission_vtable mock_permission = {
     mock_permission_start,
     mock_stop,
     mock_permission_query,
-    mock_permission_change,
-    mock_permission_change,
+    mock_permission_request,
+    mock_permission_revoke,
     &mock_events,
 };
 
@@ -1319,6 +1352,7 @@ static int test_host_lifecycle(void)
     mock_platform_context mock;
     server_platform_frame frame;
     uint8_t pixels[4u * 3u * 4u];
+    server_host_metrics metrics;
     uint16_t port = 0;
     uint32_t first_id = 0;
     int provider_ready = 0;
@@ -1329,6 +1363,9 @@ static int test_host_lifecycle(void)
     configure_mock_platform(&config, &mock);
     host = server_host_new(&config);
     CHECK(host != NULL);
+    CHECK(server_host_revoke_permission(
+              host,
+              SERVER_PLATFORM_PERMISSION_CAPTURE) == LIBRDP_STATUS_STATE);
     CHECK(server_host_get_state(host) == SERVER_HOST_NEW);
     CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
     CHECK(server_host_get_state(host) == SERVER_HOST_LISTENING);
@@ -1355,9 +1392,10 @@ static int test_host_lifecycle(void)
               LIBRDP_SERVER_EXTENSION_FILESYSTEM,
               &provider_ready) == LIBRDP_STATUS_OK);
     CHECK(provider_ready);
-    mock.permission_sink.changed(SERVER_PLATFORM_PERMISSION_DRIVE,
-                                 SERVER_PLATFORM_PERMISSION_DENIED,
-                                 mock.permission_sink.user_data);
+    CHECK(server_host_revoke_permission(
+              host,
+              SERVER_PLATFORM_PERMISSION_DRIVE) == LIBRDP_STATUS_OK);
+    CHECK(mock.permission_revocations == 1u);
     CHECK(librdp_server_get_extension_provider_status(
               host->listener,
               LIBRDP_SERVER_EXTENSION_FILESYSTEM,
@@ -1397,18 +1435,19 @@ static int test_host_lifecycle(void)
                   LIBRDP_SERVER_EXTENSION_FILESYSTEM,
                   &provider_ready) == LIBRDP_STATUS_OK);
         CHECK(!provider_ready);
-        mock.permission_sink.changed(SERVER_PLATFORM_PERMISSION_DRIVE,
-                                     SERVER_PLATFORM_PERMISSION_GRANTED,
-                                     mock.permission_sink.user_data);
+        CHECK(server_host_request_permission(
+                  host,
+                  SERVER_PLATFORM_PERMISSION_DRIVE) == LIBRDP_STATUS_OK);
+        CHECK(mock.permission_requests == 1u);
         CHECK(librdp_server_peer_get_extension_provider_status(
                   first_slot->protocol,
                   LIBRDP_SERVER_EXTENSION_FILESYSTEM,
                   &provider_ready) == LIBRDP_STATUS_OK);
         CHECK(provider_ready);
         CHECK(mock.permission_sink.changed != NULL);
-        mock.permission_sink.changed(SERVER_PLATFORM_PERMISSION_CLIPBOARD,
-                                     SERVER_PLATFORM_PERMISSION_DENIED,
-                                     mock.permission_sink.user_data);
+        CHECK(server_host_revoke_permission(
+                  host,
+                  SERVER_PLATFORM_PERMISSION_CLIPBOARD) == LIBRDP_STATUS_OK);
         CHECK(librdp_server_peer_get_extension_provider_status(
                   first_slot->protocol,
                   LIBRDP_SERVER_EXTENSION_CLIPBOARD,
@@ -1447,12 +1486,43 @@ static int test_host_lifecycle(void)
     frame.sequence = 1u;
     frame.timestamp_ns = 1000u;
     CHECK(mock.capture_sink.frame != NULL);
+    CHECK(server_host_revoke_permission(
+              host,
+              SERVER_PLATFORM_PERMISSION_CAPTURE) == LIBRDP_STATUS_OK);
+    CHECK(server_host_get_provider_state(
+              host,
+              SERVER_PLATFORM_PROVIDER_CAPTURE) == SERVER_HOST_PROVIDER_DENIED);
+    CHECK(server_host_get_provider_state(
+              host,
+              SERVER_PLATFORM_PROVIDER_POINTER) == SERVER_HOST_PROVIDER_DENIED);
     mock.capture_sink.frame(&frame, mock.capture_sink.user_data);
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.capture_frames == 0u);
+    CHECK(metrics.capture_frames_dropped == 1u);
+    CHECK(server_host_request_permission(
+              host,
+              SERVER_PLATFORM_PERMISSION_CAPTURE) == LIBRDP_STATUS_OK);
+    CHECK(server_host_get_provider_state(
+              host,
+              SERVER_PLATFORM_PROVIDER_CAPTURE) == SERVER_HOST_PROVIDER_READY);
+    CHECK(server_host_get_provider_state(
+              host,
+              SERVER_PLATFORM_PROVIDER_POINTER) == SERVER_HOST_PROVIDER_READY);
+    CHECK(mock.frame_requests == 4u);
+    frame.sequence = 2u;
+    mock.capture_sink.frame(&frame, mock.capture_sink.user_data);
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.capture_frames == 1u);
     server_host_peer_info_init(&reused);
     CHECK(server_host_peer_at(host, 0u, &reused) == LIBRDP_STATUS_OK);
     CHECK(reused.desktop_width == 4u && reused.desktop_height == 3u);
 
     CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_revoke_permission(
+              host,
+              SERVER_PLATFORM_PERMISSION_CAPTURE) == LIBRDP_STATUS_STATE);
     CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
     CHECK(server_host_get_state(host) == SERVER_HOST_STOPPED);
     CHECK(server_host_peer_count(host) == 0u);
@@ -1544,12 +1614,24 @@ static int test_host_input_ownership(void)
     CHECK(server_host_dispatch_peer_input(second_slot, &event) ==
           LIBRDP_STATUS_OK);
     CHECK(mock.injections == 2u);
-    CHECK(server_host_close_peer(host, second.id) == LIBRDP_STATUS_OK);
+    CHECK(server_host_revoke_permission(
+              host,
+              SERVER_PLATFORM_PERMISSION_INPUT) == LIBRDP_STATUS_OK);
     CHECK(server_host_input_owner(host) == 0u);
     CHECK(mock.releases == 2u);
+    CHECK(server_host_dispatch_peer_input(second_slot, &event) ==
+          LIBRDP_STATUS_STATE);
+    CHECK(server_host_request_permission(
+              host,
+              SERVER_PLATFORM_PERMISSION_INPUT) == LIBRDP_STATUS_OK);
+    CHECK(server_host_set_input_owner(host, second.id) ==
+          LIBRDP_STATUS_OK);
+    CHECK(server_host_close_peer(host, second.id) == LIBRDP_STATUS_OK);
+    CHECK(server_host_input_owner(host) == 0u);
+    CHECK(mock.releases == 3u);
     CHECK(server_host_set_input_owner(host, 0u) == LIBRDP_STATUS_OK);
     CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
-    CHECK(mock.releases == 2u);
+    CHECK(mock.releases == 3u);
     server_host_free(host);
     close(clients[0]);
     close(clients[1]);
@@ -1883,6 +1965,14 @@ static int test_dirty_scheduler(void)
     CHECK(count == 1u);
     CHECK(ready[0].x == 0u && ready[0].y == 0u);
     CHECK(ready[0].width == 64u && ready[0].height == 48u);
+    CHECK(server_dirty_scheduler_clear(scheduler, 20000001u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(server_dirty_scheduler_peek(scheduler,
+                                      20000001u,
+                                      &ready,
+                                      &count,
+                                      &timeout_ms) == LIBRDP_STATUS_OK);
+    CHECK(ready == NULL && count == 0u && timeout_ms == -1);
     CHECK(server_dirty_scheduler_invalidate(scheduler, &overflow, 20000000u) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
     server_dirty_metrics_init(&metrics);
@@ -1891,6 +1981,9 @@ static int test_dirty_scheduler(void)
     CHECK(metrics.deferred_frames == 1u);
     CHECK(metrics.presented_regions == 1u);
     CHECK(metrics.surface_resizes == 2u);
+    CHECK(metrics.pending_regions == 0u);
+    CHECK(server_dirty_scheduler_clear(NULL, 0u) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
     server_dirty_scheduler_free(scheduler);
 
     config.max_regions = 0u;

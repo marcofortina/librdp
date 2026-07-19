@@ -436,11 +436,23 @@ librdp_status x11_server_context_set_permission(
     server_platform_permission_kind kind,
     server_platform_permission_state state)
 {
+    int configured = 0;
+
     if (!context || kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
         kind > SERVER_PLATFORM_PERMISSION_DRIVE ||
         state < SERVER_PLATFORM_PERMISSION_UNKNOWN ||
         state > SERVER_PLATFORM_PERMISSION_GRANTED)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (kind == SERVER_PLATFORM_PERMISSION_CAPTURE)
+        configured = context->config.allow_capture;
+    else if (kind == SERVER_PLATFORM_PERMISSION_INPUT)
+        configured = context->config.allow_input;
+    else if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD)
+        configured = context->config.allow_clipboard;
+    else if (kind == SERVER_PLATFORM_PERMISSION_DRIVE)
+        configured = context->config.allow_drive;
+    if (state == SERVER_PLATFORM_PERMISSION_GRANTED && !configured)
+        return LIBRDP_STATUS_UNSUPPORTED;
     context->permissions[kind] = state;
     if (context->permission_started && context->permission_sink.changed)
     {

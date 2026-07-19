@@ -78,6 +78,8 @@ librdp_status server_dirty_scheduler_commit(server_dirty_scheduler* scheduler,
                                             uint64_t now_ns);
 librdp_status server_dirty_scheduler_defer(server_dirty_scheduler* scheduler,
                                            uint64_t now_ns);
+librdp_status server_dirty_scheduler_clear(server_dirty_scheduler* scheduler,
+                                           uint64_t now_ns);
 librdp_status server_dirty_scheduler_get_metrics(
     const server_dirty_scheduler* scheduler,
     server_dirty_metrics* metrics);

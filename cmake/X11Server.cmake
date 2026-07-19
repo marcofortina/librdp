@@ -297,7 +297,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         )
         target_link_libraries(
             test_x11_managed_client PRIVATE
-            librdp
+            librdp_app_common
             OpenSSL::Crypto
             Threads::Threads
         )

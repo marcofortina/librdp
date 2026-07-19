@@ -355,6 +355,10 @@ typedef struct server_platform_permission_vtable
     librdp_status (*query)(void* context,
                            server_platform_permission_kind kind,
                            server_platform_permission_state* state);
+    /*
+     * Successful request and revoke operations update query state before
+     * notifying sink.changed on the serialized host thread.
+     */
     librdp_status (*request)(void* context,
                              server_platform_permission_kind kind);
     librdp_status (*revoke)(void* context,

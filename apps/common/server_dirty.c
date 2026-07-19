@@ -335,6 +335,17 @@ librdp_status server_dirty_scheduler_defer(server_dirty_scheduler* scheduler,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status server_dirty_scheduler_clear(server_dirty_scheduler* scheduler,
+                                           uint64_t now_ns)
+{
+    if (!scheduler)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    scheduler->count = 0u;
+    scheduler->next_frame_ns = now_ns;
+    scheduler->metrics.pending_regions = 0u;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status server_dirty_scheduler_get_metrics(
     const server_dirty_scheduler* scheduler,
     server_dirty_metrics* metrics)

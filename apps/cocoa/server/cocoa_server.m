@@ -657,6 +657,11 @@ static librdp_status cocoa_server_permission_query(
         kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
         kind > SERVER_PLATFORM_PERMISSION_DRIVE)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (context->permission_revoked[kind])
+    {
+        *state = SERVER_PLATFORM_PERMISSION_DENIED;
+        return LIBRDP_STATUS_OK;
+    }
     if (kind == SERVER_PLATFORM_PERMISSION_CAPTURE)
     {
         *state =
@@ -725,6 +730,8 @@ static librdp_status cocoa_server_permission_request(
         state = SERVER_PLATFORM_PERMISSION_GRANTED;
     else
         return LIBRDP_STATUS_UNSUPPORTED;
+    context->permission_revoked[kind] =
+        state == SERVER_PLATFORM_PERMISSION_GRANTED ? 0u : 1u;
     if (context->permission_sink.changed)
         context->permission_sink.changed(
             kind,
@@ -746,6 +753,7 @@ static librdp_status cocoa_server_permission_revoke(
         kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
         kind > SERVER_PLATFORM_PERMISSION_DRIVE)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    context->permission_revoked[kind] = 1u;
     if (kind == SERVER_PLATFORM_PERMISSION_INPUT)
         cocoa_server_input_vtable.release_all(context);
     else if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD)

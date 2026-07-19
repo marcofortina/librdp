@@ -1169,16 +1169,27 @@ static int test_x11_providers(const char* display_name)
           LIBRDP_STATUS_OK);
     CHECK(permission_state == SERVER_PLATFORM_PERMISSION_GRANTED);
     CHECK(permission->start(context, &permission_sink) == LIBRDP_STATUS_OK);
-    CHECK(x11_server_context_set_permission(
+    CHECK(permission->revoke(
               context,
-              SERVER_PLATFORM_PERMISSION_CAPTURE,
-              SERVER_PLATFORM_PERMISSION_DENIED) == LIBRDP_STATUS_OK);
+              SERVER_PLATFORM_PERMISSION_CAPTURE) == LIBRDP_STATUS_OK);
     CHECK(state.permission_count == 1u);
+    CHECK(permission->query(context,
+                            SERVER_PLATFORM_PERMISSION_CAPTURE,
+                            &permission_state) == LIBRDP_STATUS_OK);
+    CHECK(permission_state == SERVER_PLATFORM_PERMISSION_DENIED);
+    CHECK(permission->request(
+              context,
+              SERVER_PLATFORM_PERMISSION_CAPTURE) == LIBRDP_STATUS_OK);
+    CHECK(state.permission_count == 2u);
+    CHECK(permission->query(context,
+                            SERVER_PLATFORM_PERMISSION_CAPTURE,
+                            &permission_state) == LIBRDP_STATUS_OK);
+    CHECK(permission_state == SERVER_PLATFORM_PERMISSION_GRANTED);
     CHECK(x11_server_context_set_permission(
               context,
-              SERVER_PLATFORM_PERMISSION_CAPTURE,
-              SERVER_PLATFORM_PERMISSION_GRANTED) == LIBRDP_STATUS_OK);
-    CHECK(state.permission_count == 2u);
+              SERVER_PLATFORM_PERMISSION_DRIVE,
+              SERVER_PLATFORM_PERMISSION_GRANTED) ==
+          LIBRDP_STATUS_UNSUPPORTED);
 
     memset(&capture_sink, 0, sizeof(capture_sink));
     capture_sink.frame = test_frame_callback;

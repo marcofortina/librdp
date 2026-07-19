@@ -455,7 +455,9 @@ static void server_host_dispatch_frames(server_host* host,
         int timeout_ms = -1;
         librdp_status status = LIBRDP_STATUS_OK;
 
-        if (!slot->occupied || slot->state != SERVER_HOST_PEER_ACTIVE)
+        if (!slot->occupied || slot->state != SERVER_HOST_PEER_ACTIVE ||
+            host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] !=
+                SERVER_HOST_PROVIDER_READY)
             continue;
         status = server_dirty_scheduler_peek(slot->dirty,
                                              now_ns,

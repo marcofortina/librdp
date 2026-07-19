@@ -237,9 +237,7 @@ static void server_host_release_input_owner(server_host* host)
     owner = server_host_find_peer_slot(host, host->input_owner_id);
     if (owner)
         owner->input_owner = 0;
-    if (host->platform.input.vtable &&
-        host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] ==
-            SERVER_HOST_PROVIDER_READY)
+    if (host->platform.input.vtable)
     {
         const server_platform_input_vtable* input =
             (const server_platform_input_vtable*)host->platform.input.vtable;
@@ -384,8 +382,21 @@ static void server_host_capture_frame(const server_platform_frame* frame,
     size_t row_bytes = 0;
     size_t index = 0;
 
-    if (!host || host->state != SERVER_HOST_LISTENING || !frame ||
-        !frame->pixels || frame->width == 0u || frame->height == 0u ||
+    if (!host || host->state != SERVER_HOST_LISTENING || !frame)
+        return;
+    if (host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] !=
+        SERVER_HOST_PROVIDER_READY)
+    {
+        server_host_metric_add(&host->metrics.capture_frames_dropped, 1u);
+        server_host_trace_emit(host,
+                               SERVER_HOST_TRACE_CAPTURE_DROPPED,
+                               NULL,
+                               LIBRDP_STATUS_STATE,
+                               frame->sequence,
+                               1u);
+        return;
+    }
+    if (!frame->pixels || frame->width == 0u || frame->height == 0u ||
         !server_host_multiply_size((size_t)frame->width, 4u, &row_bytes) ||
         frame->stride < row_bytes ||
         !server_host_multiply_size((size_t)frame->height,
@@ -521,8 +532,9 @@ static void server_host_capture_lost(librdp_status status, void* user_data)
 {
     server_host* host = (server_host*)user_data;
 
-    (void)status;
-    if (!host)
+    if (!host ||
+        host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] ==
+            SERVER_HOST_PROVIDER_DENIED)
         return;
     host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] =
         SERVER_HOST_PROVIDER_FAILED;
@@ -551,7 +563,11 @@ static void server_host_pointer_update(
     size_t index = 0;
     int position_valid = 0;
 
-    if (!host || !pointer || host->state != SERVER_HOST_LISTENING)
+    if (!host || !pointer || host->state != SERVER_HOST_LISTENING ||
+        host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] !=
+            SERVER_HOST_PROVIDER_READY ||
+        host->provider_states[SERVER_PLATFORM_PROVIDER_POINTER] !=
+            SERVER_HOST_PROVIDER_READY)
         return;
     position_valid =
         pointer->x >= 0 && pointer->y >= 0 &&
@@ -835,6 +851,8 @@ static void server_host_permission_changed(
 {
     server_host* host = (server_host*)user_data;
     server_platform_provider_kind provider = SERVER_PLATFORM_PROVIDER_COUNT;
+    server_platform_provider_kind secondary =
+        SERVER_PLATFORM_PROVIDER_COUNT;
 
     if (!host)
         return;
@@ -842,6 +860,7 @@ static void server_host_permission_changed(
     {
         case SERVER_PLATFORM_PERMISSION_CAPTURE:
             provider = SERVER_PLATFORM_PROVIDER_CAPTURE;
+            secondary = SERVER_PLATFORM_PROVIDER_POINTER;
             break;
         case SERVER_PLATFORM_PERMISSION_INPUT:
             provider = SERVER_PLATFORM_PROVIDER_INPUT;
@@ -861,8 +880,24 @@ static void server_host_permission_changed(
 
         host->provider_states[provider] =
             state == SERVER_PLATFORM_PERMISSION_GRANTED
-                ? SERVER_HOST_PROVIDER_READY
+                ? (provider == SERVER_PLATFORM_PROVIDER_INPUT
+                       ? (host->platform.input.vtable
+                              ? SERVER_HOST_PROVIDER_READY
+                              : SERVER_HOST_PROVIDER_UNAVAILABLE)
+                       : (host->provider_started[provider]
+                              ? SERVER_HOST_PROVIDER_READY
+                              : SERVER_HOST_PROVIDER_STOPPED))
                 : SERVER_HOST_PROVIDER_DENIED;
+        if (secondary < SERVER_PLATFORM_PROVIDER_COUNT &&
+            host->platform.pointer.vtable)
+        {
+            host->provider_states[secondary] =
+                state == SERVER_PLATFORM_PERMISSION_GRANTED
+                    ? (host->provider_started[secondary]
+                           ? SERVER_HOST_PROVIDER_READY
+                           : SERVER_HOST_PROVIDER_STOPPED)
+                    : SERVER_HOST_PROVIDER_DENIED;
+        }
         if (state != SERVER_PLATFORM_PERMISSION_GRANTED)
             server_host_metric_add(&host->metrics.permission_denials, 1u);
         server_host_trace_emit(host,
@@ -884,6 +919,21 @@ static void server_host_permission_changed(
                 state == SERVER_PLATFORM_PERMISSION_GRANTED &&
                     host->drive_configured);
         }
+        if (kind == SERVER_PLATFORM_PERMISSION_CAPTURE &&
+            state != SERVER_PLATFORM_PERMISSION_GRANTED)
+        {
+            for (index = 0; index < host->peer_capacity; index++)
+            {
+                server_host_peer_slot* slot = &host->peers[index];
+
+                if (slot->occupied && slot->dirty)
+                {
+                    (void)server_dirty_scheduler_clear(
+                        slot->dirty,
+                        server_host_now_ns());
+                }
+            }
+        }
         for (index = 0; index < host->peer_capacity; index++)
         {
             server_host_peer_slot* slot = &host->peers[index];
@@ -900,7 +950,8 @@ static void server_host_permission_changed(
                 const server_host_provider_mapping* mapping =
                     &server_host_provider_mappings[mapping_index];
 
-                if (mapping->provider != provider)
+                if (mapping->provider != provider &&
+                    mapping->provider != secondary)
                     continue;
                 (void)librdp_server_peer_enable_extension_provider(
                     slot->protocol,
@@ -935,6 +986,16 @@ static void server_host_permission_changed(
         if (state != SERVER_PLATFORM_PERMISSION_GRANTED &&
             kind == SERVER_PLATFORM_PERMISSION_INPUT)
             server_host_release_input_owner(host);
+        if (state == SERVER_PLATFORM_PERMISSION_GRANTED &&
+            kind == SERVER_PLATFORM_PERMISSION_CAPTURE &&
+            host->provider_started[SERVER_PLATFORM_PROVIDER_CAPTURE])
+        {
+            const server_platform_capture_vtable* capture =
+                (const server_platform_capture_vtable*)
+                    host->platform.capture.vtable;
+
+            (void)capture->request_frame(host->platform.capture.context);
+        }
     }
 }
 
@@ -1358,6 +1419,38 @@ server_host_provider_state server_host_get_provider_state(
         kind >= SERVER_PLATFORM_PROVIDER_COUNT)
         return SERVER_HOST_PROVIDER_UNAVAILABLE;
     return host->provider_states[kind];
+}
+
+librdp_status server_host_request_permission(
+    server_host* host,
+    server_platform_permission_kind kind)
+{
+    const server_platform_permission_vtable* permission = NULL;
+
+    if (!host || kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
+        kind > SERVER_PLATFORM_PERMISSION_DRIVE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (host->state != SERVER_HOST_LISTENING)
+        return LIBRDP_STATUS_STATE;
+    permission = (const server_platform_permission_vtable*)
+        host->platform.permission.vtable;
+    return permission->request(host->platform.permission.context, kind);
+}
+
+librdp_status server_host_revoke_permission(
+    server_host* host,
+    server_platform_permission_kind kind)
+{
+    const server_platform_permission_vtable* permission = NULL;
+
+    if (!host || kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
+        kind > SERVER_PLATFORM_PERMISSION_DRIVE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (host->state != SERVER_HOST_LISTENING)
+        return LIBRDP_STATUS_STATE;
+    permission = (const server_platform_permission_vtable*)
+        host->platform.permission.vtable;
+    return permission->revoke(host->platform.permission.context, kind);
 }
 
 uint16_t server_host_local_port(const server_host* host)
@@ -1961,7 +2054,12 @@ librdp_status server_host_accept_pending(server_host* host)
             (const server_platform_capture_vtable*)
                 host->platform.capture.vtable;
 
-        status = capture->request_frame(host->platform.capture.context);
+        if (host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] ==
+            SERVER_HOST_PROVIDER_READY)
+        {
+            status = capture->request_frame(
+                host->platform.capture.context);
+        }
     }
     if (status != LIBRDP_STATUS_OK)
     {
