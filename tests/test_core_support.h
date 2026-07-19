@@ -314,6 +314,7 @@ int read_client_printer_close_response_fd(int fd,
 int run_printer_job_server_scenario(int fd, uint8_t* input, size_t capacity);
 
 int reserve_closed_loopback_port(uint16_t* port);
+int start_stalling_handshake_server(uint16_t* port, pid_t* child_pid);
 
 int start_handshake_server_full(uint16_t* port,
                                        pid_t* child_pid,
@@ -366,6 +367,8 @@ int test_settings_surface_input_session(void);
 int test_reconnect_policy(void);
 
 int test_reconnect_success(void);
+
+int test_connect_cancellation(void);
 
 int test_dynamic_channel_duplicate_create(void);
 

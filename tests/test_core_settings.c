@@ -1737,6 +1737,60 @@ int test_reconnect_policy(void)
 }
 
 /*
+ * Coverage: interrupts a connect blocked while waiting for the first server
+ * handshake packet. It catches wakeups that only affect active dispatch and
+ * cross-thread socket teardown that bypasses owner-thread cleanup.
+ */
+int test_connect_cancellation(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    cancel_thread_capture cancel_capture;
+    pthread_t cancel_thread;
+    struct timespec started;
+    struct timespec finished;
+    uint64_t elapsed_ms = 0;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+
+    memset(&cancel_capture, 0, sizeof(cancel_capture));
+    CHECK(start_stalling_handshake_server(&test_port, &server_pid));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    cancel_capture.session = session;
+    cancel_capture.delay_ms = 50;
+    cancel_capture.status = LIBRDP_STATUS_AGAIN;
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &started) == 0);
+    CHECK(pthread_create(&cancel_thread, NULL, cancel_thread_main, &cancel_capture) == 0);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_CANCELLED);
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &finished) == 0);
+    CHECK(pthread_join(cancel_thread, NULL) == 0);
+    elapsed_ms = ((uint64_t)(finished.tv_sec - started.tv_sec) * 1000u) +
+                 ((uint64_t)(finished.tv_nsec >= started.tv_nsec ?
+                                 finished.tv_nsec - started.tv_nsec :
+                                 1000000000L + finished.tv_nsec - started.tv_nsec) /
+                  1000000u);
+    if (finished.tv_nsec < started.tv_nsec)
+        elapsed_ms -= 1000u;
+    CHECK(elapsed_ms < 1000u);
+    CHECK(cancel_capture.status == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CANCELLED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_DISCONNECTED);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates reconnect success against a deterministic loopback peer
  * that accepts two handshakes on the same listener. It catches stale state,
  * missed activation transitions, and reconnect metrics drift without requiring
@@ -1747,11 +1801,16 @@ int test_reconnect_success(void)
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     librdp_reconnect_policy policy;
+    librdp_channel_handle stale_handle = 0;
+    librdp_channel_info stale_info;
     librdp_metrics metrics;
+    librdp_metrics before_loss;
+    librdp_metrics after_loss;
     uint16_t test_port = 0;
     pid_t server_pid = -1;
     int child_status = 0;
     size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     settings = librdp_settings_new();
     CHECK(settings != NULL);
@@ -1778,6 +1837,32 @@ int test_reconnect_success(void)
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
     for (i = 0; i < 6u; i++)
         CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_channel_open(session,
+                                      "smoke.reconnect",
+                                      LIBRDP_CHANNEL_PRIORITY_LOW,
+                                      &stale_handle) == LIBRDP_STATUS_OK);
+    CHECK(stale_handle != 0);
+    CHECK(librdp_metrics_init(&before_loss) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &before_loss) == LIBRDP_STATUS_OK);
+    for (i = 0;
+         i < 8u && librdp_session_get_state(session) != LIBRDP_SESSION_CLOSED &&
+         librdp_session_get_state(session) != LIBRDP_SESSION_FAILED;
+         i++)
+        status = librdp_session_run_once(session, 1000);
+    CHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_IO_ERROR ||
+          status == LIBRDP_STATUS_CLOSED);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CLOSED ||
+          librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(librdp_metrics_init(&after_loss) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &after_loss) == LIBRDP_STATUS_OK);
+    CHECK(after_loss.transport_bytes_read >= before_loss.transport_bytes_read);
+    CHECK(after_loss.transport_bytes_written >= before_loss.transport_bytes_written);
+    CHECK(after_loss.pdu_in >= before_loss.pdu_in);
+    CHECK(after_loss.pdu_out >= before_loss.pdu_out);
+    CHECK(after_loss.channel_in >= before_loss.channel_in);
+    CHECK(after_loss.channel_out >= before_loss.channel_out);
+    if (librdp_session_get_state(session) == LIBRDP_SESSION_FAILED)
+        CHECK(after_loss.errors > before_loss.errors);
 
     CHECK(librdp_reconnect_policy_init(&policy) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_reconnect(session, &policy) == LIBRDP_STATUS_OK);
@@ -1787,9 +1872,34 @@ int test_reconnect_success(void)
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
     for (i = 0; i < 6u; i++)
         CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_channel_info_init(&stale_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_channel_get_info(session, stale_handle, &stale_info) == LIBRDP_STATUS_STATE);
     CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK);
     CHECK(metrics.reconnects == 1);
+    CHECK(metrics.transport_bytes_read >= after_loss.transport_bytes_read);
+    CHECK(metrics.transport_bytes_written >= after_loss.transport_bytes_written);
+    CHECK(metrics.pdu_in >= after_loss.pdu_in);
+    CHECK(metrics.pdu_out >= after_loss.pdu_out);
+    CHECK(metrics.surface_updates > 0);
+    CHECK(metrics.channel_in > 0);
+    CHECK(metrics.channel_out > 0);
+    CHECK(librdp_session_reset_metrics(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.transport_bytes_read == 0);
+    CHECK(metrics.transport_bytes_written == 0);
+    CHECK(metrics.pdu_in == 0);
+    CHECK(metrics.pdu_out == 0);
+    CHECK(metrics.frames == 0);
+    CHECK(metrics.surface_updates == 0);
+    CHECK(metrics.channel_in == 0);
+    CHECK(metrics.channel_out == 0);
+    CHECK(metrics.channel_bytes_in == 0);
+    CHECK(metrics.channel_bytes_out == 0);
+    CHECK(metrics.errors == 0);
+    CHECK(metrics.reconnects == 0);
+    CHECK(metrics.limits_rejected == 0);
 
     librdp_session_free(session);
     librdp_settings_free(settings);

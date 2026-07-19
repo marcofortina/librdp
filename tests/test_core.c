@@ -18,7 +18,8 @@
 
 static int run_settings(void)
 {
-    if (test_reconnect_policy() != 0 || test_reconnect_success() != 0)
+    if (test_reconnect_policy() != 0 || test_connect_cancellation() != 0 ||
+        test_reconnect_success() != 0)
         return 1;
     return test_settings_surface_input_session();
 }
@@ -165,7 +166,8 @@ int test_client_core(void)
         return 1;
     if (test_static_channels() != 0 || test_clipboard_unmatched_responses() != 0)
         return 1;
-    if (test_reconnect_policy() != 0 || test_reconnect_success() != 0)
+    if (test_reconnect_policy() != 0 || test_connect_cancellation() != 0 ||
+        test_reconnect_success() != 0)
         return 1;
     if (test_dynamic_channel_duplicate_create() != 0 ||
         test_dynamic_channel_close_pending_fragment() != 0 ||

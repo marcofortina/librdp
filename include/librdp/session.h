@@ -772,7 +772,9 @@ LIBRDP_API librdp_status librdp_session_set_trace_policy(librdp_session* session
  * session or missing target; LIBRDP_STATUS_STATE when the current state cannot
  * start a connection; LIBRDP_STATUS_NO_MEMORY, LIBRDP_STATUS_IO_ERROR,
  * LIBRDP_STATUS_PROTOCOL_ERROR, LIBRDP_STATUS_UNSUPPORTED, or
- * LIBRDP_STATUS_CLOSED from transport, security, or protocol setup failures.
+ * LIBRDP_STATUS_CLOSED from transport, security, or protocol setup failures;
+ * LIBRDP_STATUS_CANCELLED when librdp_session_cancel() interrupts an
+ * established transport during the handshake.
  *
  * @note Thread-safety: call from one serialized session-driving context.
  * When TLS or NLA is selected, certificate and credential callbacks run on
@@ -839,12 +841,13 @@ LIBRDP_API librdp_status librdp_session_reconnect(librdp_session* session,
 LIBRDP_API librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms);
 
 /**
- * @brief Request cancellation of the active session loop.
+ * @brief Request cancellation of a connecting or active session.
  *
  * This function is the thread-safe exception to the serialized session-driving
- * rule. It records a cancellation request and wakes any thread blocked inside
- * librdp_session_run_once() or an application poll loop that uses
- * librdp_session_get_pollfds(). The driving thread observes the request,
+ * rule. It records a cancellation request, interrupts an established
+ * connection transport, and wakes any thread blocked inside
+ * librdp_session_connect(), librdp_session_run_once(), or an application poll
+ * loop that uses librdp_session_get_pollfds(). The driving thread observes the request,
  * closes negotiated transport/channel state, emits the normal disconnect
  * event, and leaves the session in LIBRDP_SESSION_CANCELLED.
  *

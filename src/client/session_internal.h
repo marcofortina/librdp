@@ -877,8 +877,10 @@ struct librdp_session
     librdp_session_lifecycle lifecycle;
     librdp_error last_error;
     pthread_mutex_t owner_mutex;
+    pthread_mutex_t transport_cancel_mutex;
     pthread_t owner_thread;
     uint8_t owner_thread_valid;
+    uint8_t transport_cancel_ready;
     short pending_tcp_revents;
     short pending_wakeup_revents;
     short pending_udp_revents;

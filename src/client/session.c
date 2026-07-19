@@ -3349,6 +3349,13 @@ librdp_status librdp_session_connect(librdp_session* session)
                                        librdp_settings_target(session->settings),
                                        librdp_settings_port(session->settings),
                                        5000);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_session_transport_cancel_arm(session);
+    if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
+    {
+        status = LIBRDP_STATUS_CANCELLED;
+        goto fail;
+    }
     if (status != LIBRDP_STATUS_OK)
     {
         const int via_gateway =
@@ -4211,7 +4218,9 @@ librdp_status librdp_session_connect(librdp_session* session)
     return LIBRDP_STATUS_OK;
 
 fail:
-    rdp_transport_close(&session->transport);
+    if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
+        status = LIBRDP_STATUS_CANCELLED;
+    rdp_session_transport_close(session);
     rdp_session_audio_output_udp_close(session);
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
@@ -4308,6 +4317,8 @@ fail:
     if (provider_credentials_initialized)
         librdp_credentials_clear(&provider_credentials);
     rdp_session_trace_scope_end(session);
+    if (status == LIBRDP_STATUS_CANCELLED)
+        return rdp_session_finish_cancel(session);
     return rdp_session_fail(session, status);
 }
 

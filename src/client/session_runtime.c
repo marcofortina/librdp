@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 int rdp_session_multitransport_runtime_supported(void)
@@ -467,6 +468,40 @@ librdp_status rdp_session_wakeup_signal(librdp_session* session)
             return LIBRDP_STATUS_OK;
         return LIBRDP_STATUS_IO_ERROR;
     }
+}
+
+/*
+ * Publish, interrupt, and close the transport through one synchronization
+ * boundary. Cancellation only shuts down the socket; protocol and backend
+ * ownership remain with the session owner thread.
+ */
+void rdp_session_transport_cancel_arm(librdp_session* session)
+{
+    if (!session)
+        return;
+    (void)pthread_mutex_lock(&session->transport_cancel_mutex);
+    session->transport_cancel_ready = session->transport.fd >= 0 ? 1u : 0u;
+    (void)pthread_mutex_unlock(&session->transport_cancel_mutex);
+}
+
+void rdp_session_transport_cancel_interrupt(librdp_session* session)
+{
+    if (!session)
+        return;
+    (void)pthread_mutex_lock(&session->transport_cancel_mutex);
+    if (session->transport_cancel_ready && session->transport.fd >= 0)
+        (void)shutdown(session->transport.fd, SHUT_RDWR);
+    (void)pthread_mutex_unlock(&session->transport_cancel_mutex);
+}
+
+void rdp_session_transport_close(librdp_session* session)
+{
+    if (!session)
+        return;
+    (void)pthread_mutex_lock(&session->transport_cancel_mutex);
+    session->transport_cancel_ready = 0;
+    rdp_transport_close(&session->transport);
+    (void)pthread_mutex_unlock(&session->transport_cancel_mutex);
 }
 
 static char* rdp_session_trace_strdup(const char* text)
@@ -967,4 +1002,3 @@ void librdp_session_clear_last_error(librdp_session* session)
     if (session && rdp_session_require_owner(session, "client.error.clear.owner") == LIBRDP_STATUS_OK)
         rdp_error_clear(&session->last_error);
 }
-

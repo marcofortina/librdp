@@ -2692,6 +2692,60 @@ int reserve_closed_loopback_port(uint16_t* port)
 }
 
 /*
+ * Fixture: accepts a loopback connection and deliberately withholds the X.224
+ * response. The peer exits as soon as cancellation shuts down the socket.
+ */
+int start_stalling_handshake_server(uint16_t* port, pid_t* child_pid)
+{
+    int listener = -1;
+    struct sockaddr_in addr;
+    socklen_t addr_len = (socklen_t)sizeof(addr);
+
+    if (!port || !child_pid)
+        return 0;
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0)
+        return 0;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(listener, (struct sockaddr*)&addr, sizeof(addr)) != 0 ||
+        getsockname(listener, (struct sockaddr*)&addr, &addr_len) != 0 ||
+        listen(listener, 1) != 0)
+    {
+        close(listener);
+        return 0;
+    }
+    *port = ntohs(addr.sin_port);
+    *child_pid = fork();
+    if (*child_pid < 0)
+    {
+        close(listener);
+        return 0;
+    }
+    if (*child_pid == 0)
+    {
+        uint8_t buffer[256];
+        int client = -1;
+        ssize_t got = 0;
+
+        alarm(5);
+        client = accept(listener, NULL, NULL);
+        close(listener);
+        if (client < 0)
+            _exit(2);
+        do
+        {
+            got = read(client, buffer, sizeof(buffer));
+        } while (got > 0 || (got < 0 && errno == EINTR));
+        close(client);
+        _exit(got == 0 ? 0 : 3);
+    }
+    close(listener);
+    return 1;
+}
+
+/*
  * Fixture: starts a local handshake peer that feeds deterministic protocol
  * bytes to the client session. It isolates connection state-machine coverage
  * from external network and credential dependencies.

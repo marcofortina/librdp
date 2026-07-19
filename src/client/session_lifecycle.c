@@ -130,6 +130,15 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
         free(session);
         return NULL;
     }
+    if (pthread_mutex_init(&session->transport_cancel_mutex, NULL) != 0)
+    {
+        pthread_mutex_destroy(&session->owner_mutex);
+        rdp_session_wakeup_close(session);
+        librdp_surface_free(session->surface);
+        librdp_settings_free(session->settings);
+        free(session);
+        return NULL;
+    }
     session->gdi_current_surface_id = RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE;
     session->requested_desktop_width = librdp_settings_width(session->settings);
     session->requested_desktop_height = librdp_settings_height(session->settings);
@@ -174,8 +183,9 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
         rdp_bulk_decompressor_free(&session->bulk_decompressor);
         rdp_graphics_decompressor_free(&session->bulk_rdp8_decompressor);
         rdp_graphics_decompressor_free(&session->graphics_decompressor);
-        rdp_transport_close(&session->transport);
+        rdp_session_transport_close(session);
         rdp_session_wakeup_close(session);
+        pthread_mutex_destroy(&session->transport_cancel_mutex);
         pthread_mutex_destroy(&session->owner_mutex);
         librdp_surface_free(session->surface);
         librdp_settings_free(session->settings);
@@ -252,11 +262,12 @@ void librdp_session_free(librdp_session* session)
     rdp_graphics_decompressor_free(&session->graphics_decompressor);
     rdp_security_standard_clear(&session->standard_security);
     rdp_license_crypto_context_clear(&session->license_crypto);
-    rdp_transport_close(&session->transport);
+    rdp_session_transport_close(session);
     rdp_session_wakeup_close(session);
     rdp_session_trace_policy_clear(session);
     librdp_surface_free(session->surface);
     librdp_settings_free(session->settings);
+    pthread_mutex_destroy(&session->transport_cancel_mutex);
     pthread_mutex_destroy(&session->owner_mutex);
     free(session);
 }
@@ -269,6 +280,7 @@ librdp_status librdp_session_cancel(librdp_session* session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     atomic_store_explicit(&session->cancel_requested, 1u, memory_order_release);
     status = rdp_session_wakeup_signal(session);
+    rdp_session_transport_cancel_interrupt(session);
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT, "client.cancel.requested", "state=%d", (int)session->state);
     return status;
@@ -295,7 +307,7 @@ librdp_status rdp_session_disconnect_inner(librdp_session* session)
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_DISCONNECTING);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSING);
     rdp_session_graphics_dirty_reset(session);
-    rdp_transport_close(&session->transport);
+    rdp_session_transport_close(session);
     rdp_session_audio_output_udp_close(session);
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
