@@ -278,6 +278,7 @@ static uint32_t x11_display_current_layout(x11_app* app, librdp_display_monitor*
 }
 #endif
 
+#ifdef LIBRDP_HAVE_XRANDR
 static int x11_display_control_active(x11_app* app, const char* reason)
 {
     librdp_feature_status status;
@@ -310,6 +311,7 @@ static int x11_display_control_active(x11_app* app, const char* reason)
     }
     return 1;
 }
+#endif
 
 int x11_display_init(x11_app* app)
 {
