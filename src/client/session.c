@@ -2974,6 +2974,40 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
 }
 
 /*
+ * Refresh values derived when the session was constructed. The client facade
+ * exposes the session-owned settings before connect, so limits and the primary
+ * surface must follow any valid changes made through that public accessor.
+ */
+static librdp_status rdp_session_refresh_preconnect_configuration(librdp_session* session)
+{
+    const librdp_limits* limits = NULL;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !session->settings || !session->surface)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    limits = rdp_settings_limits_internal(session->settings);
+    if (!limits)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    width = librdp_settings_width(session->settings);
+    height = librdp_settings_height(session->settings);
+    if (width > limits->surface_max_dimension || height > limits->surface_max_dimension)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    if (librdp_surface_width(session->surface) != width ||
+        librdp_surface_height(session->surface) != height)
+    {
+        status = librdp_surface_resize(session->surface, width, height);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    session->limits = *limits;
+    session->requested_desktop_width = width;
+    session->requested_desktop_height = height;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
  * Drive the full client connection sequence from transport setup through
  * activation. Each phase commits session state only after the previous
  * handshake stage, security mode, and capability exchange succeed.
@@ -3031,6 +3065,17 @@ librdp_status librdp_session_connect(librdp_session* session)
                                    "client.connect.validate",
                                    "session state does not allow connect");
         return LIBRDP_STATUS_STATE;
+    }
+    status = rdp_session_refresh_preconnect_configuration(session);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_session_set_last_error(session,
+                                   status,
+                                   0,
+                                   LIBRDP_ERROR_COMPONENT_CLIENT,
+                                   "client.connect.settings",
+                                   "pre-connect settings are not usable");
+        return status;
     }
     if (!librdp_settings_target(session->settings))
     {

@@ -194,6 +194,13 @@ int test_settings_surface_input_session(void)
     CHECK(librdp_client_lifecycle(NULL) == LIBRDP_LIFECYCLE_FAILED);
     CHECK(librdp_client_state(client) == LIBRDP_SESSION_IDLE);
     CHECK(librdp_client_lifecycle(client) == LIBRDP_LIFECYCLE_NEW);
+    CHECK(librdp_settings_enable_feature(librdp_client_settings(client),
+                                         LIBRDP_FEATURE_DISPLAY_CONTROL,
+                                         1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_feature_status(librdp_client_session(client),
+                                            LIBRDP_FEATURE_DISPLAY_CONTROL,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
     CHECK(librdp_client_dispatch(client, 0) == LIBRDP_STATUS_STATE);
     CHECK(librdp_client_get_pollfds(NULL, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_client_get_pollfds(client, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_STATE);
@@ -206,7 +213,13 @@ int test_settings_surface_input_session(void)
     CHECK(librdp_client_cancel(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_client_reconnect(NULL, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_client_reconnect(client, NULL) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_settings_set_desktop_size(librdp_client_settings(client), 800, 600) ==
+          LIBRDP_STATUS_OK);
     CHECK(librdp_client_connect(client) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    session_surface = librdp_session_get_surface(librdp_client_session(client));
+    CHECK(session_surface != NULL);
+    CHECK(librdp_surface_width(session_surface) == 800);
+    CHECK(librdp_surface_height(session_surface) == 600);
     CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
     CHECK(librdp_error_copy_info(librdp_session_last_error(librdp_client_session(client)), &error_info) ==
           LIBRDP_STATUS_OK);

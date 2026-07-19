@@ -188,6 +188,11 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     return session;
 }
 
+librdp_settings* rdp_session_settings_mut(librdp_session* session)
+{
+    return session ? session->settings : NULL;
+}
+
 void librdp_session_free(librdp_session* session)
 {
     if (!session)

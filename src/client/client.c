@@ -4,8 +4,8 @@
  */
 /*
  * Module: public client facade over settings and session objects.
- * Invariants: the facade owns exactly one settings object and one session
- * object, and delegates lifecycle operations without changing semantics.
+ * Invariants: the facade owns exactly one session and exposes that session's
+ * settings object, so pre-connect settings changes affect the runtime.
  * Ownership: config strings are copied into settings during construction;
  * settings/session pointers returned publicly remain owned by the client.
  * Threading: not synchronized; callers serialize through the client owner.
@@ -14,6 +14,7 @@
  */
 
 #include <librdp/client.h>
+#include "client/session_lifecycle.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -92,6 +93,8 @@ librdp_client* librdp_client_new(const librdp_client_config* config)
     client->session = librdp_session_new(client->settings);
     if (!client->session)
         goto fail;
+    librdp_settings_free(client->settings);
+    client->settings = rdp_session_settings_mut(client->session);
     return client;
 
 fail:
@@ -105,7 +108,6 @@ void librdp_client_free(librdp_client* client)
     if (!client)
         return;
     librdp_session_free(client->session);
-    librdp_settings_free(client->settings);
     free(client);
 }
 
