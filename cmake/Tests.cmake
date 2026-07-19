@@ -161,6 +161,11 @@ if(LIBRDP_BUILD_TESTS)
     )
     target_link_libraries(test_app_policy PRIVATE librdp_app_common)
     librdp_apply_system_definitions(test_app_policy)
+    if(LIBRDP_LIBXML2_FOUND)
+        target_compile_definitions(test_app_policy PRIVATE
+            RDP_HAVE_LIBXML2=1
+        )
+    endif()
     librdp_apply_warning_options(test_app_policy)
     librdp_apply_sanitizer_compile_options(test_app_policy)
     librdp_apply_sanitizer_link_options(test_app_policy)

@@ -259,13 +259,16 @@ static int test_workspace_selection(void)
       "</Resources></Workspace>";
     librdp_workspace_config config;
     librdp_workspace* workspace = NULL;
+#ifdef RDP_HAVE_LIBXML2
     size_t selected = 99u;
+#endif
     FILE* errors = tmpfile();
 
     CHECK(errors != NULL);
     CHECK(librdp_workspace_config_init(&config) == LIBRDP_STATUS_OK);
     workspace = librdp_workspace_new(&config);
     CHECK(workspace != NULL);
+#ifdef RDP_HAVE_LIBXML2
     CHECK(librdp_workspace_load_xml(workspace, feed, sizeof(feed) - 1u) ==
           LIBRDP_STATUS_OK);
     CHECK(workspace_select_resource(workspace, NULL, &selected, errors) == 0);
@@ -276,6 +279,12 @@ static int test_workspace_selection(void)
     CHECK(workspace_select_resource(workspace, "Published Tool", &selected, errors) == 1);
     CHECK(selected == 1u);
     CHECK(workspace_select_resource(workspace, "missing", &selected, errors) == 0);
+#else
+    CHECK(librdp_workspace_load_xml(workspace,
+                                    feed,
+                                    sizeof(feed) - 1u) ==
+          LIBRDP_STATUS_UNSUPPORTED);
+#endif
     librdp_workspace_free(workspace);
     fclose(errors);
     return 0;
