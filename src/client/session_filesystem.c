@@ -466,7 +466,10 @@ static uint32_t rdp_session_drive_open_path(librdp_session* session,
         io_status = rdp_session_drive_root_fd(session, drive_index, &root_fd);
         if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
             return io_status;
-        *fd = dup(root_fd);
+        *fd = openat(root_fd,
+                     ".",
+                     flags | O_CLOEXEC | O_NOFOLLOW,
+                     mode);
         return *fd >= 0 ? RDP_DEVICE_REDIRECTION_STATUS_SUCCESS : rdp_session_errno_to_device_status(errno);
     }
     io_status = rdp_session_drive_open_parent_dir(session, device_id, relative_path, &parent_fd, &basename);
@@ -1606,6 +1609,9 @@ static librdp_status rdp_session_write_file_full_ea_information(rdp_buffer* buff
 
     if (!buffer || fd < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, 0u);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     list_len = flistxattr(fd, NULL, 0);
     if (list_len < 0)
     {
@@ -1693,11 +1699,19 @@ static librdp_status rdp_session_write_file_full_ea_information(rdp_buffer* buff
         (void)entry_len;
     }
     free(names);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        if (buffer->length - sizeof(uint32_t) > UINT32_MAX)
+            return LIBRDP_STATUS_NO_MEMORY;
+        rdp_session_write_u32_le_raw(
+            buffer->data,
+            (uint32_t)(buffer->length - sizeof(uint32_t)));
+    }
     return status;
 #else
     if (!buffer || fd < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    return LIBRDP_STATUS_OK;
+    return rdp_buffer_append_u32_le(buffer, 0u);
 #endif
 }
 

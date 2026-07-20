@@ -576,6 +576,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke drive-read-only)
     add_test(NAME server_client_smoke_drive_writable
              COMMAND test_server_client_smoke drive-writable)
+    add_test(NAME server_client_smoke_drive_information
+             COMMAND test_server_client_smoke drive-information)
     if(TARGET test_workspace_launch_smoke)
         add_test(NAME workspace_desktop_launch_smoke
             COMMAND test_workspace_launch_smoke

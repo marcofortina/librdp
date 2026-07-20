@@ -415,7 +415,9 @@ int test_filesystem_information_class_coverage(void)
         rdp_buffer_free(&buffer);
         rdp_buffer_init(&buffer);
         CHECK(rdp_session_write_file_information(&buffer, query_classes[i], &st, &file) == LIBRDP_STATUS_OK);
-        CHECK(buffer.length >= 4u || query_classes[i] == RDP_SESSION_FILE_FULL_EA_INFORMATION);
+        CHECK(buffer.length >= 4u);
+        CHECK(rdp_session_read_u32_le_unaligned(buffer.data) ==
+              buffer.length - 4u);
     }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
