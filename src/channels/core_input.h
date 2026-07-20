@@ -54,6 +54,12 @@ typedef struct rdp_core_input_header
     uint8_t padding;
 } rdp_core_input_header;
 
+typedef struct rdp_core_input_init_request
+{
+    uint16_t protocol_version_min;
+    uint16_t protocol_version_max;
+} rdp_core_input_init_request;
+
 typedef struct rdp_core_input_init_response
 {
     uint16_t selected_protocol_version;
@@ -86,6 +92,14 @@ librdp_status rdp_core_input_parse_header(const void* data,
                                           size_t length,
                                           rdp_core_input_header* header);
 librdp_status rdp_core_input_write_init_request(rdp_buffer* buffer);
+librdp_status rdp_core_input_parse_init_request(
+    const void* data,
+    size_t length,
+    rdp_core_input_init_request* request);
+librdp_status rdp_core_input_write_init_response(
+    rdp_buffer* buffer,
+    uint16_t selected_protocol_version,
+    uint16_t protocol_version_max);
 librdp_status rdp_core_input_parse_init_response(const void* data,
                                                  size_t length,
                                                  rdp_core_input_init_response* response);

@@ -11,6 +11,7 @@
  * Determinism: all transport stays on loopback and input is synthetic.
  */
 
+#include "channels/core_input.h"
 #include "channels/input_channel.h"
 
 #include <librdp/librdp.h>
@@ -33,7 +34,9 @@ typedef enum input_smoke_mode
 {
     INPUT_SMOKE_TOUCH,
     INPUT_SMOKE_TOUCH_FALLBACK,
-    INPUT_SMOKE_PEN
+    INPUT_SMOKE_PEN,
+    INPUT_SMOKE_CORE,
+    INPUT_SMOKE_CORE_FALLBACK
 } input_smoke_mode;
 
 typedef struct input_smoke_fixture
@@ -46,7 +49,11 @@ typedef struct input_smoke_fixture
     atomic_uint client_ready;
     atomic_uint touch_received;
     atomic_uint pen_received;
-    atomic_uint classic_received;
+    atomic_uint core_init_received;
+    atomic_uint core_key_received;
+    atomic_uint core_mouse_received;
+    atomic_uint classic_key_received;
+    atomic_uint classic_mouse_received;
     atomic_uint validation_errors;
     atomic_uint client_closed;
     input_smoke_mode mode;
@@ -61,7 +68,13 @@ typedef struct input_smoke_client_state
     unsigned int channel_ready;
     unsigned int touch_sent;
     unsigned int pen_sent;
+    unsigned int core_ready;
+    unsigned int key_sent;
     unsigned int mouse_sent;
+    unsigned int core_key_sent;
+    unsigned int core_mouse_sent;
+    unsigned int slow_key_sent;
+    unsigned int slow_mouse_sent;
 } input_smoke_client_state;
 
 static int input_smoke_check(int condition,
@@ -450,6 +463,94 @@ static int input_smoke_pen_event_matches(const uint8_t* data,
     return 1;
 }
 
+static void input_smoke_server_core_channel(
+    const librdp_server_channel_event* event,
+    input_smoke_fixture* fixture)
+{
+    rdp_core_input_header header;
+
+    if (!event || !fixture || !event->data ||
+        rdp_core_input_parse_header(event->data,
+                                    event->data_len,
+                                    &header) != LIBRDP_STATUS_OK)
+    {
+        atomic_fetch_add_explicit(&fixture->validation_errors,
+                                  1u,
+                                  memory_order_release);
+        return;
+    }
+    if (header.pdu_type == RDP_CORE_INPUT_PDU_CS_INIT_REQUEST)
+    {
+        rdp_core_input_init_request request;
+
+        if (rdp_core_input_parse_init_request(event->data,
+                                              event->data_len,
+                                              &request) !=
+                LIBRDP_STATUS_OK ||
+            request.protocol_version_min !=
+                RDP_CORE_INPUT_PROTOCOL_VERSION_100 ||
+            request.protocol_version_max !=
+                RDP_CORE_INPUT_PROTOCOL_VERSION_100)
+        {
+            atomic_fetch_add_explicit(
+                &fixture->validation_errors,
+                1u,
+                memory_order_release);
+            return;
+        }
+        atomic_fetch_add_explicit(&fixture->core_init_received,
+                                  1u,
+                                  memory_order_release);
+        return;
+    }
+    if (header.pdu_type ==
+        RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE)
+    {
+        rdp_core_input_event events[2];
+        uint8_t event_count = 0u;
+
+        if (rdp_core_input_parse_events(event->data,
+                                        event->data_len,
+                                        events,
+                                        2u,
+                                        &event_count) !=
+                LIBRDP_STATUS_OK ||
+            event_count != 1u)
+        {
+            atomic_fetch_add_explicit(
+                &fixture->validation_errors,
+                1u,
+                memory_order_release);
+            return;
+        }
+        if (events[0].type == RDP_CORE_INPUT_EVENT_SCANCODE &&
+            events[0].flags == 0u &&
+            events[0].scancode == 0x1eu)
+        {
+            atomic_fetch_add_explicit(
+                &fixture->core_key_received,
+                1u,
+                memory_order_release);
+            return;
+        }
+        if (events[0].type == RDP_CORE_INPUT_EVENT_MOUSE &&
+            events[0].flags == 0u &&
+            events[0].pointer_flags == 0x0800u &&
+            events[0].x == 17u &&
+            events[0].y == 19u)
+        {
+            atomic_fetch_add_explicit(
+                &fixture->core_mouse_received,
+                1u,
+                memory_order_release);
+            return;
+        }
+    }
+    atomic_fetch_add_explicit(&fixture->validation_errors,
+                              1u,
+                              memory_order_release);
+}
+
 static void input_smoke_server_channel(
     librdp_server_peer* peer,
     const librdp_server_channel_event* event,
@@ -468,6 +569,20 @@ static void input_smoke_server_channel(
         atomic_fetch_add_explicit(&fixture->channel_open,
                                   1u,
                                   memory_order_release);
+        return;
+    }
+    if (fixture->mode == INPUT_SMOKE_CORE)
+    {
+        if (event->type !=
+            LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_DATA)
+        {
+            atomic_fetch_add_explicit(
+                &fixture->validation_errors,
+                1u,
+                memory_order_release);
+            return;
+        }
+        input_smoke_server_core_channel(event, fixture);
         return;
     }
     if (event->type != LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_DATA ||
@@ -560,12 +675,86 @@ static void input_smoke_server_input(
     (void)peer;
     if (!fixture || !event)
         return;
-    if (event->type == LIBRDP_SERVER_INPUT_MOUSE)
+    if (event->type == LIBRDP_SERVER_INPUT_SCANCODE_KEY)
     {
-        atomic_fetch_add_explicit(&fixture->classic_received,
-                                  1u,
-                                  memory_order_release);
+        if (event->flags == 0u &&
+            event->param1 == 0x1eu)
+            atomic_fetch_add_explicit(
+                &fixture->classic_key_received,
+                1u,
+                memory_order_release);
+        else
+            atomic_fetch_add_explicit(
+                &fixture->validation_errors,
+                1u,
+                memory_order_release);
     }
+    else if (event->type == LIBRDP_SERVER_INPUT_MOUSE)
+    {
+        if (event->flags == 0x0800u &&
+            event->x == 17u &&
+            event->y == 19u)
+            atomic_fetch_add_explicit(
+                &fixture->classic_mouse_received,
+                1u,
+                memory_order_release);
+        else
+            atomic_fetch_add_explicit(
+                &fixture->validation_errors,
+                1u,
+                memory_order_release);
+    }
+}
+
+static int input_smoke_server_received_expected(
+    const input_smoke_fixture* fixture)
+{
+    const unsigned int touch =
+        atomic_load_explicit(&fixture->touch_received,
+                             memory_order_acquire);
+    const unsigned int pen =
+        atomic_load_explicit(&fixture->pen_received,
+                             memory_order_acquire);
+    const unsigned int core_init =
+        atomic_load_explicit(&fixture->core_init_received,
+                             memory_order_acquire);
+    const unsigned int core_key =
+        atomic_load_explicit(&fixture->core_key_received,
+                             memory_order_acquire);
+    const unsigned int core_mouse =
+        atomic_load_explicit(&fixture->core_mouse_received,
+                             memory_order_acquire);
+    const unsigned int classic_key =
+        atomic_load_explicit(&fixture->classic_key_received,
+                             memory_order_acquire);
+    const unsigned int classic_mouse =
+        atomic_load_explicit(&fixture->classic_mouse_received,
+                             memory_order_acquire);
+
+    if (fixture->mode == INPUT_SMOKE_TOUCH)
+        return touch == 1u && pen == 0u &&
+               core_init == 0u && core_key == 0u &&
+               core_mouse == 0u && classic_key == 0u &&
+               classic_mouse == 0u;
+    if (fixture->mode == INPUT_SMOKE_PEN)
+        return touch == 0u && pen == 1u &&
+               core_init == 0u && core_key == 0u &&
+               core_mouse == 0u && classic_key == 0u &&
+               classic_mouse == 0u;
+    if (fixture->mode == INPUT_SMOKE_TOUCH_FALLBACK)
+        return touch == 0u && pen == 0u &&
+               core_init == 0u && core_key == 0u &&
+               core_mouse == 0u && classic_key == 0u &&
+               classic_mouse == 1u;
+    if (fixture->mode == INPUT_SMOKE_CORE)
+        return touch == 0u && pen == 0u &&
+               core_init == 1u && core_key == 1u &&
+               core_mouse == 1u && classic_key == 0u &&
+               classic_mouse == 0u;
+    return touch == 0u && pen == 0u &&
+           core_init == 0u && core_key == 0u &&
+           core_mouse == 0u && classic_key == 1u &&
+           classic_mouse == 1u;
 }
 
 static void* input_smoke_server_main(void* user_data)
@@ -606,8 +795,15 @@ static void* input_smoke_server_main(void* user_data)
         fixture);
     if (fixture->status != LIBRDP_STATUS_OK)
         goto cleanup;
-    if (fixture->mode != INPUT_SMOKE_TOUCH_FALLBACK)
+    if (fixture->mode == INPUT_SMOKE_TOUCH ||
+        fixture->mode == INPUT_SMOKE_PEN ||
+        fixture->mode == INPUT_SMOKE_CORE)
     {
+        const char* channel_name =
+            fixture->mode == INPUT_SMOKE_CORE
+                ? RDP_CORE_INPUT_CHANNEL_NAME
+                : RDP_INPUT_CHANNEL_NAME;
+
         for (attempt = 0u;
              attempt < INPUT_SMOKE_PUMP_LIMIT &&
              atomic_load_explicit(&fixture->stop,
@@ -619,7 +815,7 @@ static void* input_smoke_server_main(void* user_data)
                     peer,
                     INPUT_SMOKE_CHANNEL_ID,
                     0u,
-                    RDP_INPUT_CHANNEL_NAME);
+                    channel_name);
             if (fixture->status == LIBRDP_STATUS_OK)
                 break;
             if (fixture->status != LIBRDP_STATUS_STATE)
@@ -655,12 +851,45 @@ static void* input_smoke_server_main(void* user_data)
             fixture->status = LIBRDP_STATUS_TIMEOUT;
             goto cleanup;
         }
-        fixture->status = librdp_server_peer_send_touch_ready(
-            peer,
-            INPUT_SMOKE_CHANNEL_ID,
-            RDP_INPUT_CHANNEL_PROTOCOL_V300,
-            RDP_INPUT_CHANNEL_SC_READY_MULTIPEN,
-            1);
+        if (fixture->mode == INPUT_SMOKE_CORE)
+        {
+            for (attempt = 0u;
+                 attempt < INPUT_SMOKE_PUMP_LIMIT &&
+                 atomic_load_explicit(
+                     &fixture->core_init_received,
+                     memory_order_acquire) == 0u &&
+                 atomic_load_explicit(&fixture->stop,
+                                      memory_order_acquire) == 0u;
+                 attempt++)
+            {
+                fixture->status =
+                    librdp_server_peer_run_once(peer, 20);
+                if (fixture->status != LIBRDP_STATUS_OK &&
+                    fixture->status != LIBRDP_STATUS_TIMEOUT)
+                    goto cleanup;
+            }
+            if (atomic_load_explicit(
+                    &fixture->core_init_received,
+                    memory_order_acquire) != 1u)
+            {
+                fixture->status = LIBRDP_STATUS_TIMEOUT;
+                goto cleanup;
+            }
+            fixture->status =
+                librdp_server_peer_send_core_input_init(
+                    peer,
+                    INPUT_SMOKE_CHANNEL_ID);
+        }
+        else
+        {
+            fixture->status =
+                librdp_server_peer_send_touch_ready(
+                    peer,
+                    INPUT_SMOKE_CHANNEL_ID,
+                    RDP_INPUT_CHANNEL_PROTOCOL_V300,
+                    RDP_INPUT_CHANNEL_SC_READY_MULTIPEN,
+                    1);
+        }
         if (fixture->status != LIBRDP_STATUS_OK)
             goto cleanup;
     }
@@ -682,30 +911,9 @@ static void* input_smoke_server_main(void* user_data)
                                   1u,
                                   memory_order_release);
             fixture->status =
-                ((fixture->mode == INPUT_SMOKE_TOUCH &&
-                  atomic_load_explicit(&fixture->touch_received,
-                                       memory_order_acquire) == 1u &&
-                  atomic_load_explicit(&fixture->pen_received,
-                                       memory_order_acquire) == 0u &&
-                  atomic_load_explicit(&fixture->classic_received,
-                                       memory_order_acquire) == 0u) ||
-                 (fixture->mode == INPUT_SMOKE_PEN &&
-                  atomic_load_explicit(&fixture->touch_received,
-                                       memory_order_acquire) == 0u &&
-                  atomic_load_explicit(&fixture->pen_received,
-                                       memory_order_acquire) == 1u &&
-                  atomic_load_explicit(&fixture->classic_received,
-                                       memory_order_acquire) == 0u) ||
-                 (fixture->mode == INPUT_SMOKE_TOUCH_FALLBACK &&
-                  atomic_load_explicit(&fixture->touch_received,
-                                       memory_order_acquire) == 0u &&
-                  atomic_load_explicit(&fixture->pen_received,
-                                       memory_order_acquire) == 0u &&
-                  atomic_load_explicit(&fixture->classic_received,
-                                       memory_order_acquire) == 1u)) &&
-                        atomic_load_explicit(
-                            &fixture->validation_errors,
-                            memory_order_acquire) == 0u
+                input_smoke_server_received_expected(fixture) &&
+                        atomic_load_explicit(&fixture->validation_errors,
+                                             memory_order_acquire) == 0u
                     ? LIBRDP_STATUS_OK
                     : LIBRDP_STATUS_PROTOCOL_ERROR;
             break;
@@ -771,6 +979,12 @@ static void input_smoke_trace(librdp_session* session,
                "client.input_channel.ready") == 0)
         state->channel_ready++;
     else if (record->event &&
+             record->level &&
+             strcmp(record->level, "info") == 0 &&
+             strcmp(record->event,
+                    "client.core_input.ready") == 0)
+        state->core_ready++;
+    else if (record->event &&
              strcmp(record->event,
                     "client.input_channel.touch_send") == 0)
         state->touch_sent++;
@@ -783,9 +997,31 @@ static void input_smoke_trace(librdp_session* session,
              strcmp(record->level, "info") == 0 &&
              strcmp(record->event,
                     "client.input.send") == 0 &&
-             record->message &&
-             strstr(record->message, "kind=mouse ") != NULL)
-        state->mouse_sent++;
+             record->message)
+    {
+        if (strstr(record->message,
+                   "kind=keyboard ") != NULL)
+        {
+            state->key_sent++;
+            if (strstr(record->message,
+                       "transport=core_input ") != NULL)
+                state->core_key_sent++;
+            else if (strstr(record->message,
+                            "transport=slowpath ") != NULL)
+                state->slow_key_sent++;
+        }
+        else if (strstr(record->message,
+                        "kind=mouse ") != NULL)
+        {
+            state->mouse_sent++;
+            if (strstr(record->message,
+                       "transport=core_input ") != NULL)
+                state->core_mouse_sent++;
+            else if (strstr(record->message,
+                            "transport=slowpath ") != NULL)
+                state->slow_mouse_sent++;
+        }
+    }
 }
 
 static void input_smoke_prepare_touch(
@@ -946,6 +1182,7 @@ static int input_smoke_run(input_smoke_mode mode)
     librdp_touch_contact contacts[3][2];
     librdp_pen_frame pen_frames[4];
     librdp_pen_contact pen_contacts[4];
+    librdp_key_event key;
     librdp_mouse_event mouse;
     uint16_t port = 0u;
     unsigned int attempt = 0u;
@@ -955,6 +1192,7 @@ static int input_smoke_run(input_smoke_mode mode)
 
     memset(&fixture, 0, sizeof(fixture));
     memset(&state, 0, sizeof(state));
+    memset(&key, 0, sizeof(key));
     memset(&mouse, 0, sizeof(mouse));
     atomic_init(&fixture.port, 0u);
     atomic_init(&fixture.stop, 0u);
@@ -962,7 +1200,11 @@ static int input_smoke_run(input_smoke_mode mode)
     atomic_init(&fixture.client_ready, 0u);
     atomic_init(&fixture.touch_received, 0u);
     atomic_init(&fixture.pen_received, 0u);
-    atomic_init(&fixture.classic_received, 0u);
+    atomic_init(&fixture.core_init_received, 0u);
+    atomic_init(&fixture.core_key_received, 0u);
+    atomic_init(&fixture.core_mouse_received, 0u);
+    atomic_init(&fixture.classic_key_received, 0u);
+    atomic_init(&fixture.classic_mouse_received, 0u);
     atomic_init(&fixture.validation_errors, 0u);
     atomic_init(&fixture.client_closed, 0u);
     fixture.mode = mode;
@@ -1008,12 +1250,18 @@ static int input_smoke_run(input_smoke_mode mode)
     trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
     trace_policy.callback = input_smoke_trace;
     trace_policy.callback_user_data = &state;
-    trace_policy.trace_id =
-        mode == INPUT_SMOKE_TOUCH
-            ? "input-touch-smoke"
-            : (mode == INPUT_SMOKE_PEN
-                   ? "input-pen-smoke"
-                   : "input-touch-fallback-smoke");
+    if (mode == INPUT_SMOKE_TOUCH)
+        trace_policy.trace_id = "input-touch-smoke";
+    else if (mode == INPUT_SMOKE_TOUCH_FALLBACK)
+        trace_policy.trace_id =
+            "input-touch-fallback-smoke";
+    else if (mode == INPUT_SMOKE_PEN)
+        trace_policy.trace_id = "input-pen-smoke";
+    else if (mode == INPUT_SMOKE_CORE)
+        trace_policy.trace_id = "input-core-smoke";
+    else
+        trace_policy.trace_id =
+            "input-core-fallback-smoke";
     REQUIRE(librdp_session_set_trace_policy(
                 session,
                 &trace_policy) == LIBRDP_STATUS_OK);
@@ -1021,6 +1269,12 @@ static int input_smoke_run(input_smoke_mode mode)
             LIBRDP_STATUS_OK);
     input_smoke_prepare_touch(frames, contacts);
     input_smoke_prepare_pen(pen_frames, pen_contacts);
+    key.scancode = 0x1eu;
+    key.state = LIBRDP_KEY_PRESSED;
+    mouse.x = 17u;
+    mouse.y = 19u;
+    mouse.button = LIBRDP_MOUSE_BUTTON_NONE;
+    mouse.state = LIBRDP_MOUSE_MOVED;
     for (attempt = 0u;
          attempt < INPUT_SMOKE_PUMP_LIMIT;
          attempt++)
@@ -1062,10 +1316,20 @@ static int input_smoke_run(input_smoke_mode mode)
                         INPUT_SMOKE_ENCODE_TIME,
                         frames,
                         3u) == LIBRDP_STATUS_STATE);
-            mouse.x = 17u;
-            mouse.y = 19u;
-            mouse.button = LIBRDP_MOUSE_BUTTON_NONE;
-            mouse.state = LIBRDP_MOUSE_MOVED;
+            REQUIRE(librdp_session_send_mouse(
+                        session,
+                        &mouse) == LIBRDP_STATUS_OK);
+            sent = 1;
+        }
+        else if (((mode == INPUT_SMOKE_CORE &&
+                   state.core_ready > 0u) ||
+                  (mode == INPUT_SMOKE_CORE_FALLBACK &&
+                   state.active_events > 0u)) &&
+                 !sent)
+        {
+            REQUIRE(librdp_session_send_key(
+                        session,
+                        &key) == LIBRDP_STATUS_OK);
             REQUIRE(librdp_session_send_mouse(
                         session,
                         &mouse) == LIBRDP_STATUS_OK);
@@ -1079,40 +1343,100 @@ static int input_smoke_run(input_smoke_mode mode)
               atomic_load_explicit(&fixture.pen_received,
                                    memory_order_acquire) == 1u) ||
              (mode == INPUT_SMOKE_TOUCH_FALLBACK &&
-              atomic_load_explicit(&fixture.classic_received,
-                                   memory_order_acquire) == 1u)))
+              atomic_load_explicit(
+                  &fixture.classic_mouse_received,
+                  memory_order_acquire) == 1u) ||
+             (mode == INPUT_SMOKE_CORE &&
+              atomic_load_explicit(&fixture.core_key_received,
+                                   memory_order_acquire) == 1u &&
+              atomic_load_explicit(&fixture.core_mouse_received,
+                                   memory_order_acquire) == 1u) ||
+             (mode == INPUT_SMOKE_CORE_FALLBACK &&
+              atomic_load_explicit(
+                  &fixture.classic_key_received,
+                  memory_order_acquire) == 1u &&
+              atomic_load_explicit(
+                  &fixture.classic_mouse_received,
+                  memory_order_acquire) == 1u)))
             break;
     }
     REQUIRE(attempt < INPUT_SMOKE_PUMP_LIMIT);
     REQUIRE(sent);
     REQUIRE(atomic_load_explicit(&fixture.channel_open,
                                  memory_order_acquire) ==
-            (mode == INPUT_SMOKE_TOUCH_FALLBACK ? 0u : 1u));
+            ((mode == INPUT_SMOKE_TOUCH ||
+              mode == INPUT_SMOKE_PEN ||
+              mode == INPUT_SMOKE_CORE)
+                 ? 1u
+                 : 0u));
     REQUIRE(atomic_load_explicit(&fixture.client_ready,
                                  memory_order_acquire) ==
-            (mode == INPUT_SMOKE_TOUCH_FALLBACK ? 0u : 1u));
+            ((mode == INPUT_SMOKE_TOUCH ||
+              mode == INPUT_SMOKE_PEN)
+                 ? 1u
+                 : 0u));
     REQUIRE(atomic_load_explicit(&fixture.touch_received,
                                  memory_order_acquire) ==
             (mode == INPUT_SMOKE_TOUCH ? 1u : 0u));
     REQUIRE(atomic_load_explicit(&fixture.pen_received,
                                  memory_order_acquire) ==
             (mode == INPUT_SMOKE_PEN ? 1u : 0u));
-    REQUIRE(atomic_load_explicit(&fixture.classic_received,
+    REQUIRE(atomic_load_explicit(&fixture.core_init_received,
                                  memory_order_acquire) ==
-            (mode == INPUT_SMOKE_TOUCH_FALLBACK ? 1u : 0u));
+            (mode == INPUT_SMOKE_CORE ? 1u : 0u));
+    REQUIRE(atomic_load_explicit(&fixture.core_key_received,
+                                 memory_order_acquire) ==
+            (mode == INPUT_SMOKE_CORE ? 1u : 0u));
+    REQUIRE(atomic_load_explicit(&fixture.core_mouse_received,
+                                 memory_order_acquire) ==
+            (mode == INPUT_SMOKE_CORE ? 1u : 0u));
+    REQUIRE(atomic_load_explicit(&fixture.classic_key_received,
+                                 memory_order_acquire) ==
+            (mode == INPUT_SMOKE_CORE_FALLBACK ? 1u : 0u));
+    REQUIRE(atomic_load_explicit(&fixture.classic_mouse_received,
+                                 memory_order_acquire) ==
+            ((mode == INPUT_SMOKE_TOUCH_FALLBACK ||
+              mode == INPUT_SMOKE_CORE_FALLBACK)
+                 ? 1u
+                 : 0u));
     REQUIRE(atomic_load_explicit(&fixture.validation_errors,
                                  memory_order_acquire) == 0u);
     REQUIRE(state.active_events == 1u);
     REQUIRE(state.error_events == 0u);
     REQUIRE(state.trace_errors == 0u);
     REQUIRE(state.channel_ready ==
-            (mode == INPUT_SMOKE_TOUCH_FALLBACK ? 0u : 1u));
+            ((mode == INPUT_SMOKE_TOUCH ||
+              mode == INPUT_SMOKE_PEN)
+                 ? 1u
+                 : 0u));
     REQUIRE(state.touch_sent ==
             (mode == INPUT_SMOKE_TOUCH ? 1u : 0u));
     REQUIRE(state.pen_sent ==
             (mode == INPUT_SMOKE_PEN ? 1u : 0u));
+    REQUIRE(state.core_ready ==
+            (mode == INPUT_SMOKE_CORE ? 1u : 0u));
+    REQUIRE(state.key_sent ==
+            ((mode == INPUT_SMOKE_CORE ||
+              mode == INPUT_SMOKE_CORE_FALLBACK)
+                 ? 1u
+                 : 0u));
     REQUIRE(state.mouse_sent ==
-            (mode == INPUT_SMOKE_TOUCH_FALLBACK ? 1u : 0u));
+            ((mode == INPUT_SMOKE_TOUCH_FALLBACK ||
+              mode == INPUT_SMOKE_CORE ||
+              mode == INPUT_SMOKE_CORE_FALLBACK)
+                 ? 1u
+                 : 0u));
+    REQUIRE(state.core_key_sent ==
+            (mode == INPUT_SMOKE_CORE ? 1u : 0u));
+    REQUIRE(state.core_mouse_sent ==
+            (mode == INPUT_SMOKE_CORE ? 1u : 0u));
+    REQUIRE(state.slow_key_sent ==
+            (mode == INPUT_SMOKE_CORE_FALLBACK ? 1u : 0u));
+    REQUIRE(state.slow_mouse_sent ==
+            ((mode == INPUT_SMOKE_TOUCH_FALLBACK ||
+              mode == INPUT_SMOKE_CORE_FALLBACK)
+                 ? 1u
+                 : 0u));
     REQUIRE(librdp_session_disconnect(session) ==
             LIBRDP_STATUS_OK);
     REQUIRE(pthread_join(fixture.thread, NULL) == 0);
@@ -1143,8 +1467,13 @@ int main(int argc, char** argv)
         return input_smoke_run(INPUT_SMOKE_TOUCH_FALLBACK);
     if (argc == 2 && strcmp(argv[1], "pen") == 0)
         return input_smoke_run(INPUT_SMOKE_PEN);
+    if (argc == 2 && strcmp(argv[1], "core") == 0)
+        return input_smoke_run(INPUT_SMOKE_CORE);
+    if (argc == 2 &&
+        strcmp(argv[1], "core-fallback") == 0)
+        return input_smoke_run(INPUT_SMOKE_CORE_FALLBACK);
     fprintf(stderr,
             "usage: test_server_client_input_smoke "
-            "touch|touch-fallback|pen\n");
+            "touch|touch-fallback|pen|core|core-fallback\n");
     return 2;
 }

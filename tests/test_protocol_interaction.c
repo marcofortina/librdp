@@ -906,6 +906,25 @@ int test_protocol_interaction_vectors(void)
     PCHECK(rdp_core_input_parse_header(dyn_response.data, dyn_response.length, &core_header) == LIBRDP_STATUS_OK);
     PCHECK(core_header.pdu_type == RDP_CORE_INPUT_PDU_CS_INIT_REQUEST && core_header.event_count == 0);
     {
+        rdp_core_input_init_request request;
+
+        PCHECK(rdp_core_input_parse_init_request(
+                   dyn_response.data,
+                   dyn_response.length,
+                   &request) == LIBRDP_STATUS_OK);
+        PCHECK(request.protocol_version_min ==
+                   RDP_CORE_INPUT_PROTOCOL_VERSION_100 &&
+               request.protocol_version_max ==
+                   RDP_CORE_INPUT_PROTOCOL_VERSION_100);
+        dyn_response.data[8] = 1u;
+        PCHECK(rdp_core_input_parse_init_request(
+                   dyn_response.data,
+                   dyn_response.length,
+                   &request) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        dyn_response.data[8] = 0u;
+    }
+    {
         rdp_core_input_header valid_core_header = core_header;
 
         dyn_response.data[3] = 1;
@@ -923,6 +942,26 @@ int test_protocol_interaction_vectors(void)
     PCHECK(core_negotiation.selected_protocol_version == RDP_CORE_INPUT_PROTOCOL_VERSION_100 &&
            core_negotiation.supports_relative_mouse &&
            core_negotiation.supports_qoe_timestamp);
+    dyn_response.length = 0;
+    PCHECK(rdp_core_input_write_init_response(
+               &dyn_response,
+               RDP_CORE_INPUT_PROTOCOL_VERSION_100,
+               RDP_CORE_INPUT_PROTOCOL_VERSION_100) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == sizeof(core_response) &&
+           memcmp(dyn_response.data,
+                  core_response,
+                  sizeof(core_response)) == 0);
+    PCHECK(rdp_core_input_write_init_response(
+               NULL,
+               RDP_CORE_INPUT_PROTOCOL_VERSION_100,
+               RDP_CORE_INPUT_PROTOCOL_VERSION_100) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_core_input_write_init_response(
+               &dyn_response,
+               RDP_CORE_INPUT_PROTOCOL_VERSION_100,
+               0u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     {
         rdp_core_input_init_response valid_core_init_response = core_init_response;
 

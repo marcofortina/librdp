@@ -27,6 +27,7 @@
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
     rdp_core_input_header header;
+    rdp_core_input_init_request request;
     rdp_core_input_init_response response;
     rdp_core_input_negotiation negotiation;
     rdp_core_input_event events[4];
@@ -35,6 +36,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 
     rdp_buffer_init(&out);
     (void)rdp_core_input_parse_header(data, size, &header);
+    (void)rdp_core_input_parse_init_request(data, size, &request);
     if (rdp_core_input_parse_init_response(data, size, &response) == LIBRDP_STATUS_OK)
         (void)rdp_core_input_negotiate(&response, &negotiation);
     (void)rdp_core_input_parse_events(data,
@@ -43,6 +45,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
                                       (uint8_t)(sizeof(events) / sizeof(events[0])),
                                       &event_count);
     (void)rdp_core_input_write_init_request(&out);
+    (void)rdp_core_input_write_init_response(
+        &out,
+        RDP_CORE_INPUT_PROTOCOL_VERSION_100,
+        RDP_CORE_INPUT_PROTOCOL_VERSION_100);
     out.length = 0;
     (void)rdp_core_input_write_keyboard_event(&out,
                                               size > 0 ? data[0] : 0,

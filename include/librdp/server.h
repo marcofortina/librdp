@@ -3643,7 +3643,7 @@ LIBRDP_API librdp_status librdp_server_peer_send_graphics_end_frame(librdp_serve
                                                                     uint32_t frame_id);
 
 /**
- * @brief Send a Core Input initialization request.
+ * @brief Send the Core Input server initialization response.
  *
  * @param[in,out] peer Active peer; must not be NULL.
  * @param[in] dynamic_channel_id Open Core Input dynamic channel id.

@@ -2427,7 +2427,19 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(rdp_core_input_parse_header(dvc_data_response.data,
                                        dvc_data_response.data_len,
                                        &core_input_header) == LIBRDP_STATUS_OK);
-    SCHECK(core_input_header.pdu_type == RDP_CORE_INPUT_PDU_CS_INIT_REQUEST);
+    SCHECK(core_input_header.pdu_type == RDP_CORE_INPUT_PDU_SC_INIT_RESPONSE);
+    {
+        rdp_core_input_init_response response;
+
+        SCHECK(rdp_core_input_parse_init_response(
+                   dvc_data_response.data,
+                   dvc_data_response.data_len,
+                   &response) == LIBRDP_STATUS_OK);
+        SCHECK(response.selected_protocol_version ==
+                   RDP_CORE_INPUT_PROTOCOL_VERSION_100 &&
+               response.protocol_version_max ==
+                   RDP_CORE_INPUT_PROTOCOL_VERSION_100);
+    }
 
     SCHECK(test_server_open_client_dynamic_channel(client_fd,
                                                    peer,

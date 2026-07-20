@@ -896,7 +896,10 @@ librdp_status librdp_server_peer_send_core_input_init(librdp_server_peer* peer, 
     librdp_status status = LIBRDP_STATUS_OK;
 
     rdp_buffer_init(&payload);
-    status = rdp_core_input_write_init_request(&payload);
+    status = rdp_core_input_write_init_response(
+        &payload,
+        RDP_CORE_INPUT_PROTOCOL_VERSION_100,
+        RDP_CORE_INPUT_PROTOCOL_VERSION_100);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_dynamic_named_buffer(peer,
                                                       dynamic_channel_id,

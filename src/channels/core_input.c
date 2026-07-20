@@ -142,6 +142,86 @@ librdp_status rdp_core_input_write_init_request(rdp_buffer* buffer)
     return status;
 }
 
+librdp_status rdp_core_input_parse_init_request(
+    const void* data,
+    size_t length,
+    rdp_core_input_init_request* request)
+{
+    rdp_core_input_init_request parsed;
+    rdp_core_input_header header;
+    rdp_stream stream;
+    uint32_t reserved_a = 0u;
+    uint32_t reserved_b = 0u;
+
+    if (!data || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 16u ||
+        rdp_core_input_parse_header(data,
+                                    length,
+                                    &header) !=
+            LIBRDP_STATUS_OK ||
+        header.pdu_type != RDP_CORE_INPUT_PDU_CS_INIT_REQUEST)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(&parsed, 0, sizeof(parsed));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 4u) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(
+            &stream,
+            &parsed.protocol_version_min) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(
+            &stream,
+            &parsed.protocol_version_max) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream,
+                               &reserved_a) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream,
+                               &reserved_b) != LIBRDP_STATUS_OK ||
+        parsed.protocol_version_min == 0u ||
+        parsed.protocol_version_min >
+            parsed.protocol_version_max ||
+        parsed.protocol_version_max <
+            RDP_CORE_INPUT_PROTOCOL_VERSION_100 ||
+        reserved_a != 0u ||
+        reserved_b != 0u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *request = parsed;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_core_input_write_init_response(
+    rdp_buffer* buffer,
+    uint16_t selected_protocol_version,
+    uint16_t protocol_version_max)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
+
+    if (!buffer ||
+        selected_protocol_version == 0u ||
+        selected_protocol_version > protocol_version_max ||
+        protocol_version_max < RDP_CORE_INPUT_PROTOCOL_VERSION_100)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
+    status = rdp_core_input_write_header(
+        buffer,
+        RDP_CORE_INPUT_PDU_SC_INIT_RESPONSE,
+        0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(
+            buffer,
+            selected_protocol_version);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(
+            buffer,
+            protocol_version_max);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0u);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
+    return status;
+}
+
 librdp_status rdp_core_input_parse_init_response(const void* data,
                                                  size_t length,
                                                  rdp_core_input_init_response* response)
