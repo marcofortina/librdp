@@ -4,8 +4,8 @@
  */
 /*
  * Module: deterministic pointer-update server for the real X11 viewer smoke.
- * Coverage: public server lifecycle and normalized default, hidden, position,
- * shape, and cached pointer updates over an activated RDP connection.
+ * Coverage: public server lifecycle, normalized pointer updates, and ordered
+ * classic/extended mouse input over an activated RDP connection.
  * Bug classes: dropped updates, invalid cache sequencing, wire conversion
  * errors, premature teardown, blocked dispatch, and acknowledgement races.
  * Determinism: fixed pointer pixels and stage acknowledgements make every
@@ -39,6 +39,80 @@ typedef struct pointer_server_wire_shape
     uint8_t* xor_mask;
     uint8_t* and_mask;
 } pointer_server_wire_shape;
+
+typedef struct pointer_server_expected_input
+{
+    librdp_server_input_type type;
+    uint16_t flags;
+} pointer_server_expected_input;
+
+typedef struct pointer_server_input_context
+{
+    size_t received;
+    int armed;
+    int failed;
+} pointer_server_input_context;
+
+static const pointer_server_expected_input pointer_server_mouse_sequence[] = {
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0800u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x9000u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x1000u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0xa000u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x2000u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0xc000u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x4000u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0278u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0388u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0588u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0478u },
+    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x8001u },
+    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x0001u },
+    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x8002u },
+    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x0002u },
+};
+
+static void pointer_server_input_callback(
+    librdp_server_peer* peer,
+    const librdp_server_input_event* event,
+    void* user_data)
+{
+    pointer_server_input_context* context =
+        (pointer_server_input_context*)user_data;
+    const pointer_server_expected_input* expected = NULL;
+
+    (void)peer;
+    if (!context || !event || !context->armed ||
+        (event->type != LIBRDP_SERVER_INPUT_MOUSE &&
+         event->type != LIBRDP_SERVER_INPUT_EXTENDED_MOUSE))
+        return;
+    if (context->received >=
+        sizeof(pointer_server_mouse_sequence) /
+            sizeof(pointer_server_mouse_sequence[0]))
+    {
+        context->failed = 1;
+        return;
+    }
+    expected =
+        &pointer_server_mouse_sequence[context->received];
+    if (event->type != expected->type ||
+        event->flags != expected->flags ||
+        event->x != TEST_VIEWER_POINTER_MOUSE_X ||
+        event->y != TEST_VIEWER_POINTER_MOUSE_Y)
+    {
+        fprintf(stderr,
+                "mouse event mismatch index=%lu type=%u flags=0x%04x x=%u y=%u expected_type=%u expected_flags=0x%04x\n",
+                (unsigned long)context->received,
+                (unsigned int)event->type,
+                event->flags,
+                event->x,
+                event->y,
+                (unsigned int)expected->type,
+                expected->flags);
+        context->failed = 1;
+        return;
+    }
+    context->received++;
+}
 
 static librdp_status pointer_server_accept_active(
     librdp_server* server,
@@ -399,6 +473,35 @@ static librdp_status pointer_server_wait_close(
     return LIBRDP_STATUS_TIMEOUT;
 }
 
+static librdp_status pointer_server_wait_mouse(
+    librdp_server_peer* peer,
+    pointer_server_input_context* context)
+{
+    unsigned int attempt = 0u;
+    const size_t expected_count =
+        sizeof(pointer_server_mouse_sequence) /
+        sizeof(pointer_server_mouse_sequence[0]);
+
+    if (!peer || !context)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (attempt = 0u;
+         attempt < POINTER_SERVER_WAIT_STEPS;
+         attempt++)
+    {
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (context->failed)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (context->received == expected_count)
+            return LIBRDP_STATUS_OK;
+        status = librdp_server_peer_run_once(peer, 20);
+        if (status != LIBRDP_STATUS_OK &&
+            status != LIBRDP_STATUS_TIMEOUT)
+            return status;
+    }
+    return LIBRDP_STATUS_TIMEOUT;
+}
+
 int main(int argc, char** argv)
 {
     uint8_t shape[TEST_VIEWER_POINTER_WIDTH *
@@ -407,11 +510,13 @@ int main(int argc, char** argv)
     librdp_server_pointer_update update;
     librdp_server* server = NULL;
     librdp_server_peer* peer = NULL;
+    pointer_server_input_context input_context;
     librdp_status status = LIBRDP_STATUS_OK;
     uint16_t port = 0u;
     int result = 1;
 
     memset(shape, 0, sizeof(shape));
+    memset(&input_context, 0, sizeof(input_context));
     if (argc != 3)
     {
         fprintf(stderr,
@@ -441,6 +546,12 @@ int main(int argc, char** argv)
         goto cleanup;
     }
     status = pointer_server_accept_active(server, &peer);
+    if (status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    status = librdp_server_peer_set_input_callback(
+        peer,
+        pointer_server_input_callback,
+        &input_context);
     if (status != LIBRDP_STATUS_OK)
         goto cleanup;
 
@@ -581,6 +692,28 @@ int main(int argc, char** argv)
             port,
             &update,
             TEST_VIEWER_POINTER_RESTORED);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        input_context.armed = 1;
+        if (!test_process_state_write(
+                argv[1],
+                port,
+                TEST_VIEWER_POINTER_MOUSE_READY))
+            status = LIBRDP_STATUS_IO_ERROR;
+        else
+            status = pointer_server_wait_mouse(
+                peer,
+                &input_context);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        input_context.armed = 0;
+        if (!test_process_state_write(
+                argv[1],
+                port,
+                TEST_VIEWER_POINTER_MOUSE_COMPLETE))
+            status = LIBRDP_STATUS_IO_ERROR;
     }
     if (status == LIBRDP_STATUS_OK)
     {

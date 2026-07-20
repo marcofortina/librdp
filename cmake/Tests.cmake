@@ -261,7 +261,10 @@ if(LIBRDP_BUILD_TESTS)
     if(TARGET librdp-viewer AND
        LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         find_program(LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE NAMES Xvfb)
-        if(LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE)
+        find_package(X11 QUIET COMPONENTS Xtst)
+        if(LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE AND
+           X11_Xtst_INCLUDE_PATH AND
+           X11_Xtst_LIB)
             add_executable(test_viewer_pointer_server
                 tests/test_process_state.c
                 tests/test_viewer_pointer_server.c
@@ -282,6 +285,7 @@ if(LIBRDP_BUILD_TESTS)
                 test_x11_viewer_presentation_smoke
                 PRIVATE
                     ${X11_INCLUDE_DIR}
+                    ${X11_Xtst_INCLUDE_PATH}
             )
             target_compile_definitions(
                 test_x11_viewer_presentation_smoke
@@ -304,6 +308,7 @@ if(LIBRDP_BUILD_TESTS)
                     OpenSSL::Crypto
                     ${X11_LIBRARIES}
                     X11::Xfixes
+                    ${X11_Xtst_LIB}
             )
             add_dependencies(
                 test_x11_viewer_presentation_smoke

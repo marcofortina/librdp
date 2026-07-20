@@ -6,7 +6,8 @@
  * Module: isolated X11 viewer graphics and pointer integration smoke.
  * Coverage: actual viewer process, X11 window presentation, Standard Security,
  * bitmap codecs, RemoteFX, negotiated Graphics Pipeline codecs, pointer
- * shape/cache state, visibility, and server-directed position.
+ * shape/cache state, visibility, server-directed position, and XTest-driven
+ * classic/extended mouse input acknowledged by the remote server.
  * Bug classes: decoder output never presented, black windows, unstable frames,
  * row or channel corruption, process teardown failures, and trace errors.
  * Determinism: every family is rendered twice on a private Xvfb server and the
@@ -20,6 +21,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xfixes.h>
+#include <X11/extensions/XTest.h>
 
 #include <openssl/evp.h>
 
@@ -469,6 +471,74 @@ static Window viewer_smoke_find_window(Display* display,
         viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
     }
     return None;
+}
+
+static int viewer_smoke_fake_button(Display* display,
+                                    unsigned int button)
+{
+    if (!display ||
+        !XTestFakeButtonEvent(display, button, True, CurrentTime) ||
+        !XTestFakeButtonEvent(display, button, False, CurrentTime))
+        return 0;
+    XSync(display, False);
+    viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    return 1;
+}
+
+static int viewer_smoke_inject_mouse(Display* display,
+                                     Window window)
+{
+    Window child = None;
+    int root_x = 0;
+    int root_y = 0;
+    unsigned char pointer_map[32];
+    int button_count = 0;
+    static const unsigned int buttons[] = {
+        Button1,
+        Button3,
+        Button2,
+        Button4,
+        Button5,
+        6u,
+        7u,
+        8u,
+        9u,
+    };
+    size_t index = 0u;
+
+    if (!display || window == None ||
+        !XTranslateCoordinates(display,
+                               window,
+                               DefaultRootWindow(display),
+                               0,
+                               0,
+                               &root_x,
+                               &root_y,
+                               &child))
+        return 0;
+    button_count = XGetPointerMapping(
+        display,
+        pointer_map,
+        (int)sizeof(pointer_map));
+    if (button_count < 9 ||
+        !XTestFakeMotionEvent(
+            display,
+            DefaultScreen(display),
+            root_x + TEST_VIEWER_POINTER_MOUSE_X,
+            root_y + TEST_VIEWER_POINTER_MOUSE_Y,
+            CurrentTime))
+        return 0;
+    XSync(display, False);
+    viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    for (index = 0u;
+         index < sizeof(buttons) / sizeof(buttons[0]);
+         index++)
+    {
+        if (!viewer_smoke_fake_button(display,
+                                      buttons[index]))
+            return 0;
+    }
+    return 1;
 }
 
 static uint8_t viewer_smoke_channel(unsigned long pixel,
@@ -1428,6 +1498,20 @@ static int viewer_smoke_run_pointer(
     if (!viewer_smoke_wait_state(
             state_path,
             processes.server,
+            TEST_VIEWER_POINTER_MOUSE_READY,
+            &port) ||
+        !viewer_smoke_inject_mouse(display, window) ||
+        !viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_MOUSE_COMPLETE,
+            &port))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_MOUSE_COMPLETE;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
             TEST_VIEWER_POINTER_COMPLETE,
             &port))
         goto cleanup;
@@ -1477,6 +1561,12 @@ static int viewer_smoke_run_pointer(
         !viewer_smoke_file_contains(
             viewer_log,
             "event=x11.window.focus.in") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=client.input.send") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "message=\"kind=mouse x=91 y=97") ||
         viewer_smoke_file_contains(
             viewer_log,
             "status=protocol_error") ||
