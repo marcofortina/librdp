@@ -2041,14 +2041,70 @@ static int build_application_static_channel_last_packet(rdp_buffer* out)
                                                 1006);
 }
 
-static int build_multiparty_static_channel_packet(rdp_buffer* out)
+static int append_multiparty_static_channel_packet(rdp_buffer* out,
+                                                   const rdp_buffer* payload)
 {
+    return out && payload &&
+           build_static_channel_packet(out, payload, 1006u);
+}
+
+static int build_multiparty_static_channel_packets(rdp_buffer* out)
+{
+    static const uint8_t name_utf16[] = {'P', 0};
     rdp_buffer payload;
     int ok = 0;
 
+    if (!out)
+        return 0;
     rdp_buffer_init(&payload);
-    ok = rdp_multiparty_write_filter_state(&payload, RDP_MULTIPARTY_FILTER_ENABLED) == LIBRDP_STATUS_OK &&
-         build_static_channel_packet(out, &payload, 1006);
+    ok = rdp_multiparty_write_filter_state(
+             &payload,
+             RDP_MULTIPARTY_FILTER_ENABLED) == LIBRDP_STATUS_OK &&
+         append_multiparty_static_channel_packet(out, &payload);
+    payload.length = 0u;
+    ok = ok &&
+         rdp_multiparty_write_participant_created(
+             &payload,
+             11u,
+             4u,
+             RDP_MULTIPARTY_MAY_VIEW,
+             name_utf16,
+             1u) == LIBRDP_STATUS_OK &&
+         append_multiparty_static_channel_packet(out, &payload);
+    payload.length = 0u;
+    ok = ok &&
+         rdp_multiparty_write_participant_created(
+             &payload,
+             11u,
+             4u,
+             RDP_MULTIPARTY_MAY_VIEW,
+             name_utf16,
+             1u) == LIBRDP_STATUS_OK &&
+         append_multiparty_static_channel_packet(out, &payload);
+    payload.length = 0u;
+    ok = ok &&
+         rdp_multiparty_write_control_change(
+             &payload,
+             RDP_MULTIPARTY_REQUEST_VIEW |
+                 RDP_MULTIPARTY_ALLOW_CONTROL_REQUESTS,
+             11u) == LIBRDP_STATUS_OK &&
+         append_multiparty_static_channel_packet(out, &payload);
+    payload.length = 0u;
+    ok = ok &&
+         rdp_multiparty_write_participant_removed(
+             &payload,
+             11u,
+             2u,
+             0u) == LIBRDP_STATUS_OK &&
+         append_multiparty_static_channel_packet(out, &payload);
+    payload.length = 0u;
+    ok = ok &&
+         rdp_multiparty_write_participant_removed(
+             &payload,
+             11u,
+             2u,
+             0u) == LIBRDP_STATUS_OK &&
+         append_multiparty_static_channel_packet(out, &payload);
     rdp_buffer_free(&payload);
     return ok;
 }
@@ -4844,7 +4900,7 @@ int start_handshake_server_full(uint16_t* port,
                     if (dynamic_channel_scenario == DVC_SCENARIO_MULTIPARTY_RUNTIME)
                     {
                         if (!extra_static_channel ||
-                            !build_multiparty_static_channel_packet(&multiparty_static) ||
+                            !build_multiparty_static_channel_packets(&multiparty_static) ||
                             !write_exact_fd(client, multiparty_static.data, multiparty_static.length))
                         {
                             _exit(5);

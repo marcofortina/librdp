@@ -3278,6 +3278,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_free(&session->remote_programs_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
     rdp_session_echo_clear_pending(session);
+    rdp_session_multiparty_reset(session);
     session->fastpath_fragmenting = 0;
     session->fastpath_fragment_update_code = 0;
     rdp_buffer_free(&session->fastpath_fragment);
@@ -4450,6 +4451,7 @@ fail:
     session->remote_programs_fragment_expected = 0;
     rdp_buffer_free(&session->remote_programs_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
+    rdp_session_multiparty_reset(session);
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
     rdp_trace_event(RDP_TRACE_CLIENT,

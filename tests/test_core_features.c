@@ -32,6 +32,18 @@ typedef struct telemetry_runtime_capture
     int leaked;
 } telemetry_runtime_capture;
 
+typedef struct multiparty_runtime_capture
+{
+    uint16_t types[6];
+    uint32_t channel_events;
+    uint32_t joins;
+    uint32_t updates;
+    uint32_t leaves;
+    uint32_t duplicates;
+    uint32_t stale;
+    int event_valid;
+} multiparty_runtime_capture;
+
 /*
  * Accept only the fixed numeric telemetry record. Any other channel payload
  * would expand the protocol's data surface beyond its four timing fields.
@@ -174,10 +186,6 @@ static int run_optional_feature_runtime_scenario(librdp_feature feature,
 
 int test_optional_feature_runtime_paths(void)
 {
-    CHECK(run_optional_feature_runtime_scenario(LIBRDP_FEATURE_MULTIPARTY,
-                                                1,
-                                                DVC_SCENARIO_MULTIPARTY_RUNTIME,
-                                                GDI_SCENARIO_NORMAL) == 0);
     CHECK(run_optional_feature_runtime_scenario(LIBRDP_FEATURE_DESKTOP_COMPOSITION,
                                                 0,
                                                 DVC_SCENARIO_NORMAL,
@@ -186,6 +194,186 @@ int test_optional_feature_runtime_paths(void)
                                                 0,
                                                 DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME,
                                                 GDI_SCENARIO_NORMAL) == 0);
+    return 0;
+}
+
+static void on_multiparty_runtime_event(librdp_session* session,
+                                        const librdp_event* event,
+                                        void* user_data)
+{
+    multiparty_runtime_capture* capture =
+        (multiparty_runtime_capture*)user_data;
+    rdp_multiparty_message message;
+
+    (void)session;
+    if (!capture || !event || event->type != LIBRDP_EVENT_CHANNEL_DATA)
+        return;
+    if (capture->channel_events >=
+            sizeof(capture->types) / sizeof(capture->types[0]) ||
+        event->data.channel_data.channel_id != 1006u ||
+        rdp_multiparty_parse_message(event->data.channel_data.data,
+                                     event->data.channel_data.data_len,
+                                     &message) != LIBRDP_STATUS_OK)
+    {
+        capture->event_valid = 0;
+        return;
+    }
+    capture->types[capture->channel_events++] = message.type;
+}
+
+static void on_multiparty_runtime_trace(librdp_session* session,
+                                        const librdp_trace_record* record,
+                                        void* user_data)
+{
+    multiparty_runtime_capture* capture =
+        (multiparty_runtime_capture*)user_data;
+
+    (void)session;
+    if (!capture || !record || !record->event)
+        return;
+    if (getenv("LIBRDP_TEST_TRACE_OUTPUT") && record->line)
+        fprintf(stderr, "%s\n", record->line);
+    if (strcmp(record->event, "client.multiparty.participant.join") == 0)
+        capture->joins++;
+    else if (strcmp(record->event,
+                    "client.multiparty.participant.update") == 0)
+        capture->updates++;
+    else if (strcmp(record->event,
+                    "client.multiparty.participant.leave") == 0)
+        capture->leaves++;
+    else if (strcmp(record->event,
+                    "client.multiparty.participant.duplicate") == 0)
+        capture->duplicates++;
+    else if (strcmp(record->event,
+                    "client.multiparty.participant.stale") == 0)
+        capture->stale++;
+}
+
+/*
+ * Coverage: exercises a bounded Multiparty participant lifecycle, duplicate
+ * create, control update, stale remove, callback ordering, and disconnect
+ * cleanup without retaining the participant's friendly name.
+ */
+int test_multiparty_runtime_lifecycle(void)
+{
+    static const uint16_t expected_types[] = {
+        RDP_MULTIPARTY_TYPE_FILTER_STATE_UPDATED,
+        RDP_MULTIPARTY_TYPE_PARTICIPANT_CREATED,
+        RDP_MULTIPARTY_TYPE_PARTICIPANT_CREATED,
+        RDP_MULTIPARTY_TYPE_PARTICIPANT_CTRL_CHANGED,
+        RDP_MULTIPARTY_TYPE_PARTICIPANT_REMOVED,
+        RDP_MULTIPARTY_TYPE_PARTICIPANT_REMOVED
+    };
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_feature_status feature_status;
+    multiparty_runtime_capture capture;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t i = 0u;
+
+    memset(&capture, 0, sizeof(capture));
+    capture.event_valid = 1;
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(
+              settings,
+              LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(
+              settings,
+              LIBRDP_FEATURE_MULTIPARTY,
+              1) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_full(&test_port,
+                                      &server_pid,
+                                      0,
+                                      0,
+                                      1,
+                                      0,
+                                      1,
+                                      DVC_SCENARIO_MULTIPARTY_RUNTIME,
+                                      GDI_SCENARIO_NORMAL,
+                                      LICENSE_SCENARIO_NONE,
+                                      CLIPBOARD_SCENARIO_NONE,
+                                      HANDSHAKE_SCENARIO_NORMAL));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session,
+                                      on_multiparty_runtime_event,
+                                      &capture);
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_CLIENT |
+                              LIBRDP_TRACE_CATEGORY_PROTOCOL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_DEBUG;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = on_multiparty_runtime_trace;
+    trace_policy.callback_user_data = &capture;
+    trace_policy.trace_id = "multiparty-runtime";
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) ==
+          LIBRDP_STATUS_OK);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0u; i < 24u && capture.channel_events < 6u; i++)
+    {
+        status = librdp_session_run_once(session, 1000);
+        CHECK(status == LIBRDP_STATUS_OK ||
+              status == LIBRDP_STATUS_TIMEOUT);
+    }
+    CHECK(capture.event_valid);
+    CHECK(capture.channel_events == 6u);
+    CHECK(memcmp(capture.types,
+                 expected_types,
+                 sizeof(expected_types)) == 0);
+    CHECK(capture.joins == 1u);
+    CHECK(capture.updates == 1u);
+    CHECK(capture.leaves == 1u);
+    CHECK(capture.duplicates == 1u);
+    CHECK(capture.stale == 1u);
+    CHECK(session->multiparty_participant_count == 0u);
+    CHECK(session->multiparty_participant_joins == 1u);
+    CHECK(session->multiparty_participant_updates == 1u);
+    CHECK(session->multiparty_participant_leaves == 1u);
+    CHECK(session->multiparty_participant_duplicates == 1u);
+    CHECK(session->multiparty_participant_stale == 1u);
+    CHECK(librdp_session_get_feature_status(
+              session,
+              LIBRDP_FEATURE_MULTIPARTY,
+              &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built);
+    CHECK(feature_status.backend_ready && feature_status.negotiated);
+    CHECK(feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    CHECK(session->multiparty_channel_id == 0u);
+    CHECK(session->multiparty_joined == 0u);
+    CHECK(session->multiparty_participant_count == 0u);
+    CHECK(session->multiparty_participant_joins == 0u);
+    CHECK(session->multiparty_participant_updates == 0u);
+    CHECK(session->multiparty_participant_leaves == 0u);
+    CHECK(session->multiparty_participant_duplicates == 0u);
+    CHECK(session->multiparty_participant_stale == 0u);
+    for (i = 0u; i < RDP_SESSION_MULTIPARTY_PARTICIPANT_LIMIT; i++)
+        CHECK(!session->multiparty_participants[i].active);
+    CHECK(librdp_session_get_feature_status(
+              session,
+              LIBRDP_FEATURE_MULTIPARTY,
+              &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built);
+    CHECK(feature_status.backend_ready && !feature_status.negotiated);
+    CHECK(!feature_status.active);
+    CHECK(feature_status.reason ==
+          LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     return 0;
 }
 

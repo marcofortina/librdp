@@ -20,6 +20,212 @@
 
 int rdp_session_dynamic_channel_is_internal(const rdp_session_dynamic_channel* entry);
 
+static rdp_session_multiparty_participant* rdp_session_multiparty_find_participant(
+    librdp_session* session,
+    uint32_t participant_id)
+{
+    uint32_t i = 0u;
+
+    if (!session)
+        return NULL;
+    for (i = 0u; i < RDP_SESSION_MULTIPARTY_PARTICIPANT_LIMIT; i++)
+    {
+        rdp_session_multiparty_participant* participant =
+            &session->multiparty_participants[i];
+
+        if (participant->active &&
+            participant->participant_id == participant_id)
+            return participant;
+    }
+    return NULL;
+}
+
+static rdp_session_multiparty_participant* rdp_session_multiparty_find_free_participant(
+    librdp_session* session)
+{
+    uint32_t i = 0u;
+
+    if (!session)
+        return NULL;
+    for (i = 0u; i < RDP_SESSION_MULTIPARTY_PARTICIPANT_LIMIT; i++)
+    {
+        if (!session->multiparty_participants[i].active)
+            return &session->multiparty_participants[i];
+    }
+    return NULL;
+}
+
+void rdp_session_multiparty_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    session->multiparty_channel_id = 0u;
+    session->multiparty_joined = 0u;
+    session->multiparty_participant_count = 0u;
+    session->multiparty_participant_joins = 0u;
+    session->multiparty_participant_updates = 0u;
+    session->multiparty_participant_leaves = 0u;
+    session->multiparty_participant_duplicates = 0u;
+    session->multiparty_participant_stale = 0u;
+    memset(session->multiparty_participants,
+           0,
+           sizeof(session->multiparty_participants));
+}
+
+/*
+ * Apply participant lifecycle messages without retaining friendly names from
+ * the remote peer. The fixed table bounds resource use, while duplicate and
+ * stale messages remain observable in trace without destabilizing the channel.
+ */
+static librdp_status rdp_session_multiparty_apply_message(
+    librdp_session* session,
+    const rdp_multiparty_message* message)
+{
+    rdp_session_multiparty_participant* participant = NULL;
+
+    if (!session || !message)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    switch (message->type)
+    {
+        case RDP_MULTIPARTY_TYPE_PARTICIPANT_CREATED:
+        {
+            const rdp_multiparty_participant_created* created =
+                &message->body.participant_created;
+
+            participant = rdp_session_multiparty_find_participant(
+                session,
+                created->participant_id);
+            if (participant)
+            {
+                if (participant->group_id == created->group_id &&
+                    participant->share_flags == created->flags)
+                {
+                    session->multiparty_participant_duplicates++;
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.multiparty.participant.duplicate",
+                                    "participant_id=%u group_id=%u",
+                                    created->participant_id,
+                                    created->group_id);
+                    return LIBRDP_STATUS_OK;
+                }
+                participant->group_id = created->group_id;
+                participant->share_flags = created->flags;
+                session->multiparty_participant_updates++;
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.multiparty.participant.update",
+                                "participant_id=%u group_id=%u share_flags=%u",
+                                created->participant_id,
+                                created->group_id,
+                                created->flags);
+                return LIBRDP_STATUS_OK;
+            }
+            participant =
+                rdp_session_multiparty_find_free_participant(session);
+            if (!participant)
+                return rdp_session_limit_rejected(session);
+            participant->participant_id = created->participant_id;
+            participant->group_id = created->group_id;
+            participant->share_flags = created->flags;
+            participant->active = 1u;
+            session->multiparty_participant_count++;
+            session->multiparty_participant_joins++;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.multiparty.participant.join",
+                            "participant_id=%u group_id=%u share_flags=%u",
+                            created->participant_id,
+                            created->group_id,
+                            created->flags);
+            return LIBRDP_STATUS_OK;
+        }
+        case RDP_MULTIPARTY_TYPE_PARTICIPANT_CTRL_CHANGED:
+        {
+            const rdp_multiparty_control_change* change =
+                &message->body.control_change;
+
+            participant = rdp_session_multiparty_find_participant(
+                session,
+                change->participant_id);
+            if (!participant)
+            {
+                session->multiparty_participant_stale++;
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.multiparty.participant.stale",
+                                "participant_id=%u type=control_change",
+                                change->participant_id);
+                return LIBRDP_STATUS_OK;
+            }
+            participant->control_flags = change->flags;
+            session->multiparty_participant_updates++;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.multiparty.participant.update",
+                            "participant_id=%u control_flags=%u",
+                            change->participant_id,
+                            change->flags);
+            return LIBRDP_STATUS_OK;
+        }
+        case RDP_MULTIPARTY_TYPE_PARTICIPANT_REMOVED:
+        {
+            const rdp_multiparty_participant_removed* removed =
+                &message->body.participant_removed;
+
+            participant = rdp_session_multiparty_find_participant(
+                session,
+                removed->participant_id);
+            if (!participant)
+            {
+                session->multiparty_participant_stale++;
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.multiparty.participant.stale",
+                                "participant_id=%u type=remove",
+                                removed->participant_id);
+                return LIBRDP_STATUS_OK;
+            }
+            memset(participant, 0, sizeof(*participant));
+            if (session->multiparty_participant_count > 0u)
+                session->multiparty_participant_count--;
+            session->multiparty_participant_leaves++;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.multiparty.participant.leave",
+                            "participant_id=%u disconnect_type=%u disconnect_code=%u",
+                            removed->participant_id,
+                            removed->disconnect_type,
+                            removed->disconnect_code);
+            return LIBRDP_STATUS_OK;
+        }
+        default:
+            return LIBRDP_STATUS_OK;
+    }
+}
+
+/*
+ * Parse and apply a complete Multiparty message before exposing its borrowed
+ * wire payload through the generic channel callback.
+ */
+static librdp_status rdp_session_multiparty_dispatch(
+    librdp_session* session,
+    uint16_t channel_id,
+    const uint8_t* data,
+    size_t data_len)
+{
+    rdp_multiparty_message message;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_multiparty_parse_message(data, data_len, &message);
+    if (status != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_session_multiparty_apply_message(session, &message);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    session->multiparty_joined = 1u;
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.multiparty.pdu",
+                    "channel_id=%u type=%u payload_len=%u",
+                    channel_id,
+                    message.type,
+                    (unsigned)data_len);
+    return LIBRDP_STATUS_OK;
+}
+
 rdp_session_dynamic_channel* rdp_session_dynamic_channel_find(librdp_session* session, uint32_t channel_id)
 {
     size_t i = 0;
@@ -769,18 +975,14 @@ librdp_status rdp_session_handle_static_channel(librdp_session* session,
         rdp_buffer_init(&entry->fragment);
         if (strcmp(entry->name, RDP_MULTIPARTY_CHANNEL_NAME) == 0)
         {
-            rdp_multiparty_message message;
+            librdp_status status = rdp_session_multiparty_dispatch(
+                session,
+                entry->channel_id,
+                packet->payload,
+                packet->payload_len);
 
-            if (rdp_multiparty_parse_message(packet->payload, packet->payload_len, &message) !=
-                LIBRDP_STATUS_OK)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-            session->multiparty_joined = 1;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.multiparty.pdu",
-                            "channel_id=%u type=%u payload_len=%u",
-                            entry->channel_id,
-                            message.type,
-                            (unsigned)packet->payload_len);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
         }
         rdp_session_emit_channel_payload(session,
                                          entry->channel_id,
@@ -814,18 +1016,14 @@ librdp_status rdp_session_handle_static_channel(librdp_session* session,
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (strcmp(entry->name, RDP_MULTIPARTY_CHANNEL_NAME) == 0)
         {
-            rdp_multiparty_message message;
+            librdp_status status = rdp_session_multiparty_dispatch(
+                session,
+                entry->channel_id,
+                entry->fragment.data,
+                entry->fragment.length);
 
-            if (rdp_multiparty_parse_message(entry->fragment.data, entry->fragment.length, &message) !=
-                LIBRDP_STATUS_OK)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-            session->multiparty_joined = 1;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.multiparty.pdu",
-                            "channel_id=%u type=%u payload_len=%u",
-                            entry->channel_id,
-                            message.type,
-                            (unsigned)entry->fragment.length);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
         }
         rdp_session_emit_channel_payload(session,
                                          entry->channel_id,

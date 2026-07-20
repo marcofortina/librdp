@@ -282,6 +282,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_video_capture_reset(session);
     rdp_session_auth_redirection_channel_reset(session);
     rdp_session_webauthn_channel_reset(session);
+    rdp_session_multiparty_reset(session);
     rdp_session_credssp_security_reset(session);
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
@@ -441,6 +442,7 @@ librdp_status rdp_session_disconnect_inner(librdp_session* session)
     rdp_buffer_free(&session->remote_programs_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
     rdp_session_echo_clear_pending(session);
+    rdp_session_multiparty_reset(session);
     session->core_input_channel_id = 0;
     session->core_input_channel_id_bytes = 0;
     session->core_input_ready = 0;

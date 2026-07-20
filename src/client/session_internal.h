@@ -89,6 +89,7 @@ typedef struct rdp_session_usb_worker rdp_session_usb_worker;
 #endif
 
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
+#define RDP_SESSION_MULTIPARTY_PARTICIPANT_LIMIT 64u
 #define RDP_SESSION_HANDSHAKE_TIMEOUT_MS 5000
 #define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
 #define RDP_SESSION_MAX_DYNAMIC_MESSAGE (64u * 1024u * 1024u)
@@ -388,6 +389,15 @@ typedef struct rdp_session_static_channel
     rdp_buffer fragment;
     char name[LIBRDP_STATIC_CHANNEL_NAME_MAX + 1u];
 } rdp_session_static_channel;
+
+typedef struct rdp_session_multiparty_participant
+{
+    uint32_t participant_id;
+    uint32_t group_id;
+    uint16_t share_flags;
+    uint16_t control_flags;
+    uint8_t active;
+} rdp_session_multiparty_participant;
 
 typedef struct rdp_session_graphics_surface
 {
@@ -806,6 +816,14 @@ struct librdp_session
     uint8_t telemetry_ready;
     uint16_t multiparty_channel_id;
     uint8_t multiparty_joined;
+    uint32_t multiparty_participant_count;
+    uint32_t multiparty_participant_joins;
+    uint32_t multiparty_participant_updates;
+    uint32_t multiparty_participant_leaves;
+    uint32_t multiparty_participant_duplicates;
+    uint32_t multiparty_participant_stale;
+    rdp_session_multiparty_participant
+        multiparty_participants[RDP_SESSION_MULTIPARTY_PARTICIPANT_LIMIT];
     uint8_t desktop_composition_active;
     uint32_t video_geometry_update_count;
     uint32_t video_geometry_active_count;

@@ -47,6 +47,7 @@ static int run_idle_eof(void)
 static int run_features(void)
 {
     if (test_telemetry_runtime_privacy() != 0 ||
+        test_multiparty_runtime_lifecycle() != 0 ||
         test_optional_feature_runtime_paths() != 0 ||
         test_video_geometry_runtime_lifecycle() != 0 ||
         test_feature_runtime_gates() != 0)
@@ -249,6 +250,7 @@ int test_client_core(void)
         test_dynamic_channel_soft_sync_runtime() != 0)
         return 1;
     if (test_telemetry_runtime_privacy() != 0 ||
+        test_multiparty_runtime_lifecycle() != 0 ||
         test_optional_feature_runtime_paths() != 0 ||
         test_video_geometry_runtime_lifecycle() != 0 ||
         test_feature_runtime_gates() != 0 ||
