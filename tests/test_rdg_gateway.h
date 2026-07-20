@@ -20,6 +20,13 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
+typedef enum test_rdg_stream
+{
+    TEST_RDG_STREAM_NONE = 0,
+    TEST_RDG_STREAM_OUT = 1,
+    TEST_RDG_STREAM_IN = 2
+} test_rdg_stream;
+
 typedef struct test_rdg_gateway_config
 {
     const char* target_host;
@@ -41,6 +48,7 @@ typedef struct test_rdg_gateway
     atomic_uint authorized;
     atomic_uint channel;
     atomic_uint closed;
+    atomic_uint dropped;
     atomic_uint downstream_sent;
     atomic_uint downstream_received;
     int listener_fd;
@@ -61,6 +69,9 @@ int test_rdg_gateway_join(test_rdg_gateway* gateway);
 
 int test_rdg_gateway_join_status(test_rdg_gateway* gateway,
                                  librdp_status expected_status);
+
+int test_rdg_gateway_drop_stream(test_rdg_gateway* gateway,
+                                 test_rdg_stream stream);
 
 void test_rdg_gateway_clear(test_rdg_gateway* gateway);
 

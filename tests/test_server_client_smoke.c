@@ -151,6 +151,7 @@ typedef struct smoke_gateway_profile
     uint32_t timeout_ms;
     librdp_status expected_status;
     librdp_status expected_fixture_status;
+    test_rdg_stream drop_stream;
 } smoke_gateway_profile;
 
 static const smoke_gateway_profile smoke_gateway_http_explicit = {
@@ -162,6 +163,7 @@ static const smoke_gateway_profile smoke_gateway_http_explicit = {
     5000u,
     LIBRDP_STATUS_OK,
     LIBRDP_STATUS_OK,
+    TEST_RDG_STREAM_NONE,
 };
 static const smoke_gateway_profile smoke_gateway_http_session = {
     LIBRDP_GATEWAY_HTTP_CONNECT,
@@ -172,6 +174,7 @@ static const smoke_gateway_profile smoke_gateway_http_session = {
     5000u,
     LIBRDP_STATUS_OK,
     LIBRDP_STATUS_OK,
+    TEST_RDG_STREAM_NONE,
 };
 static const smoke_gateway_profile smoke_gateway_http_no_credentials = {
     LIBRDP_GATEWAY_HTTP_CONNECT,
@@ -182,6 +185,7 @@ static const smoke_gateway_profile smoke_gateway_http_no_credentials = {
     5000u,
     LIBRDP_STATUS_AUTHENTICATION_FAILED,
     LIBRDP_STATUS_IO_ERROR,
+    TEST_RDG_STREAM_NONE,
 };
 static const smoke_gateway_profile smoke_gateway_rdg = {
     LIBRDP_GATEWAY_RDG_HTTP,
@@ -192,6 +196,29 @@ static const smoke_gateway_profile smoke_gateway_rdg = {
     5000u,
     LIBRDP_STATUS_OK,
     LIBRDP_STATUS_OK,
+    TEST_RDG_STREAM_NONE,
+};
+static const smoke_gateway_profile smoke_gateway_rdg_drop_out = {
+    LIBRDP_GATEWAY_RDG_HTTP,
+    SMOKE_GATEWAY_CREDENTIALS_EXPLICIT,
+    TEST_HTTP_PROXY_FORWARD,
+    0,
+    1,
+    5000u,
+    LIBRDP_STATUS_OK,
+    LIBRDP_STATUS_IO_ERROR,
+    TEST_RDG_STREAM_OUT,
+};
+static const smoke_gateway_profile smoke_gateway_rdg_drop_in = {
+    LIBRDP_GATEWAY_RDG_HTTP,
+    SMOKE_GATEWAY_CREDENTIALS_EXPLICIT,
+    TEST_HTTP_PROXY_FORWARD,
+    0,
+    1,
+    5000u,
+    LIBRDP_STATUS_OK,
+    LIBRDP_STATUS_IO_ERROR,
+    TEST_RDG_STREAM_IN,
 };
 static const smoke_gateway_profile smoke_gateway_http_auth_failure = {
     LIBRDP_GATEWAY_HTTP_CONNECT,
@@ -202,6 +229,7 @@ static const smoke_gateway_profile smoke_gateway_http_auth_failure = {
     5000u,
     LIBRDP_STATUS_AUTHENTICATION_FAILED,
     LIBRDP_STATUS_IO_ERROR,
+    TEST_RDG_STREAM_NONE,
 };
 static const smoke_gateway_profile smoke_gateway_http_timeout = {
     LIBRDP_GATEWAY_HTTP_CONNECT,
@@ -212,6 +240,7 @@ static const smoke_gateway_profile smoke_gateway_http_timeout = {
     100u,
     LIBRDP_STATUS_TIMEOUT,
     LIBRDP_STATUS_TIMEOUT,
+    TEST_RDG_STREAM_NONE,
 };
 static const smoke_gateway_profile smoke_gateway_http_malformed = {
     LIBRDP_GATEWAY_HTTP_CONNECT,
@@ -222,6 +251,7 @@ static const smoke_gateway_profile smoke_gateway_http_malformed = {
     5000u,
     LIBRDP_STATUS_IO_ERROR,
     LIBRDP_STATUS_PROTOCOL_ERROR,
+    TEST_RDG_STREAM_NONE,
 };
 static const smoke_gateway_profile smoke_gateway_http_refused = {
     LIBRDP_GATEWAY_HTTP_CONNECT,
@@ -232,6 +262,7 @@ static const smoke_gateway_profile smoke_gateway_http_refused = {
     5000u,
     LIBRDP_STATUS_IO_ERROR,
     LIBRDP_STATUS_CLOSED,
+    TEST_RDG_STREAM_NONE,
 };
 static const smoke_gateway_profile smoke_gateway_rdg_untrusted = {
     LIBRDP_GATEWAY_RDG_HTTP,
@@ -242,6 +273,7 @@ static const smoke_gateway_profile smoke_gateway_rdg_untrusted = {
     5000u,
     LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
     LIBRDP_STATUS_IO_ERROR,
+    TEST_RDG_STREAM_NONE,
 };
 
 typedef struct smoke_integrity_peer
@@ -1661,6 +1693,7 @@ static int smoke_run_profile(librdp_security_mode security,
     librdp_key_event key;
     librdp_mouse_event mouse;
     librdp_status connect_status = LIBRDP_STATUS_OK;
+    librdp_status terminal_status = LIBRDP_STATUS_OK;
     uint16_t port = 0u;
     uint16_t default_port = 0u;
     unsigned int cycle = 0u;
@@ -2161,6 +2194,79 @@ static int smoke_run_profile(librdp_security_mode security,
                                  memory_order_acquire) >= 2u);
     REQUIRE(atomic_load_explicit(&platform.mouse_events,
                                  memory_order_acquire) >= 1u);
+    if (gateway_profile &&
+        gateway_profile->drop_stream != TEST_RDG_STREAM_NONE)
+    {
+        REQUIRE(gateway_mode == LIBRDP_GATEWAY_RDG_HTTP);
+        REQUIRE(rdg_started);
+        REQUIRE(test_rdg_gateway_drop_stream(
+            &rdg_gateway,
+            gateway_profile->drop_stream));
+        REQUIRE(atomic_load_explicit(
+                    &rdg_gateway.dropped,
+                    memory_order_acquire) ==
+                (unsigned int)gateway_profile->drop_stream);
+        if (gateway_profile->drop_stream == TEST_RDG_STREAM_IN)
+        {
+            mouse.x++;
+            terminal_status =
+                librdp_session_send_mouse(session, &mouse);
+            REQUIRE(terminal_status == LIBRDP_STATUS_OK ||
+                    terminal_status == LIBRDP_STATUS_IO_ERROR ||
+                    terminal_status == LIBRDP_STATUS_CLOSED);
+        }
+        terminal_status = LIBRDP_STATUS_OK;
+        for (cycle = 0u; cycle < SMOKE_PUMP_LIMIT; cycle++)
+        {
+            terminal_status = smoke_client_pump(&runtime);
+            if (terminal_status != LIBRDP_STATUS_OK ||
+                librdp_session_get_state(session) !=
+                    LIBRDP_SESSION_ACTIVE)
+                break;
+        }
+        REQUIRE(cycle < SMOKE_PUMP_LIMIT);
+        REQUIRE(terminal_status == LIBRDP_STATUS_IO_ERROR ||
+                terminal_status == LIBRDP_STATUS_CLOSED);
+        REQUIRE(librdp_session_get_state(session) ==
+                LIBRDP_SESSION_FAILED);
+        REQUIRE(librdp_session_get_lifecycle(session) ==
+                LIBRDP_LIFECYCLE_FAILED);
+        REQUIRE(!events.active);
+        REQUIRE(events.active_seen);
+        REQUIRE(events.error_events == 1u);
+        REQUIRE(trace_capture.leaked == 0);
+        REQUIRE(librdp_error_info_init(&error_info) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(librdp_error_copy_info(
+                    librdp_session_last_error(session),
+                    &error_info) == LIBRDP_STATUS_OK);
+        REQUIRE(error_info.status == terminal_status);
+        REQUIRE(error_info.component ==
+                LIBRDP_ERROR_COMPONENT_TRANSPORT);
+        REQUIRE(error_info.phase != NULL);
+        REQUIRE(strcmp(error_info.phase,
+                       "client.dispatch") == 0);
+        REQUIRE(error_info.trace_id != NULL);
+        REQUIRE(strcmp(error_info.trace_id,
+                       "server-client-smoke") == 0);
+        REQUIRE(client_runtime_disconnect(&runtime) ==
+                LIBRDP_STATUS_OK);
+        test_rdg_gateway_cancel(&rdg_gateway);
+        REQUIRE(test_rdg_gateway_join_status(
+            &rdg_gateway,
+            gateway_profile->expected_fixture_status));
+        rdg_started = 0;
+        test_rdg_gateway_clear(&rdg_gateway);
+        REQUIRE(server_host_cancel(host_fixture.host) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(pthread_join(host_fixture.thread, NULL) == 0);
+        thread_started = 0;
+        REQUIRE(host_fixture.status == LIBRDP_STATUS_OK);
+        REQUIRE(atomic_load_explicit(&platform.releases,
+                                     memory_order_acquire) > 0u);
+        result = 0;
+        goto cleanup;
+    }
     REQUIRE(client_runtime_disconnect(&runtime) == LIBRDP_STATUS_OK);
     if (rdg_started)
     {
@@ -2780,6 +2886,10 @@ static const smoke_gateway_profile* smoke_gateway_profile_by_name(
         return &smoke_gateway_http_refused;
     if (strcmp(name, "gateway-rdg") == 0)
         return &smoke_gateway_rdg;
+    if (strcmp(name, "gateway-rdg-drop-out") == 0)
+        return &smoke_gateway_rdg_drop_out;
+    if (strcmp(name, "gateway-rdg-drop-in") == 0)
+        return &smoke_gateway_rdg_drop_in;
     if (strcmp(name, "gateway-rdg-untrusted") == 0)
         return &smoke_gateway_rdg_untrusted;
     return NULL;
@@ -2863,7 +2973,8 @@ int main(int argc, char** argv)
                 "gateway-http-connect|gateway-session-credentials|"
                 "gateway-no-session-credentials|gateway-auth-failure|"
                 "gateway-timeout|gateway-malformed|gateway-refused|"
-                "gateway-rdg|gateway-rdg-untrusted\n");
+                "gateway-rdg|gateway-rdg-drop-out|gateway-rdg-drop-in|"
+                "gateway-rdg-untrusted\n");
         return 2;
     }
     return smoke_run_profile(security,

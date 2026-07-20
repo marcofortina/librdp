@@ -1065,6 +1065,7 @@ int test_rdg_gateway_start(test_rdg_gateway* gateway,
     atomic_init(&gateway->authorized, 0u);
     atomic_init(&gateway->channel, 0u);
     atomic_init(&gateway->closed, 0u);
+    atomic_init(&gateway->dropped, 0u);
     atomic_init(&gateway->downstream_sent, 0u);
     atomic_init(&gateway->downstream_received, 0u);
     if (pthread_mutex_init(&gateway->lock, NULL) != 0)
@@ -1140,6 +1141,31 @@ int test_rdg_gateway_join_status(test_rdg_gateway* gateway,
         return 0;
     gateway->thread_started = 0;
     return gateway->status == expected_status;
+}
+
+int test_rdg_gateway_drop_stream(test_rdg_gateway* gateway,
+                                 test_rdg_stream stream)
+{
+    int fd = -1;
+    int result = 0;
+
+    if (!gateway ||
+        (stream != TEST_RDG_STREAM_OUT &&
+         stream != TEST_RDG_STREAM_IN) ||
+        pthread_mutex_lock(&gateway->lock) != 0)
+        return 0;
+    fd = stream == TEST_RDG_STREAM_OUT
+             ? gateway->out_fd
+             : gateway->in_fd;
+    if (fd >= 0 && shutdown(fd, SHUT_RDWR) == 0)
+    {
+        atomic_store_explicit(&gateway->dropped,
+                              (unsigned int)stream,
+                              memory_order_release);
+        result = 1;
+    }
+    (void)pthread_mutex_unlock(&gateway->lock);
+    return result;
 }
 
 void test_rdg_gateway_clear(test_rdg_gateway* gateway)

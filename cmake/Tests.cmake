@@ -402,6 +402,10 @@ if(LIBRDP_BUILD_TESTS)
                  COMMAND test_server_client_smoke gateway-refused)
         add_test(NAME server_client_smoke_gateway_rdg
                  COMMAND test_server_client_smoke gateway-rdg)
+        add_test(NAME server_client_smoke_gateway_rdg_drop_out
+                 COMMAND test_server_client_smoke gateway-rdg-drop-out)
+        add_test(NAME server_client_smoke_gateway_rdg_drop_in
+                 COMMAND test_server_client_smoke gateway-rdg-drop-in)
         add_test(NAME server_client_smoke_gateway_rdg_untrusted
                  COMMAND test_server_client_smoke gateway-rdg-untrusted)
     endif()
@@ -446,6 +450,8 @@ if(LIBRDP_BUILD_TESTS)
             server_client_smoke_gateway_malformed
             server_client_smoke_gateway_refused
             server_client_smoke_gateway_rdg
+            server_client_smoke_gateway_rdg_drop_out
+            server_client_smoke_gateway_rdg_drop_in
             server_client_smoke_gateway_rdg_untrusted
             PROPERTIES TIMEOUT 60
         )
