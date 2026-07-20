@@ -65,6 +65,8 @@ int test_gdiplus_antialias_affects_line_edges(void);
 int test_gdiplus_clip_limits_visual_output(void);
 int test_gdiplus_native_backend(void);
 int test_gdi_bitmap_cache_limits(void);
+int test_gdi_bitmap_cache_eviction(void);
+int test_gdi_cache_lifecycle(void);
 int test_gdi_altsec_runtime_orders(void);
 int test_gdi_orders_runtime_golden(void);
 int test_graphics_update_before_activation(void);

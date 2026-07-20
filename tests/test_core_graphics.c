@@ -1492,6 +1492,114 @@ static rdp_session_gdi_bitmap_cache_entry* find_test_bitmap_cache_entry(librdp_s
     return NULL;
 }
 
+static rdp_session_gdi_offscreen_bitmap* find_test_offscreen_surface(librdp_session* session,
+                                                                     uint32_t bitmap_id)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_OFFSCREEN_CACHE_SLOTS; i++)
+    {
+        rdp_session_gdi_offscreen_bitmap* entry = &session->gdi_offscreen_cache[i];
+
+        if (entry->active && entry->bitmap_id == bitmap_id)
+            return entry;
+    }
+    return NULL;
+}
+
+static rdp_session_gdi_saved_bitmap* find_test_saved_bitmap(librdp_session* session,
+                                                            uint32_t bitmap_id)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_SAVE_BITMAP_SLOTS; i++)
+    {
+        rdp_session_gdi_saved_bitmap* entry = &session->gdi_saved_bitmaps[i];
+
+        if (entry->active && entry->bitmap_id == bitmap_id)
+            return entry;
+    }
+    return NULL;
+}
+
+static rdp_session_gdi_ninegrid_cache_entry* find_test_ninegrid(librdp_session* session,
+                                                                uint32_t bitmap_id)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_NINEGRID_CACHE_SLOTS; i++)
+    {
+        rdp_session_gdi_ninegrid_cache_entry* entry = &session->gdi_ninegrid_cache[i];
+
+        if (entry->active && entry->bitmap_id == bitmap_id)
+            return entry;
+    }
+    return NULL;
+}
+
+static int append_test_secondary_order(rdp_buffer* orders,
+                                       uint16_t extra_flags,
+                                       uint8_t order_type,
+                                       const void* payload,
+                                       size_t payload_len)
+{
+    rdp_buffer encoded;
+    int ok = 0;
+
+    if (!orders || (!payload && payload_len > 0))
+        return 0;
+    rdp_buffer_init(&encoded);
+    ok = rdp_gdi_write_secondary_order(&encoded,
+                                       extra_flags,
+                                       order_type,
+                                       payload,
+                                       payload_len) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(orders, encoded.data, encoded.length) == LIBRDP_STATUS_OK;
+    rdp_buffer_free(&encoded);
+    return ok;
+}
+
+static int append_test_altsec_order(rdp_buffer* orders,
+                                    uint8_t order_type,
+                                    const rdp_buffer* payload)
+{
+    rdp_buffer encoded;
+    int ok = 0;
+
+    if (!orders || !payload)
+        return 0;
+    rdp_buffer_init(&encoded);
+    ok = rdp_gdi_write_altsec_order(&encoded,
+                                    order_type,
+                                    payload->data,
+                                    payload->length) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(orders, encoded.data, encoded.length) == LIBRDP_STATUS_OK;
+    rdp_buffer_free(&encoded);
+    return ok;
+}
+
+static librdp_status apply_test_gdi_orders(librdp_session* session,
+                                           const rdp_buffer* orders,
+                                           uint16_t order_count)
+{
+    rdp_gdi_orders_update update;
+
+    if (!session || !orders)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&update, 0, sizeof(update));
+    update.update_type = RDP_GDI_UPDATE_TYPE_ORDERS;
+    update.number_orders = order_count;
+    update.order_data = orders->data;
+    update.order_data_len = orders->length;
+    return rdp_session_apply_gdi_orders_update(session, &update);
+}
+
 /*
  * Coverage: proves raw, RLE, NSCodec, and RemoteFX cache orders are bounded
  * before decoder allocation. Every rejected replacement targets an existing
@@ -1624,6 +1732,412 @@ int test_gdi_bitmap_cache_limits(void)
     CHECK(metrics.limits_rejected == 5u);
 
     rdp_buffer_free(&payload);
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+/*
+ * Coverage: fills the bitmap cache, refreshes one entry through a render
+ * lookup, and inserts one more bitmap. The oldest untouched entry must be
+ * evicted while byte accounting and recently used data remain intact.
+ */
+int test_gdi_bitmap_cache_eviction(void)
+{
+    const uint8_t pixel[] = {0x10u, 0x20u, 0x30u, 0xffu};
+    const uint8_t touch_first[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MEMBLT,
+        0xffu, 0x01u,
+        0x01u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x01u, 0x00u,
+        0x01u, 0x00u,
+        0xccu,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u
+    };
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    rdp_buffer payload;
+    rdp_buffer primary;
+    size_t i = 0;
+    size_t active = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_desktop_size(
+              settings,
+              LIBRDP_DESKTOP_MIN_DIMENSION,
+              LIBRDP_DESKTOP_MIN_DIMENSION) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    rdp_buffer_init(&payload);
+    rdp_buffer_init(&primary);
+
+    for (i = 0; i < RDP_SESSION_GDI_BITMAP_CACHE_SLOTS; i++)
+    {
+        payload.length = 0;
+        CHECK(append_cache_bitmap_v1_payload(&payload,
+                                             1u,
+                                             1u,
+                                             32u,
+                                             (uint16_t)i,
+                                             pixel,
+                                             (uint16_t)sizeof(pixel)));
+        CHECK(apply_cache_bitmap_order(session,
+                                       0u,
+                                       RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED,
+                                       &payload) == LIBRDP_STATUS_OK);
+    }
+    CHECK(find_test_bitmap_cache_entry(session, 1u, 0u) != NULL);
+    CHECK(find_test_bitmap_cache_entry(session, 1u, 1u) != NULL);
+
+    CHECK(rdp_buffer_append(&primary, touch_first, sizeof(touch_first)) == LIBRDP_STATUS_OK);
+    CHECK(apply_test_gdi_orders(session, &primary, 1u) == LIBRDP_STATUS_OK);
+
+    payload.length = 0;
+    CHECK(append_cache_bitmap_v1_payload(&payload,
+                                         1u,
+                                         1u,
+                                         32u,
+                                         (uint16_t)RDP_SESSION_GDI_BITMAP_CACHE_SLOTS,
+                                         pixel,
+                                         (uint16_t)sizeof(pixel)));
+    CHECK(apply_cache_bitmap_order(session,
+                                   0u,
+                                   RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED,
+                                   &payload) == LIBRDP_STATUS_OK);
+    CHECK(find_test_bitmap_cache_entry(session, 1u, 0u) != NULL);
+    CHECK(find_test_bitmap_cache_entry(session, 1u, 1u) == NULL);
+    CHECK(find_test_bitmap_cache_entry(session,
+                                       1u,
+                                       RDP_SESSION_GDI_BITMAP_CACHE_SLOTS) != NULL);
+    for (i = 0; i < RDP_SESSION_GDI_BITMAP_CACHE_SLOTS; i++)
+    {
+        if (session->gdi_bitmap_cache[i].active)
+            active++;
+    }
+    CHECK(active == RDP_SESSION_GDI_BITMAP_CACHE_SLOTS);
+    CHECK(session->gdi_bitmap_cache_bytes ==
+          RDP_SESSION_GDI_BITMAP_CACHE_SLOTS * sizeof(pixel));
+
+    rdp_buffer_free(&primary);
+    rdp_buffer_free(&payload);
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+/*
+ * Coverage: drives cache insertion and lookup, offscreen rendering, cached
+ * brushes and glyphs, save/restore, nine-grid scaling, and deliberate misses
+ * through one runtime order stream. Assertions cover both cache ownership and
+ * the resulting primary/offscreen pixels.
+ */
+int test_gdi_cache_lifecycle(void)
+{
+    static const uint8_t bitmap_pixels[] = {
+        0x01u, 0x02u, 0x03u, 0xffu, 0x11u, 0x12u, 0x13u, 0xffu,
+        0x21u, 0x22u, 0x23u, 0xffu, 0x31u, 0x32u, 0x33u, 0xffu,
+        0x41u, 0x42u, 0x43u, 0xffu, 0x51u, 0x52u, 0x53u, 0xffu,
+        0x61u, 0x62u, 0x63u, 0xffu, 0x71u, 0x72u, 0x73u, 0xffu,
+        0x81u, 0x82u, 0x83u, 0xffu, 0x91u, 0x92u, 0x93u, 0xffu,
+        0xa1u, 0xa2u, 0xa3u, 0xffu, 0xb1u, 0xb2u, 0xb3u, 0xffu,
+        0xc1u, 0xc2u, 0xc3u, 0xffu, 0xd1u, 0xd2u, 0xd3u, 0xffu,
+        0xe1u, 0xe2u, 0xe3u, 0xffu, 0xf1u, 0xf2u, 0xf3u, 0xffu
+    };
+    static const uint8_t brush_payload[] = {
+        3u, RDP_GDI_BMF_1BPP, 8u, 8u, 0u, 8u,
+        0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x20u, 0x40u, 0x80u
+    };
+    static const uint8_t glyph_payload[] = {
+        1u, 1u,
+        2u, 0u, 0u, 0u, 0u, 0u, 8u, 0u, 2u, 0u,
+        0x80u, 0x40u, 0u, 0u,
+        'A', 0u
+    };
+    static const uint8_t offscreen_fill[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_OPAQUERECT,
+        0x1fu,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x04u, 0x00u, 0x04u, 0x00u,
+        0x11u, 0x22u, 0x33u
+    };
+    static const uint8_t bitmap_hit[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MEMBLT,
+        0xffu, 0x01u,
+        0x01u, 0x00u,
+        0x0au, 0x00u, 0x0au, 0x00u,
+        0x04u, 0x00u, 0x04u, 0x00u,
+        0xccu,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x05u, 0x00u
+    };
+    static const uint8_t brush_hit[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_PATBLT,
+        0xffu, 0x0fu,
+        0x14u, 0x00u, 0x14u, 0x00u,
+        0x08u, 0x00u, 0x08u, 0x00u,
+        0xf0u,
+        0x10u, 0x20u, 0x30u,
+        0x40u, 0x50u, 0x60u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        RDP_GDI_CACHED_BRUSH | RDP_GDI_BMF_1BPP,
+        3u,
+        0u, 0u, 0u, 0u, 0u, 0u, 0u
+    };
+    static const uint8_t glyph_hit_and_miss[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_GLYPH_INDEX,
+        0xffu, 0x3fu, 0x38u,
+        1u, RDP_GDI_GLYPH_SO_HORIZONTAL, 1u, 0u,
+        0x01u, 0x02u, 0x03u,
+        0x04u, 0x05u, 0x06u,
+        60u, 0u, 60u, 0u, 80u, 0u, 70u, 0u,
+        60u, 0u, 60u, 0u, 80u, 0u, 70u, 0u,
+        61u, 0u, 62u, 0u,
+        2u, 2u, 99u
+    };
+    static const uint8_t save_source[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_OPAQUERECT,
+        0x1fu,
+        0x28u, 0x00u, 0x28u, 0x00u,
+        0x04u, 0x00u, 0x04u, 0x00u,
+        0x10u, 0x20u, 0x30u
+    };
+    static const uint8_t save_store[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_SAVEBITMAP,
+        0x3fu,
+        0x11u, 0x11u, 0x11u, 0x11u,
+        0x28u, 0x00u, 0x28u, 0x00u,
+        0x2bu, 0x00u, 0x2bu, 0x00u,
+        0u
+    };
+    static const uint8_t save_overwrite[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_OPAQUERECT,
+        0x1fu,
+        0x28u, 0x00u, 0x28u, 0x00u,
+        0x04u, 0x00u, 0x04u, 0x00u,
+        0xaau, 0xbbu, 0xccu
+    };
+    static const uint8_t save_restore[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_SAVEBITMAP,
+        0x3fu,
+        0x11u, 0x11u, 0x11u, 0x11u,
+        0x28u, 0x00u, 0x28u, 0x00u,
+        0x2bu, 0x00u, 0x2bu, 0x00u,
+        1u
+    };
+    static const uint8_t save_miss[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_SAVEBITMAP,
+        0x3fu,
+        0x22u, 0x22u, 0x22u, 0x22u,
+        0x30u, 0x00u, 0x30u, 0x00u,
+        0x33u, 0x00u, 0x33u, 0x00u,
+        1u
+    };
+    static const uint8_t ninegrid_hit[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_BOUNDS | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_DRAWNINEGRID,
+        0x1fu, 0x0fu,
+        0x50u, 0x00u, 0x14u, 0x00u,
+        0x57u, 0x00u, 0x1bu, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x03u, 0x00u, 0x03u, 0x00u,
+        0x05u, 0x00u
+    };
+    static const uint8_t ninegrid_miss[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_BOUNDS | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_DRAWNINEGRID,
+        0x1fu, 0x0fu,
+        0x60u, 0x00u, 0x14u, 0x00u,
+        0x67u, 0x00u, 0x1bu, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x03u, 0x00u, 0x03u, 0x00u,
+        0x63u, 0x00u
+    };
+    static const uint8_t bitmap_miss[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MEMBLT,
+        0xffu, 0x01u,
+        0x01u, 0x00u,
+        0x70u, 0x00u, 0x14u, 0x00u,
+        0x02u, 0x00u, 0x02u, 0x00u,
+        0xccu,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x63u, 0x00u
+    };
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    rdp_session_gdi_offscreen_bitmap* offscreen = NULL;
+    rdp_gdi_create_offscreen_bitmap_order create_offscreen;
+    rdp_gdi_create_ninegrid_bitmap_order create_ninegrid;
+    rdp_gdi_switch_surface_order switch_surface;
+    rdp_buffer orders;
+    rdp_buffer payload;
+    const uint8_t* primary_pixels = NULL;
+    const uint8_t* offscreen_pixels = NULL;
+    size_t primary_stride = 0;
+    size_t offscreen_stride = 0;
+    uint16_t order_count = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_desktop_size(
+              settings,
+              LIBRDP_DESKTOP_MIN_DIMENSION,
+              LIBRDP_DESKTOP_MIN_DIMENSION) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    rdp_buffer_init(&orders);
+    rdp_buffer_init(&payload);
+
+    CHECK(append_cache_bitmap_v1_payload(&payload,
+                                         4u,
+                                         4u,
+                                         32u,
+                                         5u,
+                                         bitmap_pixels,
+                                         (uint16_t)sizeof(bitmap_pixels)));
+    CHECK(append_test_secondary_order(&orders,
+                                      0u,
+                                      RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED,
+                                      payload.data,
+                                      payload.length));
+    order_count++;
+    CHECK(append_test_secondary_order(&orders,
+                                      0u,
+                                      RDP_GDI_SECONDARY_CACHE_BRUSH,
+                                      brush_payload,
+                                      sizeof(brush_payload)));
+    order_count++;
+    CHECK(append_test_secondary_order(&orders,
+                                      RDP_GDI_CACHE_GLYPH_UNICODE_PRESENT,
+                                      RDP_GDI_SECONDARY_CACHE_GLYPH,
+                                      glyph_payload,
+                                      sizeof(glyph_payload)));
+    order_count++;
+
+    memset(&create_offscreen, 0, sizeof(create_offscreen));
+    create_offscreen.bitmap_id = 7u;
+    create_offscreen.width = 8u;
+    create_offscreen.height = 8u;
+    payload.length = 0;
+    CHECK(rdp_gdi_write_create_offscreen_bitmap_order(&payload,
+                                                      &create_offscreen) == LIBRDP_STATUS_OK);
+    CHECK(append_test_altsec_order(&orders,
+                                   RDP_GDI_ALTSEC_CREATE_OFFSCREEN_BITMAP,
+                                   &payload));
+    order_count++;
+    memset(&switch_surface, 0, sizeof(switch_surface));
+    switch_surface.bitmap_id = create_offscreen.bitmap_id;
+    payload.length = 0;
+    CHECK(rdp_gdi_write_switch_surface_order(&payload,
+                                             &switch_surface) == LIBRDP_STATUS_OK);
+    CHECK(append_test_altsec_order(&orders,
+                                   RDP_GDI_ALTSEC_SWITCH_SURFACE,
+                                   &payload));
+    order_count++;
+    CHECK(rdp_buffer_append(&orders, offscreen_fill, sizeof(offscreen_fill)) ==
+          LIBRDP_STATUS_OK);
+    order_count++;
+    switch_surface.bitmap_id = RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE;
+    payload.length = 0;
+    CHECK(rdp_gdi_write_switch_surface_order(&payload,
+                                             &switch_surface) == LIBRDP_STATUS_OK);
+    CHECK(append_test_altsec_order(&orders,
+                                   RDP_GDI_ALTSEC_SWITCH_SURFACE,
+                                   &payload));
+    order_count++;
+
+    CHECK(rdp_buffer_append(&orders, bitmap_hit, sizeof(bitmap_hit)) == LIBRDP_STATUS_OK);
+    order_count++;
+    CHECK(rdp_buffer_append(&orders, brush_hit, sizeof(brush_hit)) == LIBRDP_STATUS_OK);
+    order_count++;
+    CHECK(rdp_buffer_append(&orders,
+                            glyph_hit_and_miss,
+                            sizeof(glyph_hit_and_miss)) == LIBRDP_STATUS_OK);
+    order_count++;
+    CHECK(rdp_buffer_append(&orders, save_source, sizeof(save_source)) == LIBRDP_STATUS_OK);
+    order_count++;
+    CHECK(rdp_buffer_append(&orders, save_store, sizeof(save_store)) == LIBRDP_STATUS_OK);
+    order_count++;
+    CHECK(rdp_buffer_append(&orders,
+                            save_overwrite,
+                            sizeof(save_overwrite)) == LIBRDP_STATUS_OK);
+    order_count++;
+    CHECK(rdp_buffer_append(&orders, save_restore, sizeof(save_restore)) == LIBRDP_STATUS_OK);
+    order_count++;
+    CHECK(rdp_buffer_append(&orders, save_miss, sizeof(save_miss)) == LIBRDP_STATUS_OK);
+    order_count++;
+
+    memset(&create_ninegrid, 0, sizeof(create_ninegrid));
+    create_ninegrid.bits_per_pixel = 32u;
+    create_ninegrid.bitmap_id = 5u;
+    create_ninegrid.info.left_width = 1u;
+    create_ninegrid.info.right_width = 1u;
+    create_ninegrid.info.top_height = 1u;
+    create_ninegrid.info.bottom_height = 1u;
+    payload.length = 0;
+    CHECK(rdp_gdi_write_create_ninegrid_bitmap_order(&payload,
+                                                      &create_ninegrid) == LIBRDP_STATUS_OK);
+    CHECK(append_test_altsec_order(&orders,
+                                   RDP_GDI_ALTSEC_CREATE_NINEGRID_BITMAP,
+                                   &payload));
+    order_count++;
+    CHECK(rdp_buffer_append(&orders, ninegrid_hit, sizeof(ninegrid_hit)) ==
+          LIBRDP_STATUS_OK);
+    order_count++;
+    CHECK(rdp_buffer_append(&orders, ninegrid_miss, sizeof(ninegrid_miss)) ==
+          LIBRDP_STATUS_OK);
+    order_count++;
+    CHECK(rdp_buffer_append(&orders, bitmap_miss, sizeof(bitmap_miss)) ==
+          LIBRDP_STATUS_OK);
+    order_count++;
+
+    CHECK(apply_test_gdi_orders(session, &orders, order_count) == LIBRDP_STATUS_OK);
+    CHECK(session->gdi_current_surface_id == RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE);
+    CHECK(find_test_bitmap_cache_entry(session, 1u, 5u) != NULL);
+    CHECK(session->gdi_brush_cache[3].active);
+    CHECK(session->gdi_glyph_cache[1][2].active);
+    CHECK(find_test_saved_bitmap(session, 0x11111111u) != NULL);
+    CHECK(find_test_ninegrid(session, 5u) != NULL);
+
+    offscreen = find_test_offscreen_surface(session, 7u);
+    CHECK(offscreen != NULL && offscreen->surface != NULL);
+    primary_pixels = librdp_surface_pixels(session->surface);
+    primary_stride = librdp_surface_stride(session->surface);
+    offscreen_pixels = librdp_surface_pixels(offscreen->surface);
+    offscreen_stride = librdp_surface_stride(offscreen->surface);
+    CHECK(primary_pixels != NULL && offscreen_pixels != NULL);
+    CHECK(primary_pixels[0] == 0u && primary_pixels[1] == 0u && primary_pixels[2] == 0u);
+    CHECK(offscreen_pixels[0] == 0x11u &&
+          offscreen_pixels[1] == 0x22u &&
+          offscreen_pixels[2] == 0x33u &&
+          offscreen_pixels[3] == 0xffu);
+    CHECK(primary_stride > 40u * 4u && offscreen_stride >= 8u * 4u);
+    CHECK(primary_pixels[40u * primary_stride + 40u * 4u] == 0x10u);
+    CHECK(primary_pixels[40u * primary_stride + 40u * 4u + 1u] == 0x20u);
+    CHECK(primary_pixels[40u * primary_stride + 40u * 4u + 2u] == 0x30u);
+    CHECK(primary_pixels[10u * primary_stride + 10u * 4u] != 0u);
+    CHECK(primary_pixels[20u * primary_stride + 20u * 4u] != 0u);
+    CHECK(primary_pixels[20u * primary_stride + 80u * 4u] != 0u);
+    CHECK(primary_pixels[20u * primary_stride + 96u * 4u] == 0u);
+    CHECK(primary_pixels[20u * primary_stride + 112u * 4u] == 0u);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&orders);
     librdp_session_free(session);
     librdp_settings_free(settings);
     return 0;

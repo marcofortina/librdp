@@ -99,6 +99,8 @@ static int run_graphics(void)
         test_gdiplus_antialias_affects_line_edges() != 0 ||
         test_gdiplus_clip_limits_visual_output() != 0 ||
         test_gdi_bitmap_cache_limits() != 0 ||
+        test_gdi_bitmap_cache_eviction() != 0 ||
+        test_gdi_cache_lifecycle() != 0 ||
         test_gdi_orders_runtime_golden() != 0 ||
         test_gdi_altsec_runtime_orders() != 0)
         return 1;
@@ -188,6 +190,10 @@ int test_client_core_named(const char* name)
         return run_graphics();
     if (strcmp(name, "gdi-orders-smoke") == 0)
         return test_gdi_orders_runtime_golden();
+    if (strcmp(name, "gdi-cache-smoke") == 0)
+        return test_gdi_cache_lifecycle();
+    if (strcmp(name, "gdi-cache-eviction") == 0)
+        return test_gdi_bitmap_cache_eviction();
     if (strcmp(name, "gdiplus-native-smoke") == 0)
         return run_gdiplus_native();
     if (strcmp(name, "reactivation") == 0)
