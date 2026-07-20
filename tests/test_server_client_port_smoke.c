@@ -39,11 +39,17 @@
 #define PORT_SMOKE_WRITE_BYTES (1024u * 1024u)
 #define PORT_SMOKE_BAUD_RATE 19200u
 #define PORT_SMOKE_IO_SUCCESS 0x00000000u
+#define PORT_SMOKE_IO_NOT_SUPPORTED 0xc00000bbu
 #define PORT_SMOKE_PURGE_RX_ABORT 0x00000002u
 #define PORT_SMOKE_PURGE_TX_ABORT 0x00000001u
+#define PORT_SMOKE_UNKNOWN_CONTROL 0x0016fffcu
 
 static const uint8_t port_smoke_serial_input[] = {
     0x52u, 0x58u, 0x2du, 0x31u, 0x37u,
+};
+
+static const uint8_t port_smoke_parallel_output[] = {
+    0x50u, 0x41u, 0x52u, 0x41u, 0x4cu, 0x4cu, 0x45u, 0x4cu,
 };
 
 typedef enum port_smoke_stage
@@ -64,7 +70,14 @@ typedef enum port_smoke_stage
     PORT_SMOKE_WAIT_UNPLUG_WRITE = 13,
     PORT_SMOKE_WAIT_CLOSE = 14,
     PORT_SMOKE_COMPLETE = 15,
-    PORT_SMOKE_FAILED = 16
+    PORT_SMOKE_WAIT_PARALLEL_DEVICE = 16,
+    PORT_SMOKE_WAIT_PARALLEL_CREATE = 17,
+    PORT_SMOKE_WAIT_PARALLEL_WRITE = 18,
+    PORT_SMOKE_WAIT_PARALLEL_STATUS = 19,
+    PORT_SMOKE_WAIT_PARALLEL_UNSUPPORTED = 20,
+    PORT_SMOKE_WAIT_PARALLEL_CLOSE = 21,
+    PORT_SMOKE_PARALLEL_COMPLETE = 22,
+    PORT_SMOKE_FAILED = 23
 } port_smoke_stage;
 
 typedef struct port_smoke_fixture
@@ -84,6 +97,8 @@ typedef struct port_smoke_fixture
     uint32_t next_completion_id;
     uint32_t expected_completion_id;
     uint32_t timeout_values[5];
+    librdp_server_extension_family extension_family;
+    uint32_t device_type;
     int master_fd;
     char slave_path[256];
     uint8_t* write_data;
@@ -155,6 +170,12 @@ static void port_smoke_fail(port_smoke_fixture* fixture,
                           memory_order_release);
 }
 
+static int port_smoke_stage_complete(port_smoke_stage stage)
+{
+    return stage == PORT_SMOKE_COMPLETE ||
+           stage == PORT_SMOKE_PARALLEL_COMPLETE;
+}
+
 static int port_smoke_prepare_pty(port_smoke_fixture* fixture)
 {
     struct termios terminal;
@@ -187,6 +208,35 @@ static int port_smoke_prepare_pty(port_smoke_fixture* fixture)
     terminal.c_cc[VMIN] = 0;
     terminal.c_cc[VTIME] = 0;
     if (tcsetattr(fixture->master_fd, TCSANOW, &terminal) != 0)
+        return 0;
+    flags = fcntl(fixture->master_fd, F_GETFD, 0);
+    return flags >= 0 &&
+           fcntl(fixture->master_fd,
+                 F_SETFD,
+                 flags | FD_CLOEXEC) == 0;
+}
+
+static int port_smoke_prepare_parallel_file(
+    port_smoke_fixture* fixture)
+{
+    const char* temp_directory = NULL;
+    int flags = 0;
+    int length = 0;
+
+    if (!fixture)
+        return 0;
+    temp_directory = getenv("TMPDIR");
+    if (!temp_directory || temp_directory[0] == '\0')
+        temp_directory = "/tmp";
+    length = snprintf(fixture->slave_path,
+                      sizeof(fixture->slave_path),
+                      "%s/librdp-parallel-XXXXXX",
+                      temp_directory);
+    if (length <= 0 ||
+        (size_t)length >= sizeof(fixture->slave_path))
+        return 0;
+    fixture->master_fd = mkstemp(fixture->slave_path);
+    if (fixture->master_fd < 0)
         return 0;
     flags = fcntl(fixture->master_fd, F_GETFD, 0);
     return flags >= 0 &&
@@ -234,7 +284,7 @@ static librdp_status port_smoke_send_packet(
                           memory_order_release);
     status = librdp_server_peer_send_static_extension_data(
         peer,
-        LIBRDP_SERVER_EXTENSION_SERIAL_PORT,
+        fixture->extension_family,
         fixture->channel_id,
         packet->data,
         packet->length);
@@ -282,7 +332,10 @@ static librdp_status port_smoke_send_create(
     {
         status = port_smoke_send_packet(fixture,
                                         peer,
-                                        PORT_SMOKE_WAIT_CREATE,
+                                        fixture->extension_family ==
+                                                LIBRDP_SERVER_EXTENSION_SERIAL_PORT
+                                            ? PORT_SMOKE_WAIT_CREATE
+                                            : PORT_SMOKE_WAIT_PARALLEL_CREATE,
                                         &packet);
     }
     rdp_buffer_free(&packet);
@@ -367,7 +420,8 @@ static librdp_status port_smoke_send_write(
 
 static librdp_status port_smoke_send_close(
     port_smoke_fixture* fixture,
-    librdp_server_peer* peer)
+    librdp_server_peer* peer,
+    port_smoke_stage stage)
 {
     rdp_buffer packet;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -382,7 +436,7 @@ static librdp_status port_smoke_send_close(
     {
         status = port_smoke_send_packet(fixture,
                                         peer,
-                                        PORT_SMOKE_WAIT_CLOSE,
+                                        stage,
                                         &packet);
     }
     rdp_buffer_free(&packet);
@@ -438,6 +492,27 @@ static int port_smoke_drain_master(port_smoke_fixture* fixture,
         total += (size_t)count;
     }
     return total == expected;
+}
+
+static int port_smoke_verify_parallel_output(
+    const port_smoke_fixture* fixture)
+{
+    uint8_t output[sizeof(port_smoke_parallel_output)];
+    ssize_t count = 0;
+
+    if (!fixture || fixture->master_fd < 0)
+        return 0;
+    do
+    {
+        count = pread(fixture->master_fd,
+                      output,
+                      sizeof(output),
+                      0);
+    } while (count < 0 && errno == EINTR);
+    return count == (ssize_t)sizeof(output) &&
+           memcmp(output,
+                  port_smoke_parallel_output,
+                  sizeof(output)) == 0;
 }
 
 /*
@@ -819,7 +894,9 @@ static void port_smoke_handle_completion(
                             length_response.io.io_status);
             return;
         }
-        status = port_smoke_send_close(fixture, peer);
+        status = port_smoke_send_close(fixture,
+                                       peer,
+                                       PORT_SMOKE_WAIT_CLOSE);
     }
     else if (stage == PORT_SMOKE_WAIT_CLOSE)
     {
@@ -855,6 +932,162 @@ static void port_smoke_handle_completion(
         port_smoke_fail(fixture, status, 0u);
 }
 
+/*
+ * Drive the parallel-port lifecycle over RDPDR and verify output through an
+ * independently held descriptor. The control checks distinguish a supported
+ * status query from an unknown request that must be rejected explicitly.
+ */
+static void port_smoke_handle_parallel_completion(
+    port_smoke_fixture* fixture,
+    librdp_server_peer* peer,
+    const librdp_server_extension_event* event)
+{
+    rdp_filesystem_redirection_length_response length_response;
+    port_smoke_stage stage = PORT_SMOKE_FAILED;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!fixture || !peer || !event)
+        return;
+    stage = (port_smoke_stage)atomic_load_explicit(
+        &fixture->stage,
+        memory_order_acquire);
+    atomic_fetch_add_explicit(&fixture->completions,
+                              1u,
+                              memory_order_relaxed);
+    memset(&length_response, 0, sizeof(length_response));
+
+    if (stage == PORT_SMOKE_WAIT_PARALLEL_CREATE)
+    {
+        rdp_filesystem_redirection_create_response response;
+
+        memset(&response, 0, sizeof(response));
+        if (rdp_filesystem_redirection_parse_create_response(
+                event->payload,
+                event->payload_len,
+                &response) != LIBRDP_STATUS_OK ||
+            response.io.device_id != fixture->device_id ||
+            response.io.completion_id !=
+                fixture->expected_completion_id ||
+            response.io.io_status != PORT_SMOKE_IO_SUCCESS ||
+            response.file_id == 0u)
+        {
+            port_smoke_fail(fixture,
+                            LIBRDP_STATUS_PROTOCOL_ERROR,
+                            response.io.io_status);
+            return;
+        }
+        fixture->file_id = response.file_id;
+        status = port_smoke_send_write(
+            fixture,
+            peer,
+            PORT_SMOKE_WAIT_PARALLEL_WRITE,
+            port_smoke_parallel_output,
+            sizeof(port_smoke_parallel_output));
+    }
+    else if (stage == PORT_SMOKE_WAIT_PARALLEL_WRITE)
+    {
+        if (!port_smoke_length_response(
+                event,
+                fixture,
+                &length_response) ||
+            length_response.io.io_status != PORT_SMOKE_IO_SUCCESS ||
+            length_response.length !=
+                sizeof(port_smoke_parallel_output) ||
+            !port_smoke_verify_parallel_output(fixture))
+        {
+            port_smoke_fail(fixture,
+                            LIBRDP_STATUS_PROTOCOL_ERROR,
+                            length_response.io.io_status);
+            return;
+        }
+        status = port_smoke_send_control(
+            fixture,
+            peer,
+            PORT_SMOKE_WAIT_PARALLEL_STATUS,
+            4u,
+            RDP_PORT_REDIRECTION_IOCTL_PAR_QUERY_INFORMATION,
+            NULL,
+            0u);
+    }
+    else if (stage == PORT_SMOKE_WAIT_PARALLEL_STATUS)
+    {
+        if (!port_smoke_length_response(
+                event,
+                fixture,
+                &length_response) ||
+            length_response.io.io_status != PORT_SMOKE_IO_SUCCESS ||
+            length_response.length != 4u ||
+            port_smoke_read_u32_le(length_response.buffer) != 0u)
+        {
+            port_smoke_fail(fixture,
+                            LIBRDP_STATUS_PROTOCOL_ERROR,
+                            length_response.io.io_status);
+            return;
+        }
+        status = port_smoke_send_control(
+            fixture,
+            peer,
+            PORT_SMOKE_WAIT_PARALLEL_UNSUPPORTED,
+            4u,
+            PORT_SMOKE_UNKNOWN_CONTROL,
+            NULL,
+            0u);
+    }
+    else if (stage == PORT_SMOKE_WAIT_PARALLEL_UNSUPPORTED)
+    {
+        if (!port_smoke_length_response(
+                event,
+                fixture,
+                &length_response) ||
+            length_response.io.io_status !=
+                PORT_SMOKE_IO_NOT_SUPPORTED ||
+            length_response.length != 0u)
+        {
+            port_smoke_fail(fixture,
+                            LIBRDP_STATUS_PROTOCOL_ERROR,
+                            length_response.io.io_status);
+            return;
+        }
+        status = port_smoke_send_close(
+            fixture,
+            peer,
+            PORT_SMOKE_WAIT_PARALLEL_CLOSE);
+    }
+    else if (stage == PORT_SMOKE_WAIT_PARALLEL_CLOSE)
+    {
+        rdp_device_redirection_io_completion response;
+
+        memset(&response, 0, sizeof(response));
+        if (rdp_filesystem_redirection_parse_close_response(
+                event->payload,
+                event->payload_len,
+                &response) != LIBRDP_STATUS_OK ||
+            response.device_id != fixture->device_id ||
+            response.completion_id !=
+                fixture->expected_completion_id ||
+            response.io_status != PORT_SMOKE_IO_SUCCESS)
+        {
+            port_smoke_fail(fixture,
+                            LIBRDP_STATUS_PROTOCOL_ERROR,
+                            response.io_status);
+            return;
+        }
+        atomic_store_explicit(&fixture->stage,
+                              PORT_SMOKE_PARALLEL_COMPLETE,
+                              memory_order_release);
+        return;
+    }
+    else
+    {
+        port_smoke_fail(fixture,
+                        LIBRDP_STATUS_PROTOCOL_ERROR,
+                        0u);
+        return;
+    }
+    if (status != LIBRDP_STATUS_OK)
+        port_smoke_fail(fixture, status, 0u);
+}
+
 static void port_smoke_server_extension(
     librdp_server_peer* peer,
     const librdp_server_extension_event* event,
@@ -862,15 +1095,18 @@ static void port_smoke_server_extension(
 {
     port_smoke_fixture* fixture =
         (port_smoke_fixture*)user_data;
+    port_smoke_stage stage = PORT_SMOKE_FAILED;
 
     if (!fixture || !peer || !event ||
         event->status != LIBRDP_STATUS_OK)
         return;
+    stage = (port_smoke_stage)atomic_load_explicit(
+        &fixture->stage,
+        memory_order_acquire);
     if (event->message_type ==
             RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_ANNOUNCE &&
-        atomic_load_explicit(&fixture->stage,
-                             memory_order_acquire) ==
-            PORT_SMOKE_WAIT_DEVICE)
+        (stage == PORT_SMOKE_WAIT_DEVICE ||
+         stage == PORT_SMOKE_WAIT_PARALLEL_DEVICE))
     {
         rdp_device_redirection_device_list list;
 
@@ -887,7 +1123,7 @@ static void port_smoke_server_extension(
         for (uint32_t index = 0u; index < list.count; index++)
         {
             if (list.devices[index].device_type ==
-                RDP_DEVICE_REDIRECTION_TYPE_SERIAL)
+                fixture->device_type)
             {
                 fixture->channel_id = event->channel_id;
                 fixture->device_id =
@@ -895,7 +1131,7 @@ static void port_smoke_server_extension(
                 if (librdp_server_peer_send_device_reply(
                         peer,
                         fixture->channel_id,
-                        LIBRDP_SERVER_EXTENSION_SERIAL_PORT,
+                        fixture->extension_family,
                         fixture->device_id,
                         PORT_SMOKE_IO_SUCCESS) !=
                         LIBRDP_STATUS_OK ||
@@ -915,12 +1151,17 @@ static void port_smoke_server_extension(
                         0u);
         return;
     }
-    if (event->family ==
-            LIBRDP_SERVER_EXTENSION_SERIAL_PORT &&
+    if (event->family == fixture->extension_family &&
         event->message_type ==
             RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION)
     {
-        port_smoke_handle_completion(fixture, peer, event);
+        if (fixture->extension_family ==
+            LIBRDP_SERVER_EXTENSION_SERIAL_PORT)
+            port_smoke_handle_completion(fixture, peer, event);
+        else
+            port_smoke_handle_parallel_completion(fixture,
+                                                  peer,
+                                                  event);
     }
 }
 
@@ -940,7 +1181,7 @@ static void* port_smoke_server_main(void* user_data)
         return NULL;
     fixture->status = librdp_server_enable_extension_provider(
         server,
-        LIBRDP_SERVER_EXTENSION_SERIAL_PORT,
+        fixture->extension_family,
         1);
     if (fixture->status != LIBRDP_STATUS_OK)
         goto cleanup;
@@ -992,7 +1233,7 @@ static void* port_smoke_server_main(void* user_data)
             status == LIBRDP_STATUS_IO_ERROR)
         {
             fixture->status =
-                stage == PORT_SMOKE_COMPLETE
+                port_smoke_stage_complete(stage)
                     ? LIBRDP_STATUS_OK
                     : status;
             break;
@@ -1008,14 +1249,15 @@ static void* port_smoke_server_main(void* user_data)
             fixture->status = fixture->failure_status;
             break;
         }
-        if (stage == PORT_SMOKE_COMPLETE)
+        if (port_smoke_stage_complete(stage))
             fixture->status = LIBRDP_STATUS_OK;
     }
     if (atomic_load_explicit(&fixture->stop,
                              memory_order_acquire) != 0u &&
-        atomic_load_explicit(&fixture->stage,
-                             memory_order_acquire) ==
-            PORT_SMOKE_COMPLETE)
+        port_smoke_stage_complete(
+            (port_smoke_stage)atomic_load_explicit(
+                &fixture->stage,
+                memory_order_acquire)))
         fixture->status = LIBRDP_STATUS_OK;
 
 cleanup:
@@ -1079,7 +1321,8 @@ static void port_smoke_trace(librdp_session* session,
     }
 }
 
-static int port_smoke_run_serial(void)
+static int port_smoke_run(
+    librdp_server_extension_family extension_family)
 {
     port_smoke_fixture fixture;
     librdp_settings* settings = NULL;
@@ -1087,30 +1330,55 @@ static int port_smoke_run_serial(void)
     librdp_trace_policy trace_policy;
     uint16_t port = 0u;
     unsigned int attempt = 0u;
+    unsigned int expected_completions = 0u;
+    port_smoke_stage initial_stage = PORT_SMOKE_FAILED;
+    port_smoke_stage complete_stage = PORT_SMOKE_FAILED;
+    int serial = 0;
     int thread_started = 0;
     int result = 1;
 
+    serial =
+        extension_family == LIBRDP_SERVER_EXTENSION_SERIAL_PORT;
+    if (!serial &&
+        extension_family != LIBRDP_SERVER_EXTENSION_PARALLEL_PORT)
+        return 2;
     memset(&fixture, 0, sizeof(fixture));
+    fixture.extension_family = extension_family;
+    fixture.device_type =
+        serial ? RDP_DEVICE_REDIRECTION_TYPE_SERIAL
+               : RDP_DEVICE_REDIRECTION_TYPE_PARALLEL;
     fixture.master_fd = -1;
     fixture.status = LIBRDP_STATUS_AGAIN;
     fixture.failure_status = LIBRDP_STATUS_OK;
-    fixture.write_data_len = PORT_SMOKE_WRITE_BYTES;
+    fixture.write_data_len =
+        serial ? PORT_SMOKE_WRITE_BYTES : 0u;
     fixture.timeout_values[0] = UINT32_MAX;
+    initial_stage =
+        serial ? PORT_SMOKE_WAIT_DEVICE
+               : PORT_SMOKE_WAIT_PARALLEL_DEVICE;
+    complete_stage =
+        serial ? PORT_SMOKE_COMPLETE
+               : PORT_SMOKE_PARALLEL_COMPLETE;
+    expected_completions = serial ? 14u : 5u;
     atomic_init(&fixture.port, 0u);
     atomic_init(&fixture.stop, 0u);
-    atomic_init(&fixture.stage, PORT_SMOKE_WAIT_DEVICE);
+    atomic_init(&fixture.stage, (unsigned int)initial_stage);
     atomic_init(&fixture.completions, 0u);
     atomic_init(&fixture.active_events, 0u);
     atomic_init(&fixture.client_errors, 0u);
     atomic_init(&fixture.trace_errors, 0u);
-    REQUIRE(port_smoke_prepare_pty(&fixture));
-    fixture.write_data =
-        (uint8_t*)malloc(fixture.write_data_len);
-    REQUIRE(fixture.write_data != NULL);
-    for (size_t index = 0u;
-         index < fixture.write_data_len;
-         index++)
-        fixture.write_data[index] = port_smoke_pattern(index);
+    REQUIRE(serial ? port_smoke_prepare_pty(&fixture)
+                   : port_smoke_prepare_parallel_file(&fixture));
+    if (serial)
+    {
+        fixture.write_data =
+            (uint8_t*)malloc(fixture.write_data_len);
+        REQUIRE(fixture.write_data != NULL);
+        for (size_t index = 0u;
+             index < fixture.write_data_len;
+             index++)
+            fixture.write_data[index] = port_smoke_pattern(index);
+    }
 
     REQUIRE(librdp_server_config_init(&fixture.config) ==
             LIBRDP_STATUS_OK);
@@ -1140,10 +1408,22 @@ static int port_smoke_run_serial(void)
                 settings,
                 PORT_SMOKE_WIDTH,
                 PORT_SMOKE_HEIGHT) == LIBRDP_STATUS_OK);
-    REQUIRE(librdp_settings_add_serial_port(
-                settings,
-                "COM1:",
-                fixture.slave_path) == LIBRDP_STATUS_OK);
+    if (serial)
+    {
+        REQUIRE(librdp_settings_add_serial_port(
+                    settings,
+                    "COM1:",
+                    fixture.slave_path) ==
+                LIBRDP_STATUS_OK);
+    }
+    else
+    {
+        REQUIRE(librdp_settings_add_parallel_port(
+                    settings,
+                    "LPT1:",
+                    fixture.slave_path) ==
+                LIBRDP_STATUS_OK);
+    }
     session = librdp_session_new(settings);
     REQUIRE(session != NULL);
     librdp_session_set_event_callback(session,
@@ -1157,7 +1437,9 @@ static int port_smoke_run_serial(void)
     trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
     trace_policy.callback = port_smoke_trace;
     trace_policy.callback_user_data = &fixture;
-    trace_policy.trace_id = "serial-port-smoke";
+    trace_policy.trace_id =
+        serial ? "serial-port-smoke"
+               : "parallel-port-smoke";
     REQUIRE(librdp_session_set_trace_policy(
                 session,
                 &trace_policy) == LIBRDP_STATUS_OK);
@@ -1176,20 +1458,25 @@ static int port_smoke_run_serial(void)
                 memory_order_acquire);
 
         REQUIRE(status == LIBRDP_STATUS_OK);
-        if (stage == PORT_SMOKE_COMPLETE ||
+        if (port_smoke_stage_complete(stage) ||
             stage == PORT_SMOKE_FAILED)
             break;
     }
     REQUIRE(attempt < PORT_SMOKE_PUMP_LIMIT * 4u);
     REQUIRE(atomic_load_explicit(&fixture.stage,
                                  memory_order_acquire) ==
-            PORT_SMOKE_COMPLETE);
+            (unsigned int)complete_stage);
     REQUIRE(fixture.failure_status == LIBRDP_STATUS_OK);
     REQUIRE(fixture.failure_io_status == 0u);
-    REQUIRE(fixture.partial_written > 0u);
-    REQUIRE(fixture.partial_written < fixture.write_data_len);
+    if (serial)
+    {
+        REQUIRE(fixture.partial_written > 0u);
+        REQUIRE(fixture.partial_written <
+                fixture.write_data_len);
+    }
     REQUIRE(atomic_load_explicit(&fixture.completions,
-                                 memory_order_acquire) == 14u);
+                                 memory_order_acquire) ==
+            expected_completions);
     REQUIRE(atomic_load_explicit(&fixture.active_events,
                                  memory_order_acquire) == 1u);
     REQUIRE(atomic_load_explicit(&fixture.client_errors,
@@ -1221,7 +1508,8 @@ cleanup:
         if (fixture.status != LIBRDP_STATUS_OK)
         {
             fprintf(stderr,
-                    "serial server status=%s stage=%u failure=%s io_status=%u completions=%u\n",
+                    "%s server status=%s stage=%u failure=%s io_status=%u completions=%u\n",
+                    serial ? "serial" : "parallel",
                     librdp_status_name(fixture.status),
                     atomic_load_explicit(&fixture.stage,
                                          memory_order_acquire),
@@ -1234,6 +1522,8 @@ cleanup:
     }
     if (fixture.master_fd >= 0)
         close(fixture.master_fd);
+    if (!serial && fixture.slave_path[0] != '\0')
+        (void)unlink(fixture.slave_path);
     free(fixture.write_data);
     return result;
 }
@@ -1241,8 +1531,12 @@ cleanup:
 int main(int argc, char** argv)
 {
     if (argc == 2 && strcmp(argv[1], "serial") == 0)
-        return port_smoke_run_serial();
+        return port_smoke_run(
+            LIBRDP_SERVER_EXTENSION_SERIAL_PORT);
+    if (argc == 2 && strcmp(argv[1], "parallel") == 0)
+        return port_smoke_run(
+            LIBRDP_SERVER_EXTENSION_PARALLEL_PORT);
     fprintf(stderr,
-            "usage: test_server_client_port_smoke serial\n");
+            "usage: test_server_client_port_smoke serial|parallel\n");
     return 2;
 }

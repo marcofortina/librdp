@@ -575,6 +575,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_input_smoke core-fallback)
     add_test(NAME server_client_smoke_serial_port
              COMMAND test_server_client_port_smoke serial)
+    add_test(NAME server_client_smoke_parallel_port
+             COMMAND test_server_client_port_smoke parallel)
     add_test(NAME server_client_smoke_clipboard_text
              COMMAND test_server_client_smoke clipboard-text)
     add_test(NAME server_client_smoke_clipboard_html
@@ -795,6 +797,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_input_core
         server_client_smoke_input_core_fallback
         server_client_smoke_serial_port
+        server_client_smoke_parallel_port
         server_client_smoke_clipboard_text
         server_client_smoke_clipboard_html
         server_client_smoke_clipboard_png
