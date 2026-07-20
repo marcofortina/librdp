@@ -46,6 +46,7 @@ int test_display_control_dvc_rejects_unrequested_feature(void);
 int test_display_control_accept_pending_and_resize(void);
 int test_dynamic_channel_data_before_create(void);
 int test_dynamic_channel_public_fragment_send(void);
+int test_server_redirection_state(void);
 int test_webauthn_feature_status_channel_lifecycle(void);
 int test_webauthn_dvc_rejects_unrequested_feature(void);
 int test_webauthn_rp_id_allowlist_denies_unmatched_request(void);

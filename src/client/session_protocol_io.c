@@ -407,12 +407,17 @@ librdp_status rdp_session_read_fastpath_packet(librdp_session* session, rdp_buff
     rdp_buffer_free(packet);
     rdp_buffer_init(packet);
 
-    status = rdp_transport_read_exact(&session->transport, header, 2);
+    status = rdp_transport_buffer_peek_exact(&session->transport,
+                                             header,
+                                             2u);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if ((header[1] & 0x80u) != 0)
     {
-        status = rdp_transport_read_exact(&session->transport, header + 2, 1);
+        status = rdp_transport_buffer_peek_exact(
+            &session->transport,
+            header,
+            3u);
         if (status != LIBRDP_STATUS_OK)
             return status;
         total = (uint16_t)(((uint16_t)(header[1] & 0x7fu) << 8) | header[2]);
@@ -427,14 +432,23 @@ librdp_status rdp_session_read_fastpath_packet(librdp_session* session, rdp_buff
     if (total > session->limits.frame_bytes)
         return rdp_session_limit_rejected(session);
 
-    status = rdp_buffer_append(packet, header, header_len);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
     status = rdp_buffer_reserve(packet, total);
     if (status != LIBRDP_STATUS_OK)
         return status;
     packet->length = total;
-    status = rdp_transport_read_exact(&session->transport, packet->data + header_len, (size_t)total - header_len);
+    status = rdp_transport_buffer_peek_exact(
+        &session->transport,
+        packet->data,
+        total);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_transport_buffer_consume(
+            &session->transport,
+            total);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(packet);
+        rdp_buffer_init(packet);
+    }
     if (status == LIBRDP_STATUS_OK)
     {
         rdp_session_metric_add(&session->metrics.transport_bytes_read, packet->length);

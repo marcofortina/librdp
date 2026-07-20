@@ -3056,6 +3056,10 @@ librdp_status librdp_session_connect(librdp_session* session)
     const char* credential_username = NULL;
     const char* credential_password = NULL;
     const char* credential_domain = NULL;
+    const char* effective_target = NULL;
+    const void* routing_data = NULL;
+    size_t routing_data_len = 0u;
+    const librdp_credentials* redirected_credentials = NULL;
     int provider_credentials_initialized = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -3086,7 +3090,8 @@ librdp_status librdp_session_connect(librdp_session* session)
                                    "pre-connect settings are not usable");
         return status;
     }
-    if (!librdp_settings_target(session->settings))
+    effective_target = rdp_session_redirection_target(session);
+    if (!effective_target)
     {
         rdp_session_set_last_error(session,
                                    LIBRDP_STATUS_INVALID_ARGUMENT,
@@ -3102,7 +3107,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_wakeup_drain(session);
     rdp_session_trace_scope_begin(session, &trace_scope);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.start", "target=%s port=%u width=%u height=%u",
-                    librdp_settings_target(session->settings),
+                    effective_target,
                     (unsigned)librdp_settings_port(session->settings),
                     librdp_settings_width(session->settings),
                     librdp_settings_height(session->settings));
@@ -3179,9 +3184,21 @@ librdp_status librdp_session_connect(librdp_session* session)
         credential_password = provider_credentials.password;
         credential_domain = provider_credentials.domain;
     }
+    redirected_credentials =
+        rdp_session_redirection_credentials(session);
+    if (redirected_credentials)
+    {
+        if (redirected_credentials->username)
+            credential_username = redirected_credentials->username;
+        if (redirected_credentials->password)
+            credential_password = redirected_credentials->password;
+        if (redirected_credentials->domain)
+            credential_domain = redirected_credentials->domain;
+    }
 
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_CONNECTING);
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
+    session->selected_protocol = RDP_X224_PROTOCOL_STANDARD;
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
     rdp_license_client_state_init(&session->license_state);
@@ -3343,7 +3360,7 @@ librdp_status librdp_session_connect(librdp_session* session)
             gateway_domain = credential_domain;
         }
         gateway_config.gateway_url = rdp_settings_gateway_url_internal(session->settings);
-        gateway_config.target_host = librdp_settings_target(session->settings);
+        gateway_config.target_host = effective_target;
         gateway_config.target_port = librdp_settings_port(session->settings);
         gateway_config.username = gateway_username;
         gateway_config.password = gateway_password;
@@ -3356,7 +3373,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     }
     else
         status = rdp_transport_connect(&session->transport,
-                                       librdp_settings_target(session->settings),
+                                       effective_target,
                                        librdp_settings_port(session->settings),
                                        RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
     if (status == LIBRDP_STATUS_OK)
@@ -3383,7 +3400,15 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_NEGOTIATING);
     protocols = rdp_security_protocol_mask(librdp_settings_security_mode(session->settings));
     rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.start", "protocols=%u", protocols);
-    status = rdp_x224_build_connection_request(&x224, credential_username, protocols);
+    routing_data = rdp_session_redirection_routing_data(
+        session,
+        &routing_data_len);
+    status = rdp_x224_build_connection_request_ex(
+        &x224,
+        credential_username,
+        routing_data,
+        routing_data_len,
+        protocols);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     status = rdp_tpkt_write(&request, x224.data, x224.length);
@@ -3427,6 +3452,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         goto fail;
     }
     selected_protocol = confirm.negotiation.present ? confirm.negotiation.selected_protocol : RDP_X224_PROTOCOL_STANDARD;
+    session->selected_protocol = selected_protocol;
     if (confirm.negotiation.present && !rdp_security_protocol_supported(selected_protocol))
     {
         rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.rejected", "selected_protocol=%u",
@@ -3466,7 +3492,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         status = librdp_settings_get_tls_policy(session->settings, &tls_policy);
         if (status != LIBRDP_STATUS_OK)
             goto fail;
-        tls_config.host = librdp_settings_target(session->settings);
+        tls_config.host = effective_target;
         tls_config.timeout_ms = RDP_SESSION_HANDSHAKE_TIMEOUT_MS;
         tls_config.use_system_store = tls_policy.use_system_store;
         tls_config.policy_mode = tls_policy.mode;
@@ -3789,6 +3815,19 @@ librdp_status librdp_session_connect(librdp_session* session)
             rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_PNP);
         config.enable_remote_programs =
             rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_RAIL);
+        config.enable_server_redirection = 1u;
+        config.server_redirection_version =
+            rdp_session_multitransport_runtime_supported() ?
+                RDP_GCC_REDIRECTION_VERSION_6 :
+                RDP_GCC_REDIRECTION_VERSION_5;
+        config.redirected_session_id_valid =
+            rdp_session_redirection_active(session);
+        config.redirected_session_id =
+            rdp_session_redirection_session_id(session);
+        config.redirected_smartcard =
+            rdp_session_redirection_active(session) &&
+            (session->redirection.flags &
+             RDP_SERVER_REDIRECTION_LB_SMARTCARD_LOGON) != 0u;
         config.enable_multitransport =
             (rdp_session_multitransport_runtime_supported() &&
              rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_MULTITRANSPORT)) ?
@@ -4281,7 +4320,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_free(&x224);
     if (provider_credentials_initialized)
         librdp_credentials_clear(&provider_credentials);
-    rdp_session_trace_scope_end(session);
+    rdp_session_trace_scope_end(session, &trace_scope);
     return LIBRDP_STATUS_OK;
 
 fail:
@@ -4383,7 +4422,7 @@ fail:
     rdp_buffer_free(&x224);
     if (provider_credentials_initialized)
         librdp_credentials_clear(&provider_credentials);
-    rdp_session_trace_scope_end(session);
+    rdp_session_trace_scope_end(session, &trace_scope);
     if (status == LIBRDP_STATUS_CANCELLED)
         return rdp_session_finish_cancel(session);
     return rdp_session_fail(session, status);
@@ -4531,7 +4570,7 @@ librdp_status librdp_session_reconnect(librdp_session* session, const librdp_rec
     }
     if (attempts_exhausted)
         rdp_trace_event(RDP_TRACE_CLIENT, "client.reconnect.failed", "status=%s", librdp_status_string(status));
-    rdp_session_trace_scope_end(session);
+    rdp_session_trace_scope_end(session, &trace_scope);
     return status;
 }
 
@@ -4843,6 +4882,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 rdp_buffer_free(&packet);
                 return librdp_session_disconnect(session);
             }
+            if (status == LIBRDP_STATUS_AGAIN)
+                return rdp_session_run_once_idle(&packet);
             if (status == LIBRDP_STATUS_OK)
             {
                 rdp_fastpath_header fastpath_header;
@@ -4885,6 +4926,11 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             rdp_buffer_free(&security_payload);
             rdp_buffer_free(&packet);
             return librdp_session_disconnect(session);
+        }
+        if (status == LIBRDP_STATUS_AGAIN)
+        {
+            rdp_buffer_free(&security_payload);
+            return rdp_session_run_once_idle(&packet);
         }
         if (status != LIBRDP_STATUS_OK)
         {
@@ -4929,6 +4975,33 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                               indication.channel_id,
                               (unsigned)indication_payload_len,
                               security_flags);
+        if ((security_flags & RDP_SEC_REDIRECTION_PKT) != 0u)
+        {
+            rdp_server_redirection_packet redirection;
+            int reconnect = 0;
+
+            if (session->selected_protocol !=
+                    RDP_X224_PROTOCOL_STANDARD ||
+                (security_flags & RDP_SEC_ENCRYPT) == 0u)
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            else
+                status = rdp_server_redirection_parse_packet(
+                    indication_payload,
+                    indication_payload_len,
+                    &redirection);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_redirection_stage(
+                    session,
+                    &redirection,
+                    &reconnect);
+            rdp_buffer_free(&security_payload);
+            rdp_buffer_free(&packet);
+            if (status != LIBRDP_STATUS_OK)
+                return rdp_session_fail(session, status);
+            if (!reconnect)
+                return LIBRDP_STATUS_OK;
+            return rdp_session_redirection_follow(session);
+        }
         if (session->dynamic_channel_id != 0 && indication.channel_id == session->dynamic_channel_id)
         {
             rdp_virtual_channel_packet channel_packet;
@@ -5482,6 +5555,34 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         status = rdp_slowpath_parse_share_control_header(indication_payload, indication_payload_len, &slow_header);
         if (status == LIBRDP_STATUS_OK)
             have_slow_header = 1;
+        if (have_slow_header &&
+            (slow_header.pdu_type & 0x000fu) ==
+                RDP_SLOWPATH_PDU_TYPE_SERVER_REDIRECTION)
+        {
+            rdp_server_redirection_packet redirection;
+            int reconnect = 0;
+
+            if (session->selected_protocol ==
+                RDP_X224_PROTOCOL_STANDARD)
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            else
+                status = rdp_server_redirection_parse_enhanced(
+                    indication_payload,
+                    indication_payload_len,
+                    &redirection);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_redirection_stage(
+                    session,
+                    &redirection,
+                    &reconnect);
+            rdp_buffer_free(&security_payload);
+            rdp_buffer_free(&packet);
+            if (status != LIBRDP_STATUS_OK)
+                return rdp_session_fail(session, status);
+            if (!reconnect)
+                return LIBRDP_STATUS_OK;
+            return rdp_session_redirection_follow(session);
+        }
         if (status != LIBRDP_STATUS_OK)
         {
             uint8_t license_message_type = 0;
@@ -5896,7 +5997,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
         return status;
     rdp_session_trace_scope_begin(session, &trace_scope);
     status = rdp_session_run_once_inner(session, timeout_ms);
-    rdp_session_trace_scope_end(session);
+    rdp_session_trace_scope_end(session, &trace_scope);
     return status;
 }
 

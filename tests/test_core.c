@@ -69,7 +69,8 @@ static int run_channels(void)
         test_display_control_dvc_rejects_unrequested_feature() != 0 ||
         test_display_control_accept_pending_and_resize() != 0 ||
         test_dynamic_channel_data_before_create() != 0 ||
-        test_dynamic_channel_public_fragment_send() != 0)
+        test_dynamic_channel_public_fragment_send() != 0 ||
+        test_server_redirection_state() != 0)
         return 1;
     if (test_webauthn_feature_status_channel_lifecycle() != 0 ||
         test_webauthn_dvc_rejects_unrequested_feature() != 0 ||
@@ -220,6 +221,7 @@ int test_client_core(void)
         test_display_control_accept_pending_and_resize() != 0 ||
         test_dynamic_channel_data_before_create() != 0 ||
         test_dynamic_channel_public_fragment_send() != 0 ||
+        test_server_redirection_state() != 0 ||
         test_webauthn_feature_status_channel_lifecycle() != 0 ||
         test_webauthn_dvc_rejects_unrequested_feature() != 0 ||
         test_webauthn_rp_id_allowlist_denies_unmatched_request() != 0 ||

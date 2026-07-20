@@ -12,6 +12,7 @@
 
 #include "client/session_internal.h"
 #include "common/trace.h"
+#include "protocol/x224.h"
 
 #include <openssl/crypto.h>
 
@@ -188,6 +189,16 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
         free(session);
         return NULL;
     }
+    if (rdp_session_redirection_init(session) != LIBRDP_STATUS_OK)
+    {
+        pthread_mutex_destroy(&session->transport_cancel_mutex);
+        pthread_mutex_destroy(&session->owner_mutex);
+        rdp_session_wakeup_close(session);
+        librdp_surface_free(session->surface);
+        librdp_settings_free(session->settings);
+        free(session);
+        return NULL;
+    }
     session->gdi_current_surface_id = RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE;
     session->requested_desktop_width = librdp_settings_width(session->settings);
     session->requested_desktop_height = librdp_settings_height(session->settings);
@@ -223,6 +234,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     session->avc = rdp_avc_decoder_new();
     if (!session->avc)
     {
+        rdp_session_redirection_clear(session);
         rdp_printer_backend_clear(&session->printer_backend);
 #ifdef RDP_HAVE_PCSC
         rdp_smartcard_backend_clear(&session->smartcard_backend);
@@ -310,6 +322,7 @@ void librdp_session_free(librdp_session* session)
     rdp_graphics_decompressor_free(&session->bulk_rdp8_decompressor);
     rdp_graphics_decompressor_free(&session->graphics_decompressor);
     rdp_security_standard_clear(&session->standard_security);
+    rdp_session_redirection_clear(session);
     rdp_license_crypto_context_clear(&session->license_crypto);
     rdp_session_transport_close(session);
     rdp_session_wakeup_close(session);
@@ -361,6 +374,7 @@ librdp_status rdp_session_disconnect_inner(librdp_session* session)
     rdp_session_audio_output_udp_close(session);
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
+    session->selected_protocol = RDP_X224_PROTOCOL_STANDARD;
     rdp_license_crypto_context_clear(&session->license_crypto);
     session->clipboard_channel_id = 0;
     rdp_session_clipboard_clear(session);
@@ -513,7 +527,8 @@ librdp_status librdp_session_disconnect(librdp_session* session)
         return status;
     rdp_session_trace_scope_begin(session, &trace_scope);
     status = rdp_session_disconnect_inner(session);
-    rdp_session_trace_scope_end(session);
+    rdp_session_redirection_clear(session);
+    rdp_session_trace_scope_end(session, &trace_scope);
     return status;
 }
 

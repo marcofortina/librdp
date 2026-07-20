@@ -127,12 +127,18 @@ void rdp_trace_reset_for_tests(void)
 
 void rdp_trace_push_session(rdp_trace_session_scope* scope)
 {
+    if (!scope)
+        return;
+    scope->previous = g_trace_scope;
     g_trace_scope = scope;
 }
 
-void rdp_trace_pop_session(void)
+void rdp_trace_pop_session(rdp_trace_session_scope* scope)
 {
-    g_trace_scope = NULL;
+    if (!scope || g_trace_scope != scope)
+        return;
+    g_trace_scope = scope->previous;
+    scope->previous = NULL;
 }
 
 bool rdp_trace_enabled(rdp_trace_category category)

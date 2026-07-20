@@ -65,6 +65,7 @@ typedef struct rdp_transport
     int curl_socket;
     void* backend_context;
     const rdp_transport_backend_ops* backend_ops;
+    rdp_buffer read_buffer;
 } rdp_transport;
 
 void rdp_transport_init(rdp_transport* transport);
@@ -81,6 +82,11 @@ librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short
 librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t length, size_t* read_len);
 librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t length, size_t* read_len);
 librdp_status rdp_transport_write(rdp_transport* transport, const void* data, size_t length, size_t* written_len);
+librdp_status rdp_transport_buffer_peek_exact(rdp_transport* transport,
+                                              void* data,
+                                              size_t length);
+librdp_status rdp_transport_buffer_consume(rdp_transport* transport,
+                                           size_t length);
 librdp_status rdp_transport_read_exact(rdp_transport* transport, void* data, size_t length);
 librdp_status rdp_transport_deadline_create(int timeout_ms, uint64_t* deadline_ns);
 librdp_status rdp_transport_read_exact_until(rdp_transport* transport,

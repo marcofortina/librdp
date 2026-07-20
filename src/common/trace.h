@@ -63,6 +63,7 @@ typedef enum rdp_trace_sensitivity
 
 typedef struct rdp_trace_session_scope
 {
+    struct rdp_trace_session_scope* previous;
     librdp_session* session;
     uint32_t categories;
     rdp_trace_level level;
@@ -85,7 +86,7 @@ rdp_trace_level rdp_trace_parse_level_value(const char* value);
 void rdp_trace_refresh_from_env(void);
 void rdp_trace_reset_for_tests(void);
 void rdp_trace_push_session(rdp_trace_session_scope* scope);
-void rdp_trace_pop_session(void);
+void rdp_trace_pop_session(rdp_trace_session_scope* scope);
 bool rdp_trace_enabled(rdp_trace_category category);
 bool rdp_trace_enabled_level(rdp_trace_category category, rdp_trace_level level);
 void rdp_trace_event(rdp_trace_category category, const char* event, const char* fmt, ...)

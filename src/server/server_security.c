@@ -384,7 +384,10 @@ static librdp_status rdp_server_wait_fd(int fd, short events, int timeout_ms)
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_server_tls_status(SSL* tls, int rc, short* wait_events)
+static librdp_status rdp_server_tls_status(SSL* tls,
+                                           int rc,
+                                           short* wait_events,
+                                           librdp_status failure_status)
 {
     int error = SSL_get_error(tls, rc);
 
@@ -402,7 +405,7 @@ static librdp_status rdp_server_tls_status(SSL* tls, int rc, short* wait_events)
             *wait_events = POLLOUT;
         return LIBRDP_STATUS_AGAIN;
     }
-    return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+    return failure_status;
 }
 
 static librdp_status rdp_server_tls_send_all(librdp_server_peer* peer, const uint8_t* data, size_t length)
@@ -422,7 +425,10 @@ static librdp_status rdp_server_tls_send_all(librdp_server_peer* peer, const uin
         else
         {
             short wait_events = 0;
-            librdp_status status = rdp_server_tls_status(peer->tls, written, &wait_events);
+            librdp_status status = rdp_server_tls_status(peer->tls,
+                                                         written,
+                                                         &wait_events,
+                                                         LIBRDP_STATUS_IO_ERROR);
 
             if (status != LIBRDP_STATUS_AGAIN)
                 return status;
@@ -785,7 +791,10 @@ librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
         if (tls_read <= 0)
         {
             short wait_events = 0;
-            librdp_status tls_status = rdp_server_tls_status(peer->tls, tls_read, &wait_events);
+            librdp_status tls_status = rdp_server_tls_status(peer->tls,
+                                                             tls_read,
+                                                             &wait_events,
+                                                             LIBRDP_STATUS_IO_ERROR);
 
             (void)wait_events;
             if (tls_status == LIBRDP_STATUS_AGAIN)
@@ -867,7 +876,10 @@ librdp_status rdp_server_start_tls(librdp_server_peer* peer,
     {
         short wait_events = 0;
 
-        status = rdp_server_tls_status(peer->tls, rc, &wait_events);
+        status = rdp_server_tls_status(peer->tls,
+                                       rc,
+                                       &wait_events,
+                                       LIBRDP_STATUS_TLS_HANDSHAKE_FAILED);
         if (status == LIBRDP_STATUS_AGAIN)
         {
             status = rdp_server_wait_fd(peer->fd, wait_events, timeout_ms);
@@ -1057,7 +1069,10 @@ static librdp_status rdp_server_read_credssp_ts_request(librdp_server_peer* peer
         if (tls_read <= 0)
         {
             short wait_events = 0;
-            librdp_status tls_status = rdp_server_tls_status(peer->tls, tls_read, &wait_events);
+            librdp_status tls_status = rdp_server_tls_status(peer->tls,
+                                                             tls_read,
+                                                             &wait_events,
+                                                             LIBRDP_STATUS_IO_ERROR);
 
             (void)wait_events;
             return tls_status == LIBRDP_STATUS_AGAIN ? LIBRDP_STATUS_TIMEOUT : tls_status;
@@ -1691,6 +1706,16 @@ librdp_status rdp_server_handle_x224(librdp_server_peer* peer, const rdp_tpkt* p
     status = rdp_server_select_protocol(peer, &request, &selected_protocol, &failure_code);
     if (status != LIBRDP_STATUS_OK)
         return rdp_server_send_x224_failure(peer, failure_code);
+    peer->x224_routing_data.length = 0u;
+    if (request.routing_data_len > 0u)
+    {
+        status = rdp_buffer_append(
+            &peer->x224_routing_data,
+            request.routing_data,
+            request.routing_data_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
 
     rdp_buffer_init(&response);
     status = rdp_x224_build_connection_confirm_ex(&response,

@@ -51,7 +51,7 @@ void rdp_session_transport_cancel_interrupt(librdp_session* session);
 void rdp_session_transport_close(librdp_session* session);
 void rdp_session_trace_policy_clear(librdp_session* session);
 void rdp_session_trace_scope_begin(librdp_session* session, rdp_trace_session_scope* scope);
-void rdp_session_trace_scope_end(const librdp_session* session);
+void rdp_session_trace_scope_end(const librdp_session* session, rdp_trace_session_scope* scope);
 void rdp_session_set_state(librdp_session* session, librdp_session_state state);
 void rdp_session_set_lifecycle(librdp_session* session, librdp_session_lifecycle lifecycle);
 void rdp_session_set_last_error(librdp_session* session,

@@ -1018,6 +1018,8 @@ cleanup:
         close(out_fd);
     gateway->status =
         success &&
+        atomic_load_explicit(&gateway->dropped,
+                             memory_order_acquire) == 0u &&
         atomic_load_explicit(&gateway->out_stream,
                              memory_order_acquire) != 0u &&
         atomic_load_explicit(&gateway->in_stream,

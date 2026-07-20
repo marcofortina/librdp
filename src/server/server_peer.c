@@ -282,6 +282,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     rdp_buffer_init(&accepted->standard_certificate);
     rdp_buffer_init(&accepted->credssp_target_name);
     rdp_buffer_init(&accepted->credssp_target_info);
+    rdp_buffer_init(&accepted->x224_routing_data);
     *peer = accepted;
     server->accepted_peers++;
     return LIBRDP_STATUS_OK;
@@ -682,6 +683,7 @@ void librdp_server_peer_free(librdp_server_peer* peer)
     rdp_buffer_free(&peer->standard_certificate);
     rdp_buffer_free(&peer->credssp_target_name);
     rdp_buffer_free(&peer->credssp_target_info);
+    rdp_buffer_free(&peer->x224_routing_data);
     free(peer->framebuffer);
     free(peer->server_name);
     free(peer->tls_certificate_path);

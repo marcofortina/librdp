@@ -581,9 +581,11 @@ static int rdp_session_trace_policy_valid(const librdp_trace_policy* policy)
 
 void rdp_session_trace_scope_begin(librdp_session* session, rdp_trace_session_scope* scope)
 {
-    if (!session || !scope || !session->trace_policy_configured)
+    if (!scope)
         return;
     memset(scope, 0, sizeof(*scope));
+    if (!session || !session->trace_policy_configured)
+        return;
     scope->session = session;
     scope->categories = session->trace_policy.categories;
     scope->level = rdp_session_trace_level_internal(session->trace_policy.level);
@@ -601,10 +603,10 @@ void rdp_session_trace_scope_begin(librdp_session* session, rdp_trace_session_sc
     rdp_trace_push_session(scope);
 }
 
-void rdp_session_trace_scope_end(const librdp_session* session)
+void rdp_session_trace_scope_end(const librdp_session* session, rdp_trace_session_scope* scope)
 {
-    if (session && session->trace_policy_configured)
-        rdp_trace_pop_session();
+    (void)session;
+    rdp_trace_pop_session(scope);
 }
 
 void rdp_session_set_state(librdp_session* session, librdp_session_state state)

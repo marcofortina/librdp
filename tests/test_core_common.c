@@ -119,6 +119,8 @@ static void trace_level_debug_event(void)
  */
 int test_trace(void)
 {
+    rdp_trace_session_scope outer_scope;
+    rdp_trace_session_scope inner_scope;
     char output[4096];
 
     CHECK(rdp_trace_parse_bool_value("1"));
@@ -141,6 +143,29 @@ int test_trace(void)
     CHECK(rdp_trace_parse_level_value("debug") == RDP_TRACE_LEVEL_DEBUG);
     CHECK(rdp_trace_parse_level_value("TRACE") == RDP_TRACE_LEVEL_TRACE);
     CHECK(rdp_trace_parse_level_value("bad") == RDP_TRACE_LEVEL_INFO);
+
+    memset(&outer_scope, 0, sizeof(outer_scope));
+    memset(&inner_scope, 0, sizeof(inner_scope));
+    outer_scope.categories = RDP_TRACE_CLIENT;
+    outer_scope.level = RDP_TRACE_LEVEL_INFO;
+    outer_scope.sink = LIBRDP_TRACE_SINK_STDERR;
+    inner_scope.categories = RDP_TRACE_TRANSPORT;
+    inner_scope.level = RDP_TRACE_LEVEL_INFO;
+    inner_scope.sink = LIBRDP_TRACE_SINK_STDERR;
+    rdp_trace_reset_for_tests();
+    rdp_trace_push_session(&outer_scope);
+    CHECK(rdp_trace_enabled(RDP_TRACE_CLIENT));
+    CHECK(!rdp_trace_enabled(RDP_TRACE_TRANSPORT));
+    rdp_trace_push_session(&inner_scope);
+    CHECK(!rdp_trace_enabled(RDP_TRACE_CLIENT));
+    CHECK(rdp_trace_enabled(RDP_TRACE_TRANSPORT));
+    rdp_trace_pop_session(&outer_scope);
+    CHECK(!rdp_trace_enabled(RDP_TRACE_CLIENT));
+    CHECK(rdp_trace_enabled(RDP_TRACE_TRANSPORT));
+    rdp_trace_pop_session(&inner_scope);
+    CHECK(rdp_trace_enabled(RDP_TRACE_CLIENT));
+    CHECK(!rdp_trace_enabled(RDP_TRACE_TRANSPORT));
+    rdp_trace_pop_session(&outer_scope);
 
     unsetenv("LIBRDP_TRACE_CLIENT");
     unsetenv("LIBRDP_TRACE_LEVEL");

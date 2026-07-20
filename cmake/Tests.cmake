@@ -509,6 +509,12 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke tls-wrong-pin)
     add_test(NAME server_client_smoke_tls_handshake
              COMMAND test_server_client_smoke tls-handshake)
+    add_test(NAME server_client_smoke_redirection_standard
+             COMMAND test_server_client_smoke redirection-standard)
+    add_test(NAME server_client_smoke_redirection_tls
+             COMMAND test_server_client_smoke redirection-tls)
+    add_test(NAME server_client_smoke_redirection_loop
+             COMMAND test_server_client_smoke redirection-loop)
     if(LIBRDP_CURL_FOUND)
         add_test(NAME server_client_smoke_gateway_http_connect
                  COMMAND test_server_client_smoke gateway-http-connect)
@@ -562,6 +568,9 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_tls_hostname
         server_client_smoke_tls_wrong_pin
         server_client_smoke_tls_handshake
+        server_client_smoke_redirection_standard
+        server_client_smoke_redirection_tls
+        server_client_smoke_redirection_loop
         PROPERTIES TIMEOUT 60
     )
     if(TEST server_client_smoke_gateway_http_connect)

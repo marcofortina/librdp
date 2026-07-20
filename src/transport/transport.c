@@ -59,6 +59,7 @@ void rdp_transport_init(rdp_transport* transport)
     transport->curl_socket = -1;
     transport->backend_context = NULL;
     transport->backend_ops = NULL;
+    rdp_buffer_init(&transport->read_buffer);
 }
 
 void rdp_transport_attach_fd(rdp_transport* transport, int fd, int owns_fd)
@@ -861,9 +862,24 @@ librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short
 librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t length, size_t* read_len)
 {
     ssize_t rc = 0;
+    size_t buffered = 0u;
 
     if (!transport || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (read_len)
+        *read_len = 0u;
+    if (length == 0u)
+        return LIBRDP_STATUS_OK;
+    if (transport->read_buffer.length > 0u)
+    {
+        buffered = transport->read_buffer.length < length
+                       ? transport->read_buffer.length
+                       : length;
+        memcpy(data, transport->read_buffer.data, buffered);
+        if (read_len)
+            *read_len = buffered;
+        return LIBRDP_STATUS_OK;
+    }
 
     if (transport->tls_active)
     {
@@ -961,7 +977,10 @@ librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t le
  * ownership of the underlying handle inside rdp_transport. EOF is reported as a
  * closed transport before any caller state is committed.
  */
-librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t length, size_t* read_len)
+static librdp_status rdp_transport_read_raw(rdp_transport* transport,
+                                            void* data,
+                                            size_t length,
+                                            size_t* read_len)
 {
     ssize_t rc = 0;
 
@@ -1056,6 +1075,43 @@ librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t le
                           "transport.tcp.read.done",
                           "read=%llu",
                           (unsigned long long)rc);
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Consume bytes accumulated by a previous transactional exact read before
+ * touching the underlying stream. This preserves byte ordering when a TLS or
+ * gateway backend splits one protocol frame across readiness notifications.
+ */
+librdp_status rdp_transport_read(rdp_transport* transport,
+                                 void* data,
+                                 size_t length,
+                                 size_t* read_len)
+{
+    size_t copied = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!transport || (!data && length > 0u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (read_len)
+        *read_len = 0u;
+    if (length == 0u)
+        return LIBRDP_STATUS_OK;
+    if (transport->read_buffer.length == 0u)
+        return rdp_transport_read_raw(transport,
+                                      data,
+                                      length,
+                                      read_len);
+
+    copied = transport->read_buffer.length < length
+                 ? transport->read_buffer.length
+                 : length;
+    memcpy(data, transport->read_buffer.data, copied);
+    status = rdp_buffer_consume(&transport->read_buffer, copied);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (read_len)
+        *read_len = copied;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1157,21 +1213,93 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
     return LIBRDP_STATUS_OK;
 }
 
-librdp_status rdp_transport_read_exact(rdp_transport* transport, void* data, size_t length)
+/*
+ * Fill the transactional read buffer without exposing a partial exact read to
+ * the caller. AGAIN leaves every consumed byte buffered for the next attempt.
+ */
+static librdp_status rdp_transport_fill_read_buffer(
+    rdp_transport* transport,
+    size_t length)
 {
-    uint8_t* out = (uint8_t*)data;
-    size_t offset = 0;
+    uint8_t chunk[16384];
 
-    while (offset < length)
+    while (transport->read_buffer.length < length)
     {
-        size_t got = 0;
-        librdp_status status = rdp_transport_read(transport, out + offset, length - offset, &got);
+        size_t remaining =
+            length - transport->read_buffer.length;
+        size_t request =
+            remaining < sizeof(chunk) ? remaining : sizeof(chunk);
+        size_t got = 0u;
+        librdp_status status =
+            rdp_transport_read_raw(transport,
+                                   chunk,
+                                   request,
+                                   &got);
+
         if (status != LIBRDP_STATUS_OK)
             return status;
-        offset += got;
+        if (got == 0u)
+            return LIBRDP_STATUS_CLOSED;
+        status = rdp_buffer_append(&transport->read_buffer,
+                                   chunk,
+                                   got);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
     }
-
     return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_transport_commit_exact(
+    rdp_transport* transport,
+    void* data,
+    size_t length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (length > 0u)
+        memcpy(data, transport->read_buffer.data, length);
+    status = rdp_buffer_consume(&transport->read_buffer, length);
+    return status;
+}
+
+librdp_status rdp_transport_buffer_peek_exact(
+    rdp_transport* transport,
+    void* data,
+    size_t length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!transport || (!data && length > 0u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_transport_fill_read_buffer(transport, length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (length > 0u)
+        memcpy(data, transport->read_buffer.data, length);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_transport_buffer_consume(
+    rdp_transport* transport,
+    size_t length)
+{
+    if (!transport || length > transport->read_buffer.length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_buffer_consume(&transport->read_buffer, length);
+}
+
+librdp_status rdp_transport_read_exact(rdp_transport* transport,
+                                       void* data,
+                                       size_t length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_transport_buffer_peek_exact(transport,
+                                             data,
+                                             length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_transport_buffer_consume(transport, length);
 }
 
 librdp_status rdp_transport_read_exact_until(rdp_transport* transport,
@@ -1179,8 +1307,6 @@ librdp_status rdp_transport_read_exact_until(rdp_transport* transport,
                                              size_t length,
                                              uint64_t deadline_ns)
 {
-    uint8_t* out = (uint8_t*)data;
-    size_t offset = 0;
     int changed_nonblocking = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -1191,28 +1317,24 @@ librdp_status rdp_transport_read_exact_until(rdp_transport* transport,
     status = rdp_transport_begin_timed_io(transport, &changed_nonblocking);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    while (offset < length)
+    while (transport->read_buffer.length < length)
     {
-        size_t got = 0;
-
-        status = rdp_transport_read(transport, out + offset, length - offset, &got);
+        status = rdp_transport_fill_read_buffer(transport,
+                                                length);
         if (status == LIBRDP_STATUS_OK)
-        {
-            if (got == 0)
-            {
-                status = LIBRDP_STATUS_CLOSED;
-                break;
-            }
-            offset += got;
-            continue;
-        }
+            break;
         if (status != LIBRDP_STATUS_AGAIN)
             break;
         status = rdp_transport_wait_until(transport, deadline_ns, POLLIN);
         if (status != LIBRDP_STATUS_OK)
             break;
     }
-    return rdp_transport_end_timed_io(transport, changed_nonblocking, status);
+    status = rdp_transport_end_timed_io(transport,
+                                        changed_nonblocking,
+                                        status);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_transport_commit_exact(transport, data, length);
 }
 
 librdp_status rdp_transport_read_exact_timeout(rdp_transport* transport,
@@ -1262,7 +1384,9 @@ librdp_status rdp_transport_read_tpkt(rdp_transport* transport, rdp_buffer* pack
     rdp_buffer_free(packet);
     rdp_buffer_init(packet);
 
-    status = rdp_transport_read_exact(transport, header, sizeof(header));
+    status = rdp_transport_buffer_peek_exact(transport,
+                                             header,
+                                             sizeof(header));
     if (status != LIBRDP_STATUS_OK)
         return status;
 
@@ -1270,14 +1394,20 @@ librdp_status rdp_transport_read_tpkt(rdp_transport* transport, rdp_buffer* pack
     if (header[0] != 3 || header[1] != 0 || total < 4)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    status = rdp_buffer_append(packet, header, sizeof(header));
-    if (status != LIBRDP_STATUS_OK)
-        return status;
     status = rdp_buffer_reserve(packet, total);
     if (status != LIBRDP_STATUS_OK)
         return status;
     packet->length = total;
-    return rdp_transport_read_exact(transport, packet->data + 4, (size_t)total - 4u);
+    status = rdp_transport_buffer_peek_exact(transport,
+                                             packet->data,
+                                             total);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(packet);
+        rdp_buffer_init(packet);
+        return status;
+    }
+    return rdp_transport_buffer_consume(transport, total);
 }
 
 librdp_status rdp_transport_read_tpkt_timeout(rdp_transport* transport,
@@ -1287,6 +1417,7 @@ librdp_status rdp_transport_read_tpkt_timeout(rdp_transport* transport,
     uint8_t header[4];
     uint16_t total = 0;
     uint64_t deadline_ns = 0;
+    int changed_nonblocking = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!transport || !packet || timeout_ms < 0)
@@ -1296,23 +1427,58 @@ librdp_status rdp_transport_read_tpkt_timeout(rdp_transport* transport,
     status = rdp_transport_deadline_create(timeout_ms, &deadline_ns);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    status = rdp_transport_read_exact_until(transport, header, sizeof(header), deadline_ns);
+    status = rdp_transport_begin_timed_io(transport,
+                                          &changed_nonblocking);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    while ((status = rdp_transport_buffer_peek_exact(
+                transport,
+                header,
+                sizeof(header))) ==
+           LIBRDP_STATUS_AGAIN)
+    {
+        status = rdp_transport_wait_until(transport,
+                                          deadline_ns,
+                                          POLLIN);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+    }
+    status = rdp_transport_end_timed_io(transport,
+                                        changed_nonblocking,
+                                        status);
     if (status != LIBRDP_STATUS_OK)
         return status;
     total = (uint16_t)(((uint16_t)header[2] << 8) | header[3]);
     if (header[0] != 3 || header[1] != 0 || total < 4)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    status = rdp_buffer_append(packet, header, sizeof(header));
-    if (status != LIBRDP_STATUS_OK)
-        return status;
     status = rdp_buffer_reserve(packet, total);
     if (status != LIBRDP_STATUS_OK)
         return status;
     packet->length = total;
-    status = rdp_transport_read_exact_until(transport,
-                                            packet->data + 4,
-                                            (size_t)total - 4u,
-                                            deadline_ns);
+    status = rdp_transport_begin_timed_io(transport,
+                                          &changed_nonblocking);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        while ((status = rdp_transport_buffer_peek_exact(
+                    transport,
+                    packet->data,
+                    total)) ==
+               LIBRDP_STATUS_AGAIN)
+        {
+            status = rdp_transport_wait_until(transport,
+                                              deadline_ns,
+                                              POLLIN);
+            if (status != LIBRDP_STATUS_OK)
+                break;
+        }
+        status = rdp_transport_end_timed_io(
+            transport,
+            changed_nonblocking,
+            status);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_transport_buffer_consume(transport,
+                                              total);
     if (status != LIBRDP_STATUS_OK)
     {
         rdp_buffer_free(packet);
@@ -1351,4 +1517,6 @@ void rdp_transport_close(rdp_transport* transport)
         rdp_socket_close(transport->fd);
     transport->fd = -1;
     transport->owns_fd = 0;
+    rdp_buffer_free(&transport->read_buffer);
+    rdp_buffer_init(&transport->read_buffer);
 }

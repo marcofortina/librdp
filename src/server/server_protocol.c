@@ -119,6 +119,15 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
     if (status == LIBRDP_STATUS_OK)
     {
+        peer->client_cluster_flags =
+            client_data.has_cluster ? client_data.cluster_flags : 0u;
+        peer->redirected_session_id =
+            client_data.has_cluster ?
+                client_data.redirected_session_id :
+                0u;
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
         uint32_t desktop_width =
             client_data.desktop_width ? client_data.desktop_width : peer->width;
         uint32_t desktop_height =

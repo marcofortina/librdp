@@ -13,6 +13,7 @@
  */
 
 #include "client_runtime.h"
+#include "client/session_redirection.h"
 #include "server_host.h"
 #include "server_platform.h"
 #include "test_http_proxy.h"
@@ -20,6 +21,7 @@
 #include "test_server_support.h"
 
 #include "protocol/fastpath.h"
+#include "protocol/session_selection.h"
 #include "server/server_internal.h"
 #include "server/server_security.h"
 
@@ -50,6 +52,8 @@
 #define SMOKE_PIXEL_BYTES (SMOKE_CAPTURE_WIDTH * SMOKE_CAPTURE_HEIGHT * 4u)
 #define SMOKE_PUMP_LIMIT 500u
 #define SMOKE_LIFECYCLE_CAPACITY 32u
+#define SMOKE_TRACE_RECENT_CAPACITY 32u
+#define SMOKE_TRACE_RECENT_LINE 256u
 
 typedef struct smoke_nla_identity
 {
@@ -288,6 +292,20 @@ typedef struct smoke_integrity_peer
     librdp_status status;
 } smoke_integrity_peer;
 
+typedef struct smoke_redirection_peer
+{
+    librdp_server_config config;
+    pthread_t thread;
+    atomic_uint port;
+    atomic_uint stop;
+    atomic_uint connections;
+    atomic_uint redirects;
+    atomic_uint route_verified;
+    int enhanced;
+    int loop;
+    librdp_status status;
+} smoke_redirection_peer;
+
 typedef enum smoke_security_peer_mode
 {
     SMOKE_SECURITY_PEER_DOWNGRADE = 1,
@@ -341,8 +359,15 @@ typedef struct smoke_trace_capture
     unsigned int rdg_tunnels;
     unsigned int rdg_authentications;
     unsigned int rdg_channels;
+    unsigned int redirections;
+    unsigned int redirection_reconnects;
+    unsigned int redirection_loops;
     librdp_session_lifecycle lifecycle[SMOKE_LIFECYCLE_CAPACITY];
     size_t lifecycle_count;
+    char recent[SMOKE_TRACE_RECENT_CAPACITY]
+               [SMOKE_TRACE_RECENT_LINE];
+    size_t recent_count;
+    size_t recent_next;
     int lifecycle_overflow;
     int leaked;
     int address_matched;
@@ -413,6 +438,19 @@ static void smoke_trace_callback(librdp_session* session,
     (void)session;
     if (!capture || !record || !record->line)
         return;
+    if (getenv("LIBRDP_SMOKE_TRACE_OUTPUT"))
+        fprintf(stderr, "%s\n", record->line);
+    (void)snprintf(
+        capture->recent[capture->recent_next],
+        sizeof(capture->recent[capture->recent_next]),
+        "%s",
+        record->line);
+    capture->recent_next =
+        (capture->recent_next + 1u) %
+        SMOKE_TRACE_RECENT_CAPACITY;
+    if (capture->recent_count <
+        SMOKE_TRACE_RECENT_CAPACITY)
+        capture->recent_count++;
     capture->records++;
     if (record->event &&
         strcmp(record->event, "transport.tcp.connect.start") == 0)
@@ -489,6 +527,18 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event,
                     "transport.gateway.rdg.channel.done") == 0)
         capture->rdg_channels++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.redirection.received") == 0)
+        capture->redirections++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.redirection.reconnect.done") == 0)
+        capture->redirection_reconnects++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.redirection.loop_rejected") == 0)
+        capture->redirection_loops++;
     else if (record->event &&
              strcmp(record->event, "client.lifecycle") == 0 &&
              record->message)
@@ -1611,6 +1661,258 @@ cleanup:
     return NULL;
 }
 
+static const uint8_t smoke_redirection_routing_token[] = {
+    'r', 'o', 'u', 't', 'e', '=', 's', 'm', 'o', 'k', 'e', '\r', '\n'
+};
+
+/*
+ * Send the same typed redirection through the security envelope selected by
+ * the peer. Standard Security uses SEC_REDIRECTION_PKT; TLS uses the enhanced
+ * Share Control PDU because the transport already supplies confidentiality.
+ */
+static librdp_status smoke_redirection_send(librdp_server_peer* peer,
+                                            int enhanced)
+{
+    rdp_server_redirection_packet redirection;
+    rdp_buffer packet;
+    rdp_buffer secured;
+    rdp_buffer mcs;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&redirection, 0, sizeof(redirection));
+    redirection.session_id = 0x10203040u;
+    redirection.redirection_flags =
+        RDP_SERVER_REDIRECTION_LB_LOAD_BALANCE_INFO;
+    redirection.load_balance_info.data =
+        smoke_redirection_routing_token;
+    redirection.load_balance_info.length =
+        (uint32_t)sizeof(smoke_redirection_routing_token);
+    rdp_buffer_init(&packet);
+    rdp_buffer_init(&secured);
+    rdp_buffer_init(&mcs);
+    if (enhanced)
+    {
+        status = rdp_server_redirection_write_enhanced(
+            &packet,
+            (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+            &redirection,
+            1,
+            1);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_send_slowpath(peer, &packet);
+    }
+    else
+    {
+        if (!peer->standard_security_ready)
+            status = LIBRDP_STATUS_STATE;
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_redirection_write_packet(
+                &packet,
+                &redirection,
+                1);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_security_write_encrypted_pdu(
+                &secured,
+                &peer->standard_security,
+                RDP_SEC_REDIRECTION_PKT,
+                packet.data,
+                packet.length);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_mcs_write_send_data_indication(
+                &mcs,
+                peer->user_id,
+                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                secured.data,
+                secured.length);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_send_mcs_pdu(peer, &mcs);
+    }
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&secured);
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+static librdp_status smoke_redirection_accept_active(
+    smoke_redirection_peer* fixture,
+    librdp_server* server,
+    librdp_server_peer** peer)
+{
+    unsigned int attempt = 0u;
+    librdp_status status = LIBRDP_STATUS_TIMEOUT;
+
+    if (!fixture || !server || !peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *peer = NULL;
+    for (attempt = 0u;
+         attempt < 500u &&
+         atomic_load_explicit(&fixture->stop, memory_order_acquire) == 0u &&
+         !*peer;
+         attempt++)
+    {
+        status = librdp_server_accept(server, 20, peer);
+        if (status != LIBRDP_STATUS_TIMEOUT)
+            break;
+    }
+    if (!*peer)
+        return status;
+    for (attempt = 0u;
+         attempt < 500u &&
+         atomic_load_explicit(&fixture->stop, memory_order_acquire) == 0u;
+         attempt++)
+    {
+        if (librdp_server_peer_get_state(*peer) ==
+            LIBRDP_SERVER_PEER_ACTIVE)
+            return LIBRDP_STATUS_OK;
+        status = librdp_server_peer_run_once(*peer, 20);
+        if (status != LIBRDP_STATUS_OK &&
+            status != LIBRDP_STATUS_TIMEOUT)
+            return status;
+    }
+    return LIBRDP_STATUS_TIMEOUT;
+}
+
+static int smoke_redirection_route_matches(
+    const librdp_server_peer* peer)
+{
+    uint32_t required_cluster_flags =
+        RDP_GCC_CLUSTER_REDIRECTION_SUPPORTED |
+        RDP_GCC_CLUSTER_REDIRECTED_SESSION_ID_VALID;
+
+    return peer &&
+           peer->x224_routing_data.length ==
+               sizeof(smoke_redirection_routing_token) &&
+           memcmp(peer->x224_routing_data.data,
+                  smoke_redirection_routing_token,
+                  sizeof(smoke_redirection_routing_token)) == 0 &&
+           (peer->client_cluster_flags & required_cluster_flags) ==
+               required_cluster_flags &&
+           peer->redirected_session_id == 0x10203040u;
+}
+
+static librdp_status smoke_redirection_wait_for_client_close(
+    smoke_redirection_peer* fixture,
+    librdp_server_peer* peer)
+{
+    unsigned int attempt = 0u;
+
+    if (!fixture || !peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (attempt = 0u;
+         attempt < 500u &&
+         atomic_load_explicit(&fixture->stop, memory_order_acquire) == 0u;
+         attempt++)
+    {
+        librdp_status status =
+            librdp_server_peer_run_once(peer, 20);
+
+        if (status == LIBRDP_STATUS_CLOSED ||
+            status == LIBRDP_STATUS_IO_ERROR ||
+            librdp_server_peer_get_state(peer) ==
+                LIBRDP_SERVER_PEER_CLOSED)
+            return LIBRDP_STATUS_OK;
+        if (status != LIBRDP_STATUS_OK &&
+            status != LIBRDP_STATUS_TIMEOUT)
+            return status;
+    }
+    return LIBRDP_STATUS_TIMEOUT;
+}
+
+/*
+ * Accept successive loopback peers so the client reconnect happens while its
+ * dispatch call is blocked in the connection state machine. The final peer is
+ * held open until the client verifies success or rejects the bounded loop.
+ */
+static void* smoke_redirection_peer_main(void* user_data)
+{
+    smoke_redirection_peer* fixture =
+        (smoke_redirection_peer*)user_data;
+    librdp_server* server = NULL;
+    librdp_server_peer* peer = NULL;
+    unsigned int connection = 0u;
+    unsigned int final_connection =
+        RDP_SESSION_MAX_SERVER_REDIRECTS;
+
+    if (!fixture)
+        return NULL;
+    fixture->status = LIBRDP_STATUS_NO_MEMORY;
+    server = librdp_server_new(&fixture->config);
+    if (!server)
+        return NULL;
+    fixture->status = librdp_server_listen(server);
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    atomic_store_explicit(&fixture->port,
+                          librdp_server_local_port(server),
+                          memory_order_release);
+    if (!fixture->loop)
+        final_connection = 1u;
+    for (connection = 0u; connection <= final_connection; connection++)
+    {
+        fixture->status = smoke_redirection_accept_active(
+            fixture,
+            server,
+            &peer);
+        if (fixture->status != LIBRDP_STATUS_OK)
+            goto cleanup;
+        atomic_fetch_add_explicit(&fixture->connections,
+                                  1u,
+                                  memory_order_release);
+        if (connection > 0u)
+        {
+            if (!smoke_redirection_route_matches(peer))
+            {
+                fixture->status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                goto cleanup;
+            }
+            atomic_store_explicit(&fixture->route_verified,
+                                  1u,
+                                  memory_order_release);
+        }
+        if (!fixture->loop && connection == final_connection)
+            break;
+        fixture->status = smoke_redirection_send(
+            peer,
+            fixture->enhanced);
+        if (fixture->status != LIBRDP_STATUS_OK)
+            goto cleanup;
+        atomic_fetch_add_explicit(&fixture->redirects,
+                                  1u,
+                                  memory_order_release);
+        fixture->status = smoke_redirection_wait_for_client_close(
+            fixture,
+            peer);
+        if (fixture->status != LIBRDP_STATUS_OK)
+            goto cleanup;
+        (void)librdp_server_peer_close(peer);
+        librdp_server_peer_free(peer);
+        peer = NULL;
+    }
+    fixture->status = LIBRDP_STATUS_OK;
+    while (atomic_load_explicit(&fixture->stop,
+                                memory_order_acquire) == 0u)
+    {
+        struct timespec delay = {0, 10000000L};
+
+        (void)nanosleep(&delay, NULL);
+    }
+
+cleanup:
+    if (peer)
+    {
+        (void)librdp_server_peer_close(peer);
+        librdp_server_peer_free(peer);
+    }
+    if (server)
+    {
+        (void)librdp_server_close(server);
+        librdp_server_free(server);
+    }
+    return NULL;
+}
+
 static void smoke_client_event(librdp_session* session,
                                const librdp_event* event,
                                void* user_data)
@@ -1677,6 +1979,25 @@ static int smoke_wait_for_port(const atomic_uint* source, uint16_t* port)
             *port = (uint16_t)value;
             return 1;
         }
+        (void)nanosleep(&delay, NULL);
+    }
+    return 0;
+}
+
+static int smoke_wait_for_counter(const atomic_uint* source,
+                                  unsigned int expected)
+{
+    unsigned int attempt = 0u;
+    struct timespec delay = {0, 1000000L};
+
+    if (!source)
+        return 0;
+    for (attempt = 0u; attempt < 1000u; attempt++)
+    {
+        if (atomic_load_explicit(source,
+                                 memory_order_acquire) >=
+            expected)
+            return 1;
         (void)nanosleep(&delay, NULL);
     }
     return 0;
@@ -2199,6 +2520,62 @@ static int smoke_run_profile(librdp_security_mode security,
         int desktop_ready = 0;
         librdp_status status = smoke_client_pump(&runtime);
 
+        if (status != LIBRDP_STATUS_OK)
+        {
+            librdp_error_info pump_error_info;
+            const librdp_error* pump_error =
+                librdp_session_last_error(session);
+            const char* pump_phase = "none";
+            librdp_status pump_error_status =
+                LIBRDP_STATUS_OK;
+            size_t trace_index = 0u;
+
+            if (pump_error &&
+                librdp_error_info_init(&pump_error_info) ==
+                    LIBRDP_STATUS_OK &&
+                librdp_error_copy_info(pump_error,
+                                       &pump_error_info) ==
+                    LIBRDP_STATUS_OK)
+            {
+                pump_error_status = pump_error_info.status;
+                if (pump_error_info.phase)
+                    pump_phase = pump_error_info.phase;
+            }
+            fprintf(stderr,
+                    "client pump failed status=%s error=%s phase=%s host=%s rdg=%s out=%u in=%u channel=%u sent=%u received=%u\n",
+                    librdp_status_name(status),
+                    librdp_status_name(pump_error_status),
+                    pump_phase,
+                    librdp_status_name(host_fixture.status),
+                    librdp_status_name(rdg_gateway.status),
+                    atomic_load_explicit(&rdg_gateway.out_stream,
+                                         memory_order_acquire),
+                    atomic_load_explicit(&rdg_gateway.in_stream,
+                                         memory_order_acquire),
+                    atomic_load_explicit(&rdg_gateway.channel,
+                                         memory_order_acquire),
+                    atomic_load_explicit(
+                        &rdg_gateway.downstream_sent,
+                        memory_order_acquire),
+                    atomic_load_explicit(
+                        &rdg_gateway.downstream_received,
+                        memory_order_acquire));
+            for (trace_index = 0u;
+                 trace_index < trace_capture.recent_count;
+                 trace_index++)
+            {
+                size_t slot =
+                    (trace_capture.recent_next +
+                     SMOKE_TRACE_RECENT_CAPACITY -
+                     trace_capture.recent_count +
+                     trace_index) %
+                    SMOKE_TRACE_RECENT_CAPACITY;
+
+                fprintf(stderr,
+                        "recent trace: %s\n",
+                        trace_capture.recent[slot]);
+            }
+        }
         REQUIRE(status == LIBRDP_STATUS_OK);
         surface = librdp_session_get_surface(session);
         desktop_ready =
@@ -2376,9 +2753,24 @@ static int smoke_run_profile(librdp_security_mode security,
         REQUIRE(client_runtime_disconnect(&runtime) ==
                 LIBRDP_STATUS_OK);
         test_rdg_gateway_cancel(&rdg_gateway);
-        REQUIRE(test_rdg_gateway_join_status(
-            &rdg_gateway,
-            gateway_profile->expected_fixture_status));
+        {
+            int gateway_joined =
+                test_rdg_gateway_join_status(
+                    &rdg_gateway,
+                    gateway_profile->expected_fixture_status);
+
+            if (!gateway_joined)
+                fprintf(stderr,
+                        "RDG fixture join failed actual=%s expected=%s dropped=%u\n",
+                        librdp_status_name(rdg_gateway.status),
+                        librdp_status_name(
+                            gateway_profile
+                                ->expected_fixture_status),
+                        atomic_load_explicit(
+                            &rdg_gateway.dropped,
+                            memory_order_acquire));
+            REQUIRE(gateway_joined);
+        }
         rdg_started = 0;
         test_rdg_gateway_clear(&rdg_gateway);
         REQUIRE(server_host_cancel(host_fixture.host) ==
@@ -2393,12 +2785,6 @@ static int smoke_run_profile(librdp_security_mode security,
     }
     REQUIRE(client_runtime_disconnect(&runtime) == LIBRDP_STATUS_OK);
     REQUIRE(smoke_validate_lifecycle(&trace_capture, security));
-    if (rdg_started)
-    {
-        REQUIRE(atomic_load_explicit(&rdg_gateway.closed,
-                                     memory_order_acquire) ==
-                1u);
-    }
     if (proxy_started)
     {
         test_http_proxy_cancel(&proxy);
@@ -2408,9 +2794,11 @@ static int smoke_run_profile(librdp_security_mode security,
     }
     if (rdg_started)
     {
-        test_rdg_gateway_cancel(&rdg_gateway);
         REQUIRE(test_rdg_gateway_join(&rdg_gateway));
         rdg_started = 0;
+        REQUIRE(atomic_load_explicit(&rdg_gateway.closed,
+                                     memory_order_acquire) ==
+                1u);
         test_rdg_gateway_clear(&rdg_gateway);
     }
     REQUIRE(server_host_cancel(host_fixture.host) == LIBRDP_STATUS_OK);
@@ -2636,6 +3024,210 @@ cleanup:
             (void)unsetenv("SSL_CERT_FILE");
     }
     free(saved_cert_file);
+    if (cert_path[0] != '\0')
+        (void)unlink(cert_path);
+    if (key_path[0] != '\0')
+        (void)unlink(key_path);
+    return result;
+}
+
+/*
+ * Exercise server-directed reconnects over both wire envelopes and prove that
+ * routing data plus the redirected session ID survive into the next X.224/GCC
+ * handshake. Loop mode accepts the protocol maximum and rejects the next hop.
+ */
+static int smoke_run_redirection(int enhanced, int loop)
+{
+    char cert_path[128] = {0};
+    char key_path[128] = {0};
+    smoke_redirection_peer fixture;
+    smoke_client_events events;
+    smoke_trace_capture trace_capture;
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_tls_policy tls_policy;
+    librdp_metrics metrics;
+    librdp_error_info error_info;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint16_t port = 0u;
+    unsigned int cycle = 0u;
+    int thread_started = 0;
+    int result = 1;
+
+    memset(&fixture, 0, sizeof(fixture));
+    memset(&events, 0, sizeof(events));
+    memset(&trace_capture, 0, sizeof(trace_capture));
+    atomic_init(&fixture.port, 0u);
+    atomic_init(&fixture.stop, 0u);
+    atomic_init(&fixture.connections, 0u);
+    atomic_init(&fixture.redirects, 0u);
+    atomic_init(&fixture.route_verified, 0u);
+    fixture.enhanced = enhanced;
+    fixture.loop = loop;
+    fixture.status = LIBRDP_STATUS_AGAIN;
+    REQUIRE(librdp_server_config_init(&fixture.config) ==
+            LIBRDP_STATUS_OK);
+    fixture.config.bind_address = "127.0.0.1";
+    fixture.config.security_mode =
+        enhanced ? LIBRDP_SECURITY_TLS : LIBRDP_SECURITY_STANDARD;
+    fixture.config.width = SMOKE_WIDTH;
+    fixture.config.height = SMOKE_HEIGHT;
+    fixture.config.max_peers =
+        RDP_SESSION_MAX_SERVER_REDIRECTS + 2u;
+    if (enhanced)
+    {
+        REQUIRE(test_server_make_tls_files_for_host(
+            cert_path,
+            sizeof(cert_path),
+            key_path,
+            sizeof(key_path),
+            "127.0.0.1"));
+        fixture.config.tls_certificate_path = cert_path;
+        fixture.config.tls_private_key_path = key_path;
+    }
+    REQUIRE(pthread_create(&fixture.thread,
+                           NULL,
+                           smoke_redirection_peer_main,
+                           &fixture) == 0);
+    thread_started = 1;
+    REQUIRE(smoke_wait_for_port(&fixture.port, &port));
+
+    settings = librdp_settings_new();
+    REQUIRE(settings != NULL);
+    REQUIRE(librdp_settings_set_target(settings, "127.0.0.1") ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_port(settings, port) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_security_mode(
+                settings,
+                enhanced ? LIBRDP_SECURITY_TLS :
+                           LIBRDP_SECURITY_STANDARD) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_desktop_size(settings,
+                                             SMOKE_WIDTH,
+                                             SMOKE_HEIGHT) ==
+            LIBRDP_STATUS_OK);
+    if (enhanced)
+    {
+        REQUIRE(librdp_tls_policy_init(&tls_policy) ==
+                LIBRDP_STATUS_OK);
+        tls_policy.mode = LIBRDP_TLS_POLICY_INSECURE_LAB;
+        tls_policy.use_system_store = 0;
+        REQUIRE(librdp_settings_set_tls_policy(settings,
+                                               &tls_policy) ==
+                LIBRDP_STATUS_OK);
+    }
+    session = librdp_session_new(settings);
+    REQUIRE(session != NULL);
+    librdp_session_set_event_callback(session,
+                                      smoke_client_event,
+                                      &events);
+    REQUIRE(librdp_trace_policy_init(&trace_policy) ==
+            LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = smoke_trace_callback;
+    trace_policy.callback_user_data = &trace_capture;
+    trace_policy.trace_id =
+        loop ? "redirection-loop" :
+               enhanced ? "redirection-tls" :
+                          "redirection-standard";
+    trace_capture.target = "127.0.0.1";
+    trace_capture.port = port;
+    REQUIRE(librdp_session_set_trace_policy(session,
+                                            &trace_policy) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+
+    for (cycle = 0u; cycle < SMOKE_PUMP_LIMIT; cycle++)
+    {
+        status = librdp_session_run_once(session, 50);
+        if (loop && status == LIBRDP_STATUS_LIMIT_EXCEEDED)
+            break;
+        REQUIRE(status == LIBRDP_STATUS_OK ||
+                status == LIBRDP_STATUS_TIMEOUT);
+        if (!loop &&
+            atomic_load_explicit(&fixture.route_verified,
+                                 memory_order_acquire) == 1u &&
+            librdp_session_get_state(session) ==
+                LIBRDP_SESSION_ACTIVE)
+            break;
+    }
+    REQUIRE(cycle < SMOKE_PUMP_LIMIT);
+    REQUIRE(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    REQUIRE(librdp_session_get_metrics(session, &metrics) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(atomic_load_explicit(&fixture.route_verified,
+                                 memory_order_acquire) == 1u);
+    REQUIRE(trace_capture.leaked == 0);
+    if (loop)
+    {
+        REQUIRE(status == LIBRDP_STATUS_LIMIT_EXCEEDED);
+        REQUIRE(smoke_wait_for_counter(
+            &fixture.redirects,
+            RDP_SESSION_MAX_SERVER_REDIRECTS + 1u));
+        REQUIRE(atomic_load_explicit(&fixture.connections,
+                                     memory_order_acquire) ==
+                RDP_SESSION_MAX_SERVER_REDIRECTS + 1u);
+        REQUIRE(atomic_load_explicit(&fixture.redirects,
+                                     memory_order_acquire) ==
+                RDP_SESSION_MAX_SERVER_REDIRECTS + 1u);
+        REQUIRE(metrics.reconnects ==
+                RDP_SESSION_MAX_SERVER_REDIRECTS);
+        REQUIRE(metrics.limits_rejected == 1u);
+        REQUIRE(trace_capture.redirections ==
+                RDP_SESSION_MAX_SERVER_REDIRECTS);
+        REQUIRE(trace_capture.redirection_reconnects ==
+                RDP_SESSION_MAX_SERVER_REDIRECTS);
+        REQUIRE(trace_capture.redirection_loops == 1u);
+        REQUIRE(librdp_error_info_init(&error_info) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(librdp_error_copy_info(
+                    librdp_session_last_error(session),
+                    &error_info) == LIBRDP_STATUS_OK);
+        REQUIRE(error_info.status == LIBRDP_STATUS_LIMIT_EXCEEDED);
+        REQUIRE(error_info.component ==
+                LIBRDP_ERROR_COMPONENT_PROTOCOL);
+        REQUIRE(error_info.phase != NULL &&
+                strcmp(error_info.phase,
+                       "client.redirection.loop") == 0);
+    }
+    else
+    {
+        REQUIRE(status == LIBRDP_STATUS_OK ||
+                status == LIBRDP_STATUS_TIMEOUT);
+        REQUIRE(atomic_load_explicit(&fixture.connections,
+                                     memory_order_acquire) == 2u);
+        REQUIRE(atomic_load_explicit(&fixture.redirects,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(metrics.reconnects == 1u);
+        REQUIRE(metrics.limits_rejected == 0u);
+        REQUIRE(trace_capture.redirections == 1u);
+        REQUIRE(trace_capture.redirection_reconnects == 1u);
+        REQUIRE(trace_capture.redirection_loops == 0u);
+        REQUIRE(trace_capture.connect_starts == 2u);
+        REQUIRE(trace_capture.connect_completions == 2u);
+        REQUIRE(librdp_session_get_state(session) ==
+                LIBRDP_SESSION_ACTIVE);
+        REQUIRE(events.active);
+        REQUIRE(events.error_events == 0u);
+    }
+    REQUIRE(librdp_session_disconnect(session) ==
+            LIBRDP_STATUS_OK);
+    result = 0;
+
+cleanup:
+    atomic_store_explicit(&fixture.stop, 1u, memory_order_release);
+    if (thread_started)
+    {
+        (void)pthread_join(fixture.thread, NULL);
+        if (result == 0 && fixture.status != LIBRDP_STATUS_OK)
+            result = 1;
+    }
+    librdp_session_free(session);
+    librdp_settings_free(settings);
     if (cert_path[0] != '\0')
         (void)unlink(cert_path);
     if (key_path[0] != '\0')
@@ -3063,6 +3655,12 @@ int main(int argc, char** argv)
             LIBRDP_STATUS_TLS_HANDSHAKE_FAILED,
             0,
             0);
+    if (argc == 2 && strcmp(argv[1], "redirection-standard") == 0)
+        return smoke_run_redirection(0, 0);
+    if (argc == 2 && strcmp(argv[1], "redirection-tls") == 0)
+        return smoke_run_redirection(1, 0);
+    if (argc == 2 && strcmp(argv[1], "redirection-loop") == 0)
+        return smoke_run_redirection(0, 1);
     if (argc == 2)
         gateway_profile =
             smoke_gateway_profile_by_name(argv[1]);
@@ -3095,6 +3693,7 @@ int main(int argc, char** argv)
                 "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8|"
                 "timeout-credssp|standard-integrity|security-downgrade|"
                 "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake|"
+                "redirection-standard|redirection-tls|redirection-loop|"
                 "gateway-http-connect|gateway-session-credentials|"
                 "gateway-no-session-credentials|gateway-auth-failure|"
                 "gateway-timeout|gateway-malformed|gateway-refused|"

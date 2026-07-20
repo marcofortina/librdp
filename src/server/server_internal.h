@@ -142,6 +142,9 @@ struct librdp_server_peer
     rdp_buffer standard_certificate;
     rdp_buffer credssp_target_name;
     rdp_buffer credssp_target_info;
+    rdp_buffer x224_routing_data;
+    uint32_t client_cluster_flags;
+    uint32_t redirected_session_id;
     uint8_t standard_server_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     uint8_t credssp_server_challenge[8];
     uint8_t credssp_client_nonce[32];

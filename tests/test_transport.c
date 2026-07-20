@@ -1903,6 +1903,43 @@ int test_transport(void)
     TCHECK(got == 2 && memcmp(data, "ab", 2) == 0);
     TCHECK(rdp_transport_read_exact(&transport, data, 3) == LIBRDP_STATUS_OK);
     TCHECK(memcmp(data, "abc", 3) == 0);
+    TCHECK(rdp_socket_set_nonblocking(transport.fd, 1) == 0);
+    memset(data, 0xa5, sizeof(data));
+    TCHECK(write(pair[1], "de", 2) == 2);
+    TCHECK(rdp_transport_read_exact(&transport, data, 4) ==
+           LIBRDP_STATUS_AGAIN);
+    TCHECK(data[0] == (char)0xa5 && data[1] == (char)0xa5 &&
+           data[2] == (char)0xa5 && data[3] == (char)0xa5);
+    TCHECK(rdp_transport_peek(&transport, data, 4, &got) ==
+           LIBRDP_STATUS_OK);
+    TCHECK(got == 2 && memcmp(data, "de", 2) == 0);
+    TCHECK(write(pair[1], "fg", 2) == 2);
+    TCHECK(rdp_transport_read_exact(&transport, data, 4) ==
+           LIBRDP_STATUS_OK);
+    TCHECK(memcmp(data, "defg", 4) == 0);
+    TCHECK(rdp_tpkt_write(&wire,
+                          payload,
+                          sizeof(payload)) ==
+           LIBRDP_STATUS_OK);
+    TCHECK(write(pair[1], wire.data, 5u) == 5);
+    TCHECK(rdp_transport_read_tpkt(&transport, &packet) ==
+           LIBRDP_STATUS_AGAIN);
+    TCHECK(packet.length == 0u);
+    TCHECK(write(pair[1],
+                 wire.data + 5u,
+                 wire.length - 5u) ==
+           (ssize_t)(wire.length - 5u));
+    TCHECK(rdp_transport_read_tpkt(&transport, &packet) ==
+           LIBRDP_STATUS_OK);
+    TCHECK(packet.length == wire.length);
+    TCHECK(memcmp(packet.data,
+                  wire.data,
+                  wire.length) == 0);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
+    rdp_buffer_free(&wire);
+    rdp_buffer_init(&wire);
+    TCHECK(rdp_socket_set_nonblocking(transport.fd, 0) == 0);
     TCHECK(rdp_transport_read_exact_timeout(&transport, data, 1, 25) == LIBRDP_STATUS_TIMEOUT);
     TCHECK(rdp_socket_get_nonblocking(transport.fd, &nonblocking) == 0);
     TCHECK(nonblocking == 0);

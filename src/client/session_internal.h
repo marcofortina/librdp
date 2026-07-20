@@ -44,6 +44,7 @@
 #include "channels/webauthn_channel.h"
 #include "client/error_internal.h"
 #include "client/printer_backend.h"
+#include "client/session_redirection.h"
 #include "client/settings_internal.h"
 #include "client/smartcard_backend.h"
 #include "client/usb_backend.h"
@@ -874,6 +875,8 @@ struct librdp_session
     uint32_t static_channel_count;
     rdp_session_static_channel static_channels[LIBRDP_SETTINGS_MAX_STATIC_CHANNELS];
     rdp_standard_security_context standard_security;
+    rdp_session_redirection_state redirection;
+    uint32_t selected_protocol;
     uint32_t share_id;
     uint8_t reactivating;
     librdp_session_state state;

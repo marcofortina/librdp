@@ -244,7 +244,7 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
         return status;
     rdp_session_trace_scope_begin(session, &trace_scope);
     status = rdp_session_send_key_inner(session, key);
-    rdp_session_trace_scope_end(session);
+    rdp_session_trace_scope_end(session, &trace_scope);
     return status;
 }
 
@@ -348,7 +348,7 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
         return status;
     rdp_session_trace_scope_begin(session, &trace_scope);
     status = rdp_session_send_mouse_inner(session, mouse);
-    rdp_session_trace_scope_end(session);
+    rdp_session_trace_scope_end(session, &trace_scope);
     return status;
 }
 
@@ -530,5 +530,4 @@ librdp_status librdp_session_dismiss_touch(librdp_session* session, uint8_t cont
     rdp_buffer_free(&input);
     return status;
 }
-
 

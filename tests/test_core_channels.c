@@ -12,6 +12,8 @@
 #include "test_core_support.h"
 #include "test_core_suites.h"
 
+#include "protocol/session_selection.h"
+
 /*
  * Coverage: validates static channel registration, activation-time channel
  * metadata, fragmented channel delivery, and deterministic fixture shutdown.
@@ -1521,5 +1523,129 @@ int test_auth_redirection_dvc_requires_credssp(void)
     librdp_session_free(session);
     librdp_settings_free(settings);
     CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: stages server-directed targets, routing tokens, credential
+ * overrides, informational responses, malformed address lists, and the finite
+ * redirect bound without opening a network connection.
+ * Bug classes: partial state commit, stale sensitive fields, malformed
+ * UTF-16LE, redirect loops, and missing limit accounting.
+ */
+int test_server_redirection_state(void)
+{
+    static const uint8_t routing_token[] = {
+        'r', 'o', 'u', 't', 'e', '=', 'a', '\r', '\n'
+    };
+    static const uint8_t username_utf16[] = {
+        'u', 0, 's', 0, 'e', 0, 'r', 0, 0, 0
+    };
+    static const uint8_t password_utf16[] = {
+        's', 0, 'e', 0, 'c', 0, 'r', 0, 'e', 0, 't', 0, 0, 0
+    };
+    static const uint8_t domain_utf16[] = {
+        'T', 0, 'E', 0, 'S', 0, 'T', 0, 0, 0
+    };
+    static const uint8_t malformed_addresses[] = {
+        1, 0, 0, 0,
+        6, 0, 0, 0,
+        '1', 0, '2', 0, 0, 1
+    };
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    rdp_server_redirection_packet packet;
+    rdp_server_redirection_packet informational;
+    rdp_server_redirection_packet malformed;
+    librdp_metrics metrics;
+    size_t routing_len = 0u;
+    const uint8_t* routing = NULL;
+    int reconnect = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "redirect.test") ==
+          LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    memset(&informational, 0, sizeof(informational));
+    informational.redirection_flags =
+        RDP_SERVER_REDIRECTION_LB_NO_REDIRECT;
+    informational.session_id = 7u;
+    reconnect = 1;
+    CHECK(rdp_session_redirection_stage(session,
+                                        &informational,
+                                        &reconnect) ==
+          LIBRDP_STATUS_OK);
+    CHECK(reconnect == 0);
+    CHECK(rdp_session_redirection_active(session) == 0u);
+
+    memset(&packet, 0, sizeof(packet));
+    packet.session_id = 0x10203040u;
+    packet.redirection_flags =
+        RDP_SERVER_REDIRECTION_LB_LOAD_BALANCE_INFO |
+        RDP_SERVER_REDIRECTION_LB_USERNAME |
+        RDP_SERVER_REDIRECTION_LB_PASSWORD |
+        RDP_SERVER_REDIRECTION_LB_DOMAIN;
+    packet.load_balance_info.data = routing_token;
+    packet.load_balance_info.length = (uint32_t)sizeof(routing_token);
+    packet.username.data = username_utf16;
+    packet.username.length = (uint32_t)sizeof(username_utf16);
+    packet.password.data = password_utf16;
+    packet.password.length = (uint32_t)sizeof(password_utf16);
+    packet.domain.data = domain_utf16;
+    packet.domain.length = (uint32_t)sizeof(domain_utf16);
+    CHECK(rdp_session_redirection_stage(session, &packet, &reconnect) ==
+          LIBRDP_STATUS_OK);
+    CHECK(reconnect == 1);
+    CHECK(rdp_session_redirection_active(session) == 1u);
+    CHECK(strcmp(rdp_session_redirection_target(session),
+                 "redirect.test") == 0);
+    routing = (const uint8_t*)rdp_session_redirection_routing_data(
+        session,
+        &routing_len);
+    CHECK(routing_len == sizeof(routing_token));
+    CHECK(routing != NULL &&
+          memcmp(routing, routing_token, sizeof(routing_token)) == 0);
+    CHECK(rdp_session_redirection_session_id(session) == 0x10203040u);
+    CHECK(session->redirection.credentials.username != NULL &&
+          strcmp(session->redirection.credentials.username, "user") == 0);
+    CHECK(session->redirection.credentials.password != NULL &&
+          strcmp(session->redirection.credentials.password, "secret") == 0);
+    CHECK(session->redirection.credentials.domain != NULL &&
+          strcmp(session->redirection.credentials.domain, "TEST") == 0);
+
+    memset(&malformed, 0, sizeof(malformed));
+    malformed.redirection_flags =
+        RDP_SERVER_REDIRECTION_LB_TARGET_NET_ADDRESSES;
+    malformed.target_net_addresses.data = malformed_addresses;
+    malformed.target_net_addresses.length =
+        (uint32_t)sizeof(malformed_addresses);
+    reconnect = 0;
+    CHECK(rdp_session_redirection_stage(session, &malformed, &reconnect) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(reconnect == 0);
+    CHECK(strcmp(rdp_session_redirection_target(session),
+                 "redirect.test") == 0);
+    CHECK(rdp_session_redirection_session_id(session) == 0x10203040u);
+
+    for (unsigned int hop = 1u; hop < 8u; hop++)
+    {
+        CHECK(rdp_session_redirection_stage(session, &packet, &reconnect) ==
+              LIBRDP_STATUS_OK);
+        CHECK(reconnect == 1);
+    }
+    CHECK(session->redirection.hop_count == 8u);
+    CHECK(rdp_session_redirection_stage(session, &packet, &reconnect) ==
+          LIBRDP_STATUS_LIMIT_EXCEEDED);
+    CHECK(reconnect == 0);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.limits_rejected == 1u);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
     return 0;
 }
