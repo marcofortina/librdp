@@ -1087,6 +1087,10 @@ int x11_viewer_run(int argc, char** argv)
                 x11_input_apply_cursor(&app);
                 x11_input_restore_cursor_after_local_mouse(&app);
                 x11_keyboard_maybe_grab(&app, CurrentTime);
+                x11_trace_event(X11_TRACE_CLIENT,
+                                "x11.window.focus.in",
+                                "pointer_inside=%u",
+                                app.pointer_inside ? 1u : 0u);
             }
             else if (event.type == FocusOut)
             {
@@ -1097,6 +1101,10 @@ int x11_viewer_run(int argc, char** argv)
                         XUnsetICFocus(app.ic);
                     x11_keyboard_release_all_remote_keys(&app);
                     x11_keyboard_ungrab(&app, CurrentTime, 1);
+                    x11_trace_event(X11_TRACE_CLIENT,
+                                    "x11.window.focus.out",
+                                    "pointer_inside=%u",
+                                    app.pointer_inside ? 1u : 0u);
                 }
             }
             else if (event.type == ConfigureNotify && event.xconfigure.width > 0 && event.xconfigure.height > 0)

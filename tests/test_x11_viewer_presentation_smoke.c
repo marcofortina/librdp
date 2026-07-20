@@ -753,6 +753,53 @@ static int viewer_smoke_wait_cursor_equal(
     return 0;
 }
 
+static int viewer_smoke_wait_window_size(Display* display,
+                                         Window window,
+                                         pid_t viewer,
+                                         uint32_t width,
+                                         uint32_t height)
+{
+    unsigned int step = 0u;
+
+    for (step = 0u; step < VIEWER_SMOKE_WAIT_STEPS; step++)
+    {
+        XWindowAttributes attributes;
+
+        memset(&attributes, 0, sizeof(attributes));
+        XSync(display, False);
+        if (XGetWindowAttributes(display, window, &attributes) &&
+            attributes.map_state == IsViewable &&
+            attributes.width == (int)width &&
+            attributes.height == (int)height)
+            return 1;
+        if (!viewer_smoke_process_alive(viewer))
+            return 0;
+        viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    }
+    return 0;
+}
+
+static int viewer_smoke_wait_input_focus(Display* display,
+                                         Window expected,
+                                         pid_t viewer)
+{
+    unsigned int step = 0u;
+
+    for (step = 0u; step < VIEWER_SMOKE_WAIT_STEPS; step++)
+    {
+        Window focused = None;
+        int revert_to = 0;
+
+        XGetInputFocus(display, &focused, &revert_to);
+        if (focused == expected)
+            return 1;
+        if (!viewer_smoke_process_alive(viewer))
+            return 0;
+        viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    }
+    return 0;
+}
+
 static int viewer_smoke_cursor_is_shape(
     Display* display,
     const viewer_smoke_cursor_expectation* expected,
@@ -1316,6 +1363,55 @@ static int viewer_smoke_run_pointer(
     if (!viewer_smoke_wait_state(
             state_path,
             processes.server,
+            TEST_VIEWER_POINTER_RESIZE_FOCUS,
+            &port))
+        goto cleanup;
+    XResizeWindow(display,
+                  window,
+                  TEST_VIEWER_POINTER_RESIZED_WIDTH,
+                  TEST_VIEWER_POINTER_RESIZED_HEIGHT);
+    XSync(display, False);
+    if (!viewer_smoke_wait_window_size(
+            display,
+            window,
+            processes.viewer,
+            TEST_VIEWER_POINTER_RESIZED_WIDTH,
+            TEST_VIEWER_POINTER_RESIZED_HEIGHT) ||
+        !viewer_smoke_cursor_is_shape(
+            display,
+            &large_shape,
+            0u,
+            &large_serial))
+        goto cleanup;
+    XSetInputFocus(display,
+                   DefaultRootWindow(display),
+                   RevertToParent,
+                   CurrentTime);
+    XSync(display, False);
+    XSetInputFocus(display,
+                   window,
+                   RevertToParent,
+                   CurrentTime);
+    XSync(display, False);
+    if (!viewer_smoke_wait_input_focus(
+            display,
+            window,
+            processes.viewer) ||
+        !viewer_smoke_cursor_is_shape(
+            display,
+            &large_shape,
+            0u,
+            &large_serial) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_RESIZE_FOCUS))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_RESIZE_FOCUS;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
             TEST_VIEWER_POINTER_RESTORED,
             &port) ||
         !viewer_smoke_wait_cursor_equal(
@@ -1372,6 +1468,15 @@ static int viewer_smoke_run_pointer(
         !viewer_smoke_file_contains(
             viewer_log,
             "shape_format=3 cache_index=11") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.window.configure") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.window.focus.out") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.window.focus.in") ||
         viewer_smoke_file_contains(
             viewer_log,
             "status=protocol_error") ||

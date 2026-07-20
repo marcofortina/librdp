@@ -438,6 +438,12 @@ if(LIBRDP_BUILD_TESTS)
     )
     add_test(NAME smoke_gdi_cache_eviction COMMAND test_core gdi-cache-eviction)
     set_tests_properties(smoke_gdi_cache_eviction PROPERTIES TIMEOUT 60)
+    add_test(NAME smoke_pointer_cache_lifecycle
+        COMMAND test_core pointer-cache-smoke)
+    set_tests_properties(smoke_pointer_cache_lifecycle PROPERTIES
+        ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_LEVEL=debug"
+        TIMEOUT 60
+    )
     add_test(NAME smoke_composition_cr2
         COMMAND test_core composition-cr2-smoke)
     set_tests_properties(smoke_composition_cr2 PROPERTIES

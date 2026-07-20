@@ -2888,3 +2888,117 @@ int test_activation_epoch_reset(void)
     close(sockets[1]);
     return 0;
 }
+
+/*
+ * Coverage: fills the highest pointer-cache slot, selects it, replaces it in
+ * place, and then clears the complete cache. It catches stale pixel ownership,
+ * out-of-range cache acceptance, and cached-pointer emission after reset.
+ */
+int test_pointer_cache_lifecycle(void)
+{
+    static const uint8_t first_xor[4] = {
+        0x11u, 0x22u, 0x33u, 0xffu
+    };
+    static const uint8_t replacement_xor[4] = {
+        0x77u, 0x66u, 0x55u, 0xffu
+    };
+    static const uint8_t and_mask[2] = {0u, 0u};
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    event_counter events;
+    rdp_pointer_update update;
+    uint8_t first_pixels[4];
+    const uint16_t cache_index =
+        (uint16_t)(RDP_SESSION_POINTER_CACHE_SLOTS - 1u);
+
+    memset(&events, 0, sizeof(events));
+    memset(&update, 0, sizeof(update));
+    memset(first_pixels, 0, sizeof(first_pixels));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &events);
+
+    update.kind = RDP_POINTER_UPDATE_KIND_SHAPE;
+    update.cache_index = cache_index;
+    update.width = 1u;
+    update.height = 1u;
+    update.xor_bpp = 32u;
+    update.xor_mask = first_xor;
+    update.xor_mask_len = sizeof(first_xor);
+    update.and_mask = and_mask;
+    update.and_mask_len = sizeof(and_mask);
+    CHECK(rdp_session_pointer_apply_update(session, &update) ==
+          LIBRDP_STATUS_OK);
+    CHECK(session->pointer_cache[cache_index].active == 1u);
+    CHECK(session->pointer_cache[cache_index].pixels.length ==
+          sizeof(first_pixels));
+    memcpy(first_pixels,
+           session->pointer_cache[cache_index].pixels.data,
+           sizeof(first_pixels));
+    CHECK(events.pointer == 1);
+
+    memset(&update, 0, sizeof(update));
+    update.kind = RDP_POINTER_UPDATE_KIND_CACHED;
+    update.cache_index = cache_index;
+    CHECK(rdp_session_pointer_apply_update(session, &update) ==
+          LIBRDP_STATUS_OK);
+    CHECK(events.pointer == 2);
+
+    update.kind = RDP_POINTER_UPDATE_KIND_SHAPE;
+    update.width = 1u;
+    update.height = 1u;
+    update.xor_bpp = 32u;
+    update.xor_mask = replacement_xor;
+    update.xor_mask_len = sizeof(replacement_xor);
+    update.and_mask = and_mask;
+    update.and_mask_len = sizeof(and_mask);
+    CHECK(rdp_session_pointer_apply_update(session, &update) ==
+          LIBRDP_STATUS_OK);
+    CHECK(events.pointer == 3);
+    CHECK(session->pointer_cache[cache_index].pixels.length ==
+          sizeof(first_pixels));
+    CHECK(memcmp(first_pixels,
+                 session->pointer_cache[cache_index].pixels.data,
+                 sizeof(first_pixels)) != 0);
+
+    memset(&update, 0, sizeof(update));
+    update.kind = RDP_POINTER_UPDATE_KIND_CACHED;
+    update.cache_index = cache_index;
+    CHECK(rdp_session_pointer_apply_update(session, &update) ==
+          LIBRDP_STATUS_OK);
+    CHECK(events.pointer == 4);
+    update.cache_index = RDP_SESSION_POINTER_CACHE_SLOTS;
+    CHECK(rdp_session_pointer_apply_update(session, &update) ==
+          LIBRDP_STATUS_OK);
+    CHECK(events.pointer == 4);
+
+    memset(&update, 0, sizeof(update));
+    update.kind = RDP_POINTER_UPDATE_KIND_SHAPE;
+    update.cache_index = RDP_SESSION_POINTER_CACHE_SLOTS;
+    update.width = 1u;
+    update.height = 1u;
+    update.xor_bpp = 32u;
+    update.xor_mask = first_xor;
+    update.xor_mask_len = sizeof(first_xor);
+    update.and_mask = and_mask;
+    update.and_mask_len = sizeof(and_mask);
+    CHECK(rdp_session_pointer_apply_update(session, &update) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_session_pointer_cache_clear(session);
+    CHECK(session->pointer_cache[cache_index].active == 0u);
+    CHECK(session->pointer_cache[cache_index].pixels.data == NULL);
+    CHECK(session->pointer_cache[cache_index].pixels.length == 0u);
+    memset(&update, 0, sizeof(update));
+    update.kind = RDP_POINTER_UPDATE_KIND_CACHED;
+    update.cache_index = cache_index;
+    CHECK(rdp_session_pointer_apply_update(session, &update) ==
+          LIBRDP_STATUS_OK);
+    CHECK(events.pointer == 4);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}

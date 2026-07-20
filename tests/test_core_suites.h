@@ -75,6 +75,7 @@ int test_composited_runtime_lifecycle(void);
 int test_rail_runtime_lifecycle(void);
 int test_gdi_orders_runtime_golden(void);
 int test_graphics_update_before_activation(void);
+int test_pointer_cache_lifecycle(void);
 int test_activation_epoch_reset(void);
 int test_licensing_new_before_activation(void);
 int test_licensing_valid_client_alert_before_activation(void);

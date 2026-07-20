@@ -396,6 +396,8 @@ int test_charset(void);
 
 int test_pointer_decode(void);
 
+int test_pointer_cache_lifecycle(void);
+
 int test_settings_surface_input_session(void);
 
 int test_reconnect_policy(void);

@@ -92,7 +92,8 @@ static int run_storage(void)
 
 static int run_graphics(void)
 {
-    if (test_gdiplus_object_table_solid_brush_and_pen() != 0 ||
+    if (test_pointer_cache_lifecycle() != 0 ||
+        test_gdiplus_object_table_solid_brush_and_pen() != 0 ||
         test_gdiplus_known_record_families_render_visuals() != 0 ||
         test_gdiplus_compressed_images_render_pixels() != 0 ||
         test_gdiplus_compressed_image_pixel_contract() != 0 ||
@@ -206,6 +207,8 @@ int test_client_core_named(const char* name)
         return test_gdi_cache_lifecycle();
     if (strcmp(name, "gdi-cache-eviction") == 0)
         return test_gdi_bitmap_cache_eviction();
+    if (strcmp(name, "pointer-cache-smoke") == 0)
+        return test_pointer_cache_lifecycle();
     if (strcmp(name, "composition-cr2-smoke") == 0)
         return test_composited_runtime_lifecycle();
     if (strcmp(name, "rail-runtime-smoke") == 0)

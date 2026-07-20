@@ -2203,12 +2203,21 @@ int test_reconnect_success(void)
     if (librdp_session_get_state(session) == LIBRDP_SESSION_FAILED)
         CHECK(after_loss.errors > before_loss.errors);
 
+    session->pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS - 1u].active = 1u;
+    CHECK(rdp_buffer_append_u8(
+              &session->pointer_cache[
+                  RDP_SESSION_POINTER_CACHE_SLOTS - 1u].pixels,
+              0xa5u) == LIBRDP_STATUS_OK);
     CHECK(librdp_reconnect_policy_init(&policy) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_reconnect(session, &policy) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
+    CHECK(session->pointer_cache[
+              RDP_SESSION_POINTER_CACHE_SLOTS - 1u].active == 0u);
+    CHECK(session->pointer_cache[
+              RDP_SESSION_POINTER_CACHE_SLOTS - 1u].pixels.data == NULL);
     for (i = 0; i < 6u; i++)
         CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_channel_info_init(&stale_info) == LIBRDP_STATUS_OK);

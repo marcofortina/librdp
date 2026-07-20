@@ -558,6 +558,20 @@ int main(int argc, char** argv)
     }
     if (status == LIBRDP_STATUS_OK)
     {
+        if (!test_process_state_write(
+                argv[1],
+                port,
+                TEST_VIEWER_POINTER_RESIZE_FOCUS))
+            status = LIBRDP_STATUS_IO_ERROR;
+        else
+            status = pointer_server_wait_ack(
+                peer,
+                argv[2],
+                port,
+                TEST_VIEWER_POINTER_RESIZE_FOCUS);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
         status = librdp_server_pointer_update_init(&update);
         update.type = LIBRDP_SERVER_POINTER_DEFAULT;
         status = pointer_server_send(
