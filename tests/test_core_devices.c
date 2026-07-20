@@ -462,6 +462,19 @@ static int test_usb_open_fail_closed(void)
 
     test_usb_open_mock_init(&mock);
     ops = test_usb_open_ops(&mock);
+    request.first = 0x4321u;
+    memset(&device, 0xa5, sizeof(device));
+    CHECK(rdp_usb_backend_open_device_with_ops(&context,
+                                               &request,
+                                               &device,
+                                               &match,
+                                               &ops) != LIBRDP_STATUS_OK);
+    CHECK(!device.active && device.handle == NULL && mock.open_calls == 0u);
+    request.first = 0x1234u;
+
+    context = NULL;
+    test_usb_open_mock_init(&mock);
+    ops = test_usb_open_ops(&mock);
     mock.descriptor.bDeviceClass = LIBUSB_CLASS_MASS_STORAGE;
     memset(&device, 0xa5, sizeof(device));
     CHECK(rdp_usb_backend_open_device_with_ops(&context,
