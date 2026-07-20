@@ -239,6 +239,7 @@ _librdp_session_disconnect
 _librdp_session_resize
 _librdp_session_set_display_layout
 _librdp_session_refresh
+_librdp_session_set_output_suppressed
 _librdp_session_send_key
 _librdp_session_send_mouse
 _librdp_session_send_touch

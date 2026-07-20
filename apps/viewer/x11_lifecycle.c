@@ -996,6 +996,26 @@ int x11_viewer_run(int argc, char** argv)
             }
             else if (event.type == ClientMessage && (Atom)event.xclient.data.l[0] == app.wm_delete)
                 app.running = 0;
+            else if (event.type == UnmapNotify)
+            {
+                status = librdp_session_set_output_suppressed(
+                    app.session,
+                    1);
+                x11_trace_event(X11_TRACE_CLIENT,
+                                "x11.window.output_suppressed",
+                                "status=%s",
+                                librdp_status_name(status));
+            }
+            else if (event.type == MapNotify)
+            {
+                status = librdp_session_set_output_suppressed(
+                    app.session,
+                    0);
+                x11_trace_event(X11_TRACE_CLIENT,
+                                "x11.window.output_resumed",
+                                "status=%s",
+                                librdp_status_name(status));
+            }
             else if (app.xfixes_available && event.type == app.xfixes_event_base + XFixesSelectionNotify)
                 x11_clipboard_handle_owner_notify(&app, &event);
             else if (x11_display_handle_event(&app, &event))

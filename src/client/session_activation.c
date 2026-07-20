@@ -78,7 +78,6 @@ static librdp_status rdp_session_send_activation_finalization(librdp_session* se
 
 static librdp_status rdp_session_send_active_output_request(librdp_session* session)
 {
-    rdp_buffer suppress;
     librdp_status status = LIBRDP_STATUS_OK;
     uint32_t width = 0;
     uint32_t height = 0;
@@ -91,28 +90,12 @@ static librdp_status rdp_session_send_active_output_request(librdp_session* sess
     if (width == 0 || height == 0 || width > 0xffffu || height > 0xffffu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    rdp_buffer_init(&suppress);
-    status = rdp_slowpath_write_client_suppress_output(&suppress,
-                                                       session->share_id,
-                                                       session->mcs_user_id,
-                                                       1,
-                                                       0,
-                                                       0,
-                                                       (uint16_t)width,
-                                                       (uint16_t)height);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_session_write_slowpath_pdu(session, &suppress, "rdp.activation.client_suppress_output");
-    rdp_buffer_free(&suppress);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-
-    rdp_trace_event(RDP_TRACE_PROTOCOL,
-                    "rdp.activation.client_suppress_output",
-                    "share_id=%u width=%u height=%u",
-                    session->share_id,
-                    width,
-                    height);
-    return librdp_session_refresh(session, 0, 0, width, height);
+    if (session->server_suppress_output_supported)
+        status = librdp_session_set_output_suppressed(session, 0);
+    if (status == LIBRDP_STATUS_OK &&
+        session->server_refresh_rect_supported)
+        status = librdp_session_refresh(session, 0, 0, width, height);
+    return status;
 }
 
 /*
@@ -179,6 +162,10 @@ static librdp_status rdp_session_reset_activation_epoch(librdp_session* session)
     session->remote_programs_fragmenting = 0u;
     session->remote_programs_fragment_expected = 0u;
     session->remote_programs_fragment.length = 0u;
+    session->server_refresh_rect_supported = 0u;
+    session->server_suppress_output_supported = 0u;
+    session->output_suppressed = 0u;
+    session->output_suppression_known = 0u;
 
     status = librdp_surface_resize(session->surface, width, height);
     if (status == LIBRDP_STATUS_OK)
@@ -290,7 +277,9 @@ librdp_status rdp_session_trace_slowpath_data_pdu(librdp_session* session, const
 librdp_status rdp_session_handle_demand_active(librdp_session* session, const uint8_t* payload, size_t payload_len)
 {
     rdp_slowpath_demand_active demand;
+    const rdp_capability_set* general_set = NULL;
     const rdp_capability_set* bitmap_set = NULL;
+    rdp_capability_general general;
     rdp_capability_bitmap bitmap;
     rdp_buffer confirm;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -315,9 +304,14 @@ librdp_status rdp_session_handle_demand_active(librdp_session* session, const ui
     {
         width = librdp_surface_width(session->surface);
         height = librdp_surface_height(session->surface);
+        memset(&general, 0, sizeof(general));
+        general_set = rdp_capabilities_find(&demand.capabilities,
+                                            RDP_CAPABILITY_TYPE_GENERAL);
+        if (general_set)
+            status = rdp_capability_parse_general(general_set, &general);
         bitmap_set = rdp_capabilities_find(&demand.capabilities,
                                            RDP_CAPABILITY_TYPE_BITMAP);
-        if (bitmap_set)
+        if (status == LIBRDP_STATUS_OK && bitmap_set)
         {
             status = rdp_capability_parse_bitmap(bitmap_set, &bitmap);
             if (status == LIBRDP_STATUS_OK)
@@ -336,7 +330,15 @@ librdp_status rdp_session_handle_demand_active(librdp_session* session, const ui
         }
     }
     if (status == LIBRDP_STATUS_OK)
+    {
         session->share_id = demand.share_id;
+        session->server_refresh_rect_supported =
+            general.refresh_rect_support != 0u;
+        session->server_suppress_output_supported =
+            general.suppress_output_support != 0u;
+        session->output_suppressed = 0u;
+        session->output_suppression_known = 0u;
+    }
     if (status == LIBRDP_STATUS_OK)
     {
         dimensions_changed =
@@ -392,5 +394,78 @@ librdp_status rdp_session_handle_demand_active(librdp_session* session, const ui
     session->reactivating = 0u;
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_ACTIVE);
     rdp_session_set_state(session, LIBRDP_SESSION_ACTIVE);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_session_set_output_suppressed(
+    librdp_session* session,
+    int suppressed)
+{
+    rdp_buffer request;
+    rdp_trace_session_scope trace_scope;
+    uint32_t width = 0u;
+    uint32_t height = 0u;
+    uint8_t next = suppressed ? 1u : 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(
+        session,
+        "client.output_suppression.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (session->state != LIBRDP_SESSION_ACTIVE ||
+        session->share_id == 0u)
+        return LIBRDP_STATUS_STATE;
+    if (!session->server_suppress_output_supported)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (session->output_suppression_known &&
+        session->output_suppressed == next)
+        return LIBRDP_STATUS_OK;
+    if (!next)
+    {
+        if (!session->surface)
+            return LIBRDP_STATUS_STATE;
+        width = librdp_surface_width(session->surface);
+        height = librdp_surface_height(session->surface);
+        if (width == 0u || height == 0u ||
+            width > 0xffffu || height > 0xffffu)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+
+    rdp_session_trace_scope_begin(session, &trace_scope);
+    rdp_buffer_init(&request);
+    status = rdp_slowpath_write_client_suppress_output(
+        &request,
+        session->share_id,
+        session->mcs_user_id,
+        next ? 0 : 1,
+        0u,
+        0u,
+        (uint16_t)width,
+        (uint16_t)height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_slowpath_pdu(
+            session,
+            &request,
+            next ? "rdp.output.suppress" :
+                   "rdp.output.resume");
+    rdp_buffer_free(&request);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_session_trace_scope_end(session, &trace_scope);
+        return status;
+    }
+
+    session->output_suppressed = next;
+    session->output_suppression_known = 1u;
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    next ? "client.active.output.suppressed" :
+                           "client.active.output.resumed",
+                    "width=%u height=%u",
+                    width,
+                    height);
+    rdp_session_trace_scope_end(session, &trace_scope);
     return LIBRDP_STATUS_OK;
 }

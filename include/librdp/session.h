@@ -1086,6 +1086,31 @@ LIBRDP_API librdp_status librdp_session_set_display_layout(librdp_session* sessi
 LIBRDP_API librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 
 /**
+ * @brief Suspend or resume server graphics updates.
+ *
+ * Suppression is useful while a viewer window is unmapped, minimized, or
+ * otherwise unable to present remote pixels. Resuming supplies the current
+ * desktop bounds to the server, which may immediately send a pending repaint.
+ * Repeating the current state is a successful no-op.
+ *
+ * @param[in,out] session Active session; must not be NULL.
+ * @param[in] suppressed Non-zero to suppress updates, zero to resume them.
+ *
+ * @return LIBRDP_STATUS_OK when the state is unchanged or the request is sent;
+ * LIBRDP_STATUS_INVALID_ARGUMENT when session is NULL;
+ * LIBRDP_STATUS_STATE when the session is not active or has no negotiated
+ * share; LIBRDP_STATUS_UNSUPPORTED when the server did not advertise Suppress
+ * Output support; allocation or transport errors propagated from the send
+ * path.
+ *
+ * @note Thread-safety: call from the serialized session owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_set_output_suppressed(
+    librdp_session* session,
+    int suppressed);
+
+/**
  * @brief Send one keyboard input event.
  *
  * The session must be connected or active and have a share ID. Events may be

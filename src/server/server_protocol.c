@@ -552,6 +552,16 @@ static librdp_status rdp_server_handle_suppress_output(librdp_server_peer* peer,
         event.height = (uint16_t)(bottom - event.y + 1u);
     }
     rdp_server_emit_input(peer, &event);
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    peer->updates_suppressed ?
+                        "server.output.suppressed" :
+                        "server.output.resumed",
+                    "x=%u y=%u width=%u height=%u repaint_pending=%u",
+                    event.x,
+                    event.y,
+                    event.width,
+                    event.height,
+                    peer->surface_repaint_pending);
     if (!peer->updates_suppressed && peer->surface_repaint_pending)
         return rdp_server_surface_flush_repaint(peer);
     return LIBRDP_STATUS_OK;

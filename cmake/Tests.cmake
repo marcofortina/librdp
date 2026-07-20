@@ -515,6 +515,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke redirection-tls)
     add_test(NAME server_client_smoke_redirection_loop
              COMMAND test_server_client_smoke redirection-loop)
+    add_test(NAME server_client_smoke_output_control
+             COMMAND test_server_client_smoke output-control)
     if(LIBRDP_CURL_FOUND)
         add_test(NAME server_client_smoke_gateway_http_connect
                  COMMAND test_server_client_smoke gateway-http-connect)
@@ -571,6 +573,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_redirection_standard
         server_client_smoke_redirection_tls
         server_client_smoke_redirection_loop
+        server_client_smoke_output_control
         PROPERTIES TIMEOUT 60
     )
     if(TEST server_client_smoke_gateway_http_connect)

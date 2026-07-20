@@ -1176,6 +1176,10 @@ int test_settings_surface_input_session(void)
           LIBRDP_STATUS_INVALID_ARGUMENT);
     display_monitors[1].left = 800;
     CHECK(librdp_session_refresh(session, 0, 0, 1, 1) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_set_output_suppressed(NULL, 1) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_set_output_suppressed(session, 1) ==
+          LIBRDP_STATUS_STATE);
     CHECK(librdp_session_clipboard_set_data(session,
                                             LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
                                             "t\0e\0x\0t\0\0",
@@ -1603,8 +1607,18 @@ int test_settings_surface_input_session(void)
     CHECK(librdp_session_channel_list(session, channel_infos, 2, &channel_count) == LIBRDP_STATUS_OK);
     CHECK(channel_count == 1);
     CHECK(channel_infos[0].handle == client_channel_handle);
+    CHECK(session->server_refresh_rect_supported == 1u);
+    CHECK(session->server_suppress_output_supported == 1u);
     CHECK(librdp_session_refresh(session, 0, 0, 64, 48) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_refresh(session, 0, 0, 0, 48) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_set_output_suppressed(session, 1) ==
+          LIBRDP_STATUS_OK);
+    CHECK(session->output_suppressed == 1u);
+    CHECK(librdp_session_set_output_suppressed(session, 1) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_set_output_suppressed(session, 0) ==
+          LIBRDP_STATUS_OK);
+    CHECK(session->output_suppressed == 0u);
     key.state = LIBRDP_KEY_PRESSED;
     CHECK(librdp_session_send_key(session, &key) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_send_mouse(session, &mouse) == LIBRDP_STATUS_OK);

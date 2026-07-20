@@ -243,6 +243,7 @@ LIBRDP_0.1 {
         librdp_session_resize;
         librdp_session_set_display_layout;
         librdp_session_refresh;
+        librdp_session_set_output_suppressed;
         librdp_session_send_key;
         librdp_session_send_mouse;
         librdp_session_send_touch;

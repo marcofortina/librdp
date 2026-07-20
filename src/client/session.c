@@ -3208,6 +3208,10 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_webauthn_channel_reset(session);
     session->share_id = 0;
     session->reactivating = 0u;
+    session->server_refresh_rect_supported = 0u;
+    session->server_suppress_output_supported = 0u;
+    session->output_suppressed = 0u;
+    session->output_suppression_known = 0u;
     session->dynamic_channel_id = 0;
     session->clipboard_channel_id = 0;
     rdp_session_clipboard_clear(session);
@@ -6298,6 +6302,7 @@ librdp_status librdp_session_set_display_layout(librdp_session* session,
 librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
 {
     rdp_buffer refresh;
+    rdp_trace_session_scope trace_scope;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || width == 0 || height == 0 || x > 0xffffu || y > 0xffffu ||
@@ -6312,7 +6317,10 @@ librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32
         return LIBRDP_STATUS_STATE;
     if (session->share_id == 0)
         return LIBRDP_STATUS_STATE;
+    if (!session->server_refresh_rect_supported)
+        return LIBRDP_STATUS_UNSUPPORTED;
 
+    rdp_session_trace_scope_begin(session, &trace_scope);
     rdp_buffer_init(&refresh);
     status = rdp_slowpath_write_client_refresh_rect(&refresh,
                                                     session->share_id,
@@ -6332,6 +6340,7 @@ librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32
                         y,
                         width,
                         height);
+    rdp_session_trace_scope_end(session, &trace_scope);
     return status;
 }
 

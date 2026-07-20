@@ -105,13 +105,18 @@ typedef struct smoke_platform
     server_platform_drive_sink drive_sink;
     server_platform_permission_sink permission_sink;
     atomic_uint capture_requests;
+    atomic_uint capture_variant;
     atomic_uint key_events;
     atomic_uint mouse_events;
     atomic_uint clipboard_offers;
     atomic_uint drive_presentations;
     atomic_uint releases;
+    atomic_uint refresh_requests;
+    atomic_uint output_suppressions;
+    atomic_uint output_resumptions;
     char drive_name[64];
     uint8_t pixels[SMOKE_PIXEL_BYTES];
+    uint8_t alternate_pixels[SMOKE_PIXEL_BYTES];
 } smoke_platform;
 
 typedef struct smoke_host
@@ -362,6 +367,9 @@ typedef struct smoke_trace_capture
     unsigned int redirections;
     unsigned int redirection_reconnects;
     unsigned int redirection_loops;
+    unsigned int refresh_requests;
+    unsigned int output_suppressions;
+    unsigned int output_resumptions;
     librdp_session_lifecycle lifecycle[SMOKE_LIFECYCLE_CAPACITY];
     size_t lifecycle_count;
     char recent[SMOKE_TRACE_RECENT_CAPACITY]
@@ -540,6 +548,18 @@ static void smoke_trace_callback(librdp_session* session,
                     "client.redirection.loop_rejected") == 0)
         capture->redirection_loops++;
     else if (record->event &&
+             strcmp(record->event,
+                    "client.active.refresh_rect") == 0)
+        capture->refresh_requests++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.active.output.suppressed") == 0)
+        capture->output_suppressions++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.active.output.resumed") == 0)
+        capture->output_resumptions++;
+    else if (record->event &&
              strcmp(record->event, "client.lifecycle") == 0 &&
              record->message)
     {
@@ -710,6 +730,7 @@ static librdp_status smoke_capture_request(void* context)
     smoke_platform* platform = (smoke_platform*)context;
     server_platform_frame frame;
     unsigned int sequence = 0u;
+    unsigned int variant = 0u;
 
     if (!platform || !platform->capture_sink.frame)
         return LIBRDP_STATUS_STATE;
@@ -721,7 +742,10 @@ static librdp_status smoke_capture_request(void* context)
     frame.width = SMOKE_CAPTURE_WIDTH;
     frame.height = SMOKE_CAPTURE_HEIGHT;
     frame.stride = SMOKE_CAPTURE_WIDTH * 4u;
-    frame.pixels = platform->pixels;
+    variant = atomic_load_explicit(&platform->capture_variant,
+                                   memory_order_acquire);
+    frame.pixels = variant ? platform->alternate_pixels :
+                             platform->pixels;
     frame.pixels_len = sizeof(platform->pixels);
     frame.sequence = sequence;
     frame.timestamp_ns = smoke_now_ns();
@@ -1033,13 +1057,22 @@ static void smoke_platform_init(smoke_platform* platform,
         platform->pixels[pixel + 1u] = 0x5au;
         platform->pixels[pixel + 2u] = 0xc3u;
         platform->pixels[pixel + 3u] = 0xffu;
+        platform->alternate_pixels[pixel] =
+            (uint8_t)(0xf0u ^ (uint8_t)(pixel / 4u));
+        platform->alternate_pixels[pixel + 1u] = 0xa5u;
+        platform->alternate_pixels[pixel + 2u] = 0x3cu;
+        platform->alternate_pixels[pixel + 3u] = 0xffu;
     }
     atomic_init(&platform->capture_requests, 0u);
+    atomic_init(&platform->capture_variant, 0u);
     atomic_init(&platform->key_events, 0u);
     atomic_init(&platform->mouse_events, 0u);
     atomic_init(&platform->clipboard_offers, 0u);
     atomic_init(&platform->drive_presentations, 0u);
     atomic_init(&platform->releases, 0u);
+    atomic_init(&platform->refresh_requests, 0u);
+    atomic_init(&platform->output_suppressions, 0u);
+    atomic_init(&platform->output_resumptions, 0u);
     config->platform.capture.vtable = &smoke_capture_vtable;
     config->platform.capture.context = platform;
     config->platform.input.vtable = &smoke_input_vtable;
@@ -1052,6 +1085,34 @@ static void smoke_platform_init(smoke_platform* platform,
     config->platform.permission.context = platform;
     config->drive.enabled = 1;
     config->drive.read_only = 1;
+}
+
+static void smoke_host_trace_callback(
+    const server_host_trace_event* event,
+    void* user_data)
+{
+    smoke_platform* platform = (smoke_platform*)user_data;
+
+    if (!platform || !event)
+        return;
+    if (event->type == SERVER_HOST_TRACE_REFRESH_REQUEST)
+    {
+        atomic_fetch_add_explicit(&platform->refresh_requests,
+                                  1u,
+                                  memory_order_release);
+    }
+    else if (event->type ==
+             SERVER_HOST_TRACE_OUTPUT_SUPPRESSION)
+    {
+        atomic_uint* counter =
+            event->value ?
+                &platform->output_suppressions :
+                &platform->output_resumptions;
+
+        atomic_fetch_add_explicit(counter,
+                                  1u,
+                                  memory_order_release);
+    }
 }
 
 /*
@@ -2106,7 +2167,8 @@ static int smoke_run_profile(librdp_security_mode security,
                              const smoke_nla_identity* identity,
                              const char* bind_address,
                              const char* target,
-                             const smoke_gateway_profile* gateway_profile)
+                             const smoke_gateway_profile* gateway_profile,
+                             int exercise_output_control)
 {
     char cert_path[128] = {0};
     char key_path[128] = {0};
@@ -2140,11 +2202,18 @@ static int smoke_run_profile(librdp_security_mode security,
     uint16_t port = 0u;
     uint16_t default_port = 0u;
     unsigned int cycle = 0u;
+    unsigned int capture_before_refresh = 0u;
+    unsigned int refresh_requests_before = 0u;
+    unsigned int output_suppressions_before = 0u;
+    unsigned int output_resumptions_before = 0u;
+    unsigned int surface_events_before_resume = 0u;
+    uint8_t initial_pixel[4] = {0};
     int clipboard_sent = 0;
     int curl_environment_changed = 0;
     int input_sent = 0;
     int proxy_started = 0;
     int rdg_started = 0;
+    int output_control_stage = 0;
     int thread_started = 0;
     int result = 1;
     const librdp_gateway_mode gateway_mode =
@@ -2202,6 +2271,8 @@ static int smoke_run_profile(librdp_security_mode security,
     host_config.max_peers = 1u;
     host_config.dirty.frame_interval_ns = 0u;
     smoke_platform_init(&platform, &host_config);
+    host_config.trace_callback = smoke_host_trace_callback;
+    host_config.trace_user_data = &platform;
 
     settings = librdp_settings_new();
     REQUIRE(settings != NULL);
@@ -2611,6 +2682,96 @@ static int smoke_run_profile(librdp_security_mode security,
                     LIBRDP_STATUS_OK);
             input_sent = 1;
         }
+        if (exercise_output_control &&
+            output_control_stage == 0 &&
+            desktop_ready && events.surface_events > 0u &&
+            clipboard_sent && input_sent &&
+            atomic_load_explicit(&platform.clipboard_offers,
+                                 memory_order_acquire) > 0u &&
+            atomic_load_explicit(&platform.drive_presentations,
+                                 memory_order_acquire) > 0u)
+        {
+            const uint8_t* pixels =
+                librdp_surface_pixels(surface);
+
+            REQUIRE(pixels != NULL);
+            memcpy(initial_pixel, pixels, sizeof(initial_pixel));
+            refresh_requests_before =
+                atomic_load_explicit(&platform.refresh_requests,
+                                     memory_order_acquire);
+            output_suppressions_before =
+                atomic_load_explicit(
+                    &platform.output_suppressions,
+                    memory_order_acquire);
+            output_resumptions_before =
+                atomic_load_explicit(
+                    &platform.output_resumptions,
+                    memory_order_acquire);
+            capture_before_refresh =
+                atomic_load_explicit(&platform.capture_requests,
+                                     memory_order_acquire);
+            atomic_store_explicit(&platform.capture_variant,
+                                  1u,
+                                  memory_order_release);
+            REQUIRE(librdp_session_set_output_suppressed(
+                        session,
+                        1) == LIBRDP_STATUS_OK);
+            REQUIRE(librdp_session_refresh(session,
+                                           1u,
+                                           2u,
+                                           7u,
+                                           5u) ==
+                    LIBRDP_STATUS_OK);
+            output_control_stage = 1;
+        }
+        else if (exercise_output_control &&
+                 output_control_stage == 1 &&
+                 atomic_load_explicit(
+                     &platform.output_suppressions,
+                     memory_order_acquire) >
+                     output_suppressions_before &&
+                 atomic_load_explicit(
+                     &platform.refresh_requests,
+                     memory_order_acquire) >
+                     refresh_requests_before &&
+                 atomic_load_explicit(
+                     &platform.capture_requests,
+                     memory_order_acquire) >
+                     capture_before_refresh)
+        {
+            const uint8_t* pixels =
+                librdp_surface_pixels(surface);
+
+            REQUIRE(pixels != NULL);
+            REQUIRE(memcmp(pixels,
+                           initial_pixel,
+                           sizeof(initial_pixel)) == 0);
+            surface_events_before_resume = events.surface_events;
+            REQUIRE(librdp_session_set_output_suppressed(
+                        session,
+                        0) == LIBRDP_STATUS_OK);
+            output_control_stage = 2;
+        }
+        else if (exercise_output_control &&
+                 output_control_stage == 2 &&
+                 atomic_load_explicit(
+                     &platform.output_resumptions,
+                     memory_order_acquire) >
+                     output_resumptions_before)
+        {
+            const uint8_t* pixels =
+                librdp_surface_pixels(surface);
+
+            if (pixels &&
+                memcmp(pixels,
+                       platform.alternate_pixels,
+                       sizeof(initial_pixel)) == 0 &&
+                events.surface_events >
+                    surface_events_before_resume)
+            {
+                output_control_stage = 3;
+            }
+        }
         if (desktop_ready && events.surface_events > 0u &&
             clipboard_sent &&
             atomic_load_explicit(&platform.clipboard_offers,
@@ -2620,8 +2781,33 @@ static int smoke_run_profile(librdp_security_mode security,
             atomic_load_explicit(&platform.key_events,
                                  memory_order_acquire) >= 2u &&
             atomic_load_explicit(&platform.mouse_events,
-                                 memory_order_acquire) >= 1u)
+                                 memory_order_acquire) >= 1u &&
+            (!exercise_output_control ||
+             output_control_stage == 3))
             break;
+    }
+    if (cycle >= SMOKE_PUMP_LIMIT && exercise_output_control)
+    {
+        fprintf(stderr,
+                "output control timeout stage=%d capture=%u refresh=%u suppress=%u resume=%u surface=%u clipboard=%u drive=%u keys=%u mouse=%u\n",
+                output_control_stage,
+                atomic_load_explicit(&platform.capture_requests,
+                                     memory_order_acquire),
+                atomic_load_explicit(&platform.refresh_requests,
+                                     memory_order_acquire),
+                atomic_load_explicit(&platform.output_suppressions,
+                                     memory_order_acquire),
+                atomic_load_explicit(&platform.output_resumptions,
+                                     memory_order_acquire),
+                events.surface_events,
+                atomic_load_explicit(&platform.clipboard_offers,
+                                     memory_order_acquire),
+                atomic_load_explicit(&platform.drive_presentations,
+                                     memory_order_acquire),
+                atomic_load_explicit(&platform.key_events,
+                                     memory_order_acquire),
+                atomic_load_explicit(&platform.mouse_events,
+                                     memory_order_acquire));
     }
     REQUIRE(cycle < SMOKE_PUMP_LIMIT);
     REQUIRE(events.active);
@@ -2695,6 +2881,25 @@ static int smoke_run_profile(librdp_security_mode security,
                                  memory_order_acquire) >= 2u);
     REQUIRE(atomic_load_explicit(&platform.mouse_events,
                                  memory_order_acquire) >= 1u);
+    if (exercise_output_control)
+    {
+        REQUIRE(output_control_stage == 3);
+        REQUIRE(atomic_load_explicit(
+                    &platform.refresh_requests,
+                    memory_order_acquire) >
+                refresh_requests_before);
+        REQUIRE(atomic_load_explicit(
+                    &platform.output_suppressions,
+                    memory_order_acquire) >
+                output_suppressions_before);
+        REQUIRE(atomic_load_explicit(
+                    &platform.output_resumptions,
+                    memory_order_acquire) >
+                output_resumptions_before);
+        REQUIRE(trace_capture.output_suppressions >= 1u);
+        REQUIRE(trace_capture.output_resumptions >= 2u);
+        REQUIRE(trace_capture.refresh_requests >= 2u);
+    }
     if (gateway_profile &&
         gateway_profile->drop_stream != TEST_RDG_STREAM_NONE)
     {
@@ -3661,6 +3866,16 @@ int main(int argc, char** argv)
         return smoke_run_redirection(1, 0);
     if (argc == 2 && strcmp(argv[1], "redirection-loop") == 0)
         return smoke_run_redirection(0, 1);
+    if (argc == 2 && strcmp(argv[1], "output-control") == 0)
+    {
+        return smoke_run_profile(LIBRDP_SECURITY_STANDARD,
+                                 LIBRDP_STATUS_OK,
+                                 NULL,
+                                 "127.0.0.1",
+                                 "127.0.0.1",
+                                 NULL,
+                                 1);
+    }
     if (argc == 2)
         gateway_profile =
             smoke_gateway_profile_by_name(argv[1]);
@@ -3673,7 +3888,8 @@ int main(int argc, char** argv)
             &smoke_nla_default_identity,
             "127.0.0.1",
             "127.0.0.1",
-            gateway_profile);
+            gateway_profile,
+            0);
 #else
         return 77;
 #endif
@@ -3694,6 +3910,7 @@ int main(int argc, char** argv)
                 "timeout-credssp|standard-integrity|security-downgrade|"
                 "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake|"
                 "redirection-standard|redirection-tls|redirection-loop|"
+                "output-control|"
                 "gateway-http-connect|gateway-session-credentials|"
                 "gateway-no-session-credentials|gateway-auth-failure|"
                 "gateway-timeout|gateway-malformed|gateway-refused|"
@@ -3706,5 +3923,6 @@ int main(int argc, char** argv)
                              identity,
                              bind_address,
                              target,
-                             NULL);
+                             NULL,
+                             0);
 }

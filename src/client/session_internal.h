@@ -879,6 +879,10 @@ struct librdp_session
     uint32_t selected_protocol;
     uint32_t share_id;
     uint8_t reactivating;
+    uint8_t server_refresh_rect_supported;
+    uint8_t server_suppress_output_supported;
+    uint8_t output_suppressed;
+    uint8_t output_suppression_known;
     librdp_session_state state;
     librdp_session_lifecycle lifecycle;
     uint64_t activation_deadline_ns;

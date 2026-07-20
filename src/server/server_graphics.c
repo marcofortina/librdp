@@ -560,7 +560,23 @@ librdp_status librdp_server_peer_surface_present(librdp_server_peer* peer,
                                                  uint32_t width,
                                                  uint32_t height)
 {
-    librdp_status status = rdp_server_surface_present_rect(peer, x, y, width, height);
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (peer && peer->state == LIBRDP_SERVER_PEER_ACTIVE &&
+        peer->updates_suppressed &&
+        rdp_server_rect_valid(peer, x, y, width, height))
+    {
+        peer->surface_repaint_pending = 1u;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.surface.present.deferred",
+                        "x=%u y=%u width=%u height=%u",
+                        x,
+                        y,
+                        width,
+                        height);
+        return LIBRDP_STATUS_OK;
+    }
+    status = rdp_server_surface_present_rect(peer, x, y, width, height);
 
     if (peer && status != LIBRDP_STATUS_OK)
         rdp_server_record_status(peer,

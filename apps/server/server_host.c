@@ -1684,10 +1684,39 @@ static void server_host_peer_input(librdp_server_peer* peer,
                                    const librdp_server_input_event* event,
                                    void* user_data)
 {
+    server_host_peer_slot* slot =
+        (server_host_peer_slot*)user_data;
+
     (void)peer;
-    (void)server_host_dispatch_peer_input(
-        (server_host_peer_slot*)user_data,
-        event);
+    if (!slot || !slot->host || !event)
+        return;
+    if (event->type == LIBRDP_SERVER_INPUT_REFRESH_RECT)
+    {
+        if (slot->host->provider_states[
+                SERVER_PLATFORM_PROVIDER_CAPTURE] ==
+            SERVER_HOST_PROVIDER_READY)
+            slot->host->capture_pending = 1u;
+        server_host_trace_emit(slot->host,
+                               SERVER_HOST_TRACE_REFRESH_REQUEST,
+                               slot,
+                               LIBRDP_STATUS_OK,
+                               ((uint64_t)event->x << 32) |
+                                   event->y,
+                               ((uint64_t)event->width << 32) |
+                                   event->height);
+        return;
+    }
+    if (event->type == LIBRDP_SERVER_INPUT_SUPPRESS_OUTPUT)
+    {
+        server_host_trace_emit(slot->host,
+                               SERVER_HOST_TRACE_OUTPUT_SUPPRESSION,
+                               slot,
+                               LIBRDP_STATUS_OK,
+                               event->flags ? 0u : 1u,
+                               1u);
+        return;
+    }
+    (void)server_host_dispatch_peer_input(slot, event);
 }
 
 static void server_host_peer_clipboard(

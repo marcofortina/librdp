@@ -763,23 +763,55 @@ static int build_demand_active_packet(rdp_buffer* out)
     rdp_buffer_init(&slow);
     rdp_buffer_init(&mcs);
 
-    ok = rdp_buffer_append_u16_le(&caps, 1) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u16_le(&caps, 0) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u16_le(&caps, 1) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u16_le(&caps, 8) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u32_le(&caps, 0) == LIBRDP_STATUS_OK;
+    ok = rdp_buffer_append_u16_le(&caps, 1u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 0u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps,
+                                  RDP_CAPABILITY_TYPE_GENERAL) ==
+             LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 24u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 1u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 3u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 0x0200u) ==
+             LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 0u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 0u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 0x0404u) ==
+             LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 0u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 0u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 0u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u8(&caps, 1u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u8(&caps, 1u) == LIBRDP_STATUS_OK;
     total = 6u + 4u + 2u + 2u + sizeof(source) + caps.length + 4u;
     if (ok)
-        ok = rdp_buffer_append_u16_le(&slow, (uint16_t)total) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&slow, (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE)) ==
+        ok = rdp_buffer_append_u16_le(&slow,
+                                      (uint16_t)total) ==
                  LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&slow, 1002) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u32_le(&slow, 0x10203040u) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&slow, (uint16_t)sizeof(source)) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&slow, (uint16_t)caps.length) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append(&slow, source, sizeof(source)) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append(&slow, caps.data, caps.length) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u32_le(&slow, 0) == LIBRDP_STATUS_OK;
+             rdp_buffer_append_u16_le(
+                 &slow,
+                 (uint16_t)(RDP_SLOWPATH_PDU_VERSION |
+                            RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE)) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, 1002u) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u32_le(&slow, 0x10203040u) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow,
+                                      (uint16_t)sizeof(source)) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow,
+                                      (uint16_t)caps.length) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append(&slow,
+                               source,
+                               sizeof(source)) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append(&slow,
+                               caps.data,
+                               caps.length) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u32_le(&slow, 0u) ==
+                 LIBRDP_STATUS_OK;
     if (ok)
         ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
              rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&

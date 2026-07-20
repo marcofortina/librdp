@@ -38,7 +38,7 @@
 @property(nonatomic, assign) CocoaViewerController* controller;
 @end
 
-@interface CocoaViewerController : NSObject
+@interface CocoaViewerController : NSObject<NSWindowDelegate>
 {
     librdp_audio_format _audioOutputFormats[COCOA_AUDIO_OUTPUT_FORMATS_MAX];
     uint8_t _audioInputBuffer[COCOA_AUDIO_INPUT_BUFFER_BYTES];
@@ -82,6 +82,7 @@
 - (void)applyPointerEvent:(const librdp_pointer_event*)pointer;
 - (void)handleClipboardEnvelope:(const librdp_event_envelope*)envelope;
 - (void)publishLocalPasteboardIfChanged;
+- (void)setOutputSuppressed:(BOOL)suppressed;
 @end
 
 static void cocoa_viewer_graphics_callback(librdp_session* session,
@@ -415,6 +416,7 @@ static void cocoa_viewer_session_status(librdp_status status,
                                                   defer:NO];
     [self.window setTitle:@"librdp-viewer"];
     [self.window setContentView:self.view];
+    [self.window setDelegate:self];
     [self.window setAcceptsMouseMovedEvents:YES];
     [self.window center];
     self.currentCursor = [NSCursor arrowCursor];
@@ -516,6 +518,38 @@ static void cocoa_viewer_session_status(librdp_status status,
 {
     self.dirty = YES;
     [self.view setNeedsDisplay:YES];
+}
+
+- (void)setOutputSuppressed:(BOOL)suppressed
+{
+    librdp_status status = LIBRDP_STATUS_STATE;
+
+    if (self.session)
+    {
+        status = librdp_session_set_output_suppressed(
+            self.session,
+            suppressed ? 1 : 0);
+    }
+    if (status != LIBRDP_STATUS_OK &&
+        status != LIBRDP_STATUS_STATE &&
+        status != LIBRDP_STATUS_UNSUPPORTED)
+    {
+        fprintf(stderr,
+                "output update failed: %s\n",
+                librdp_status_string(status));
+    }
+}
+
+- (void)windowDidMiniaturize:(NSNotification*)notification
+{
+    (void)notification;
+    [self setOutputSuppressed:YES];
+}
+
+- (void)windowDidDeminiaturize:(NSNotification*)notification
+{
+    (void)notification;
+    [self setOutputSuppressed:NO];
 }
 
 - (size_t)audioInputChunkForOpen:(const librdp_audio_input_open_event*)open
