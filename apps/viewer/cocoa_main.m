@@ -21,6 +21,7 @@
 #include "client_callbacks.h"
 #include "cocoa_cli.h"
 #include "cocoa_media.h"
+#include "cocoa_render.h"
 #include "cocoa_session_loop.h"
 
 #include <ctype.h>
@@ -248,14 +249,7 @@ static void cocoa_viewer_session_status(librdp_status status,
 - (void)drawRect:(NSRect)dirtyRect
 {
     const librdp_surface* surface = NULL;
-    librdp_surface_mapping mapping;
-    CGColorSpaceRef color_space = NULL;
-    CGDataProviderRef provider = NULL;
-    CGImageRef image = NULL;
     CGRect destination;
-    CGBitmapInfo bitmap_info = (CGBitmapInfo)((uint32_t)kCGBitmapByteOrder32Little |
-                                             (uint32_t)kCGImageAlphaNoneSkipFirst);
-    librdp_status status = LIBRDP_STATUS_OK;
 
     (void)dirtyRect;
     if (!self.controller || !self.controller.session)
@@ -263,41 +257,15 @@ static void cocoa_viewer_session_status(librdp_status status,
     surface = librdp_session_get_surface(self.controller.session);
     if (!surface)
         return;
-    if (librdp_surface_mapping_init(&mapping) != LIBRDP_STATUS_OK)
-        return;
-    status = librdp_surface_map((librdp_surface*)surface, LIBRDP_SURFACE_ACCESS_READ, &mapping);
-    if (status != LIBRDP_STATUS_OK || !mapping.pixels)
-        return;
-
-    color_space = CGColorSpaceCreateDeviceRGB();
-    provider = CGDataProviderCreateWithData(NULL,
-                                            mapping.pixels,
-                                            mapping.stride * mapping.height,
-                                            NULL);
-    if (color_space && provider)
-        image = CGImageCreate(mapping.width,
-                              mapping.height,
-                              8,
-                              32,
-                              mapping.stride,
-                              color_space,
-                              bitmap_info,
-                              provider,
-                              NULL,
-                              false,
-                              kCGRenderingIntentDefault);
-    if (image)
-    {
-        destination = CGRectMake(0.0, 0.0, NSWidth(self.bounds), NSHeight(self.bounds));
-        CGContextDrawImage((CGContextRef)[[NSGraphicsContext currentContext] CGContext], destination, image);
-    }
-    if (image)
-        CGImageRelease(image);
-    if (provider)
-        CGDataProviderRelease(provider);
-    if (color_space)
-        CGColorSpaceRelease(color_space);
-    (void)librdp_surface_unmap((librdp_surface*)surface, &mapping);
+    destination = CGRectMake(
+        0.0,
+        0.0,
+        NSWidth(self.bounds),
+        NSHeight(self.bounds));
+    (void)cocoa_render_surface(
+        (CGContextRef)[[NSGraphicsContext currentContext] CGContext],
+        (librdp_surface*)surface,
+        destination);
 }
 
 - (void)mouseMoved:(NSEvent*)event
