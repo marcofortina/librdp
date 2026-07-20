@@ -510,6 +510,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke graphics-planar)
     add_test(NAME server_client_smoke_graphics_progressive
              COMMAND test_server_client_smoke graphics-progressive)
+    add_test(NAME server_client_smoke_graphics_lifecycle
+             COMMAND test_server_client_smoke graphics-lifecycle)
     add_test(NAME server_client_smoke_security_downgrade
              COMMAND test_server_client_smoke security-downgrade)
     add_test(NAME server_client_smoke_tls_untrusted
@@ -593,6 +595,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_fastpath_rfx
         server_client_smoke_graphics_planar
         server_client_smoke_graphics_progressive
+        server_client_smoke_graphics_lifecycle
         server_client_smoke_security_downgrade
         server_client_smoke_tls_untrusted
         server_client_smoke_tls_hostname
