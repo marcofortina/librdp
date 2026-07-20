@@ -1275,7 +1275,7 @@ static librdp_status rdp_session_gdi_stream_bitmap_blit(librdp_session* session)
     rect.height = (uint16_t)session->gdi_stream_bitmap.height;
     rect.bits_per_pixel = (uint16_t)session->gdi_stream_bitmap.bits_per_pixel;
     rect.flags = (session->gdi_stream_bitmap.flags & RDP_GDI_STREAM_BITMAP_COMPRESSED) != 0 ?
-                 RDP_SESSION_BITMAP_FLAG_COMPRESSED : 0;
+                 RDP_BITMAP_FLAG_COMPRESSED : 0;
     rect.data = session->gdi_stream_bitmap.bitmap_data.data;
     rect.data_len = (uint32_t)session->gdi_stream_bitmap.bitmap_data.length;
 
@@ -4163,9 +4163,9 @@ static librdp_status rdp_session_gdi_store_cache_bitmap(librdp_session* session,
     rect.width = (uint16_t)order->width;
     rect.height = (uint16_t)order->height;
     rect.bits_per_pixel = (uint16_t)order->bits_per_pixel;
-    rect.flags = order->compressed ? RDP_SESSION_BITMAP_FLAG_COMPRESSED : 0;
+    rect.flags = order->compressed ? RDP_BITMAP_FLAG_COMPRESSED : 0;
     if (order->compressed && !order->bitmap_data_includes_compression_header)
-        rect.flags |= RDP_GDI_NO_BITMAP_COMPRESSION_HEADER;
+        rect.flags |= RDP_BITMAP_FLAG_NO_COMPRESSION_HEADER;
     rect.data = order->bitmap_data;
     rect.data_len = order->bitmap_data_len;
 

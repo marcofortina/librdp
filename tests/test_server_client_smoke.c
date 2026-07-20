@@ -20,6 +20,7 @@
 #include "test_rdg_gateway.h"
 #include "test_server_support.h"
 
+#include "graphics/bitmap.h"
 #include "protocol/fastpath.h"
 #include "protocol/session_selection.h"
 #include "server/server_internal.h"
@@ -127,6 +128,12 @@ static const uint8_t smoke_alternate_frame_sha256[SMOKE_SHA256_BYTES] = {
     0x98, 0x87, 0xb6, 0xca, 0x2e, 0x2e, 0x55, 0x19,
     0x40, 0x42, 0xc0, 0x0e, 0x14, 0xe6, 0xa9, 0x77,
     0x96, 0x55, 0x26, 0xbc, 0x9e, 0x7f, 0xfd, 0xf5,
+};
+static const uint8_t smoke_fastpath_bitmap_sha256[SMOKE_SHA256_BYTES] = {
+    0xbe, 0x9b, 0x92, 0xcb, 0xbe, 0xa1, 0xde, 0x7b,
+    0xac, 0xb2, 0x82, 0x48, 0xc0, 0x1d, 0x22, 0xa1,
+    0x66, 0xbe, 0x42, 0x44, 0x59, 0xd9, 0x83, 0xc5,
+    0x82, 0x6a, 0x54, 0x7c, 0x8f, 0x9d, 0xed, 0x98,
 };
 
 typedef struct smoke_platform
@@ -328,6 +335,16 @@ typedef struct smoke_integrity_peer
     librdp_status status;
 } smoke_integrity_peer;
 
+typedef struct smoke_fastpath_bitmap_peer
+{
+    librdp_server_config config;
+    pthread_t thread;
+    atomic_uint port;
+    atomic_uint packet_sent;
+    atomic_uint client_closed;
+    librdp_status status;
+} smoke_fastpath_bitmap_peer;
+
 typedef struct smoke_redirection_peer
 {
     librdp_server_config config;
@@ -402,6 +419,7 @@ typedef struct smoke_trace_capture
     unsigned int redirection_reconnects;
     unsigned int redirection_loops;
     unsigned int slowpath_bitmap_updates;
+    unsigned int fastpath_bitmap_updates;
     unsigned int refresh_requests;
     unsigned int output_suppressions;
     unsigned int output_resumptions;
@@ -625,6 +643,10 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event,
                     "rdp.slowpath.bitmap_update") == 0)
         capture->slowpath_bitmap_updates++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "rdp.fastpath.bitmap_update") == 0)
+        capture->fastpath_bitmap_updates++;
     else if (record->event &&
              strcmp(record->event,
                     "client.active.refresh_rect") == 0)
@@ -1506,9 +1528,9 @@ cleanup:
     return NULL;
 }
 
-static librdp_status smoke_integrity_send_all(int fd,
-                                              const uint8_t* data,
-                                              size_t length)
+static librdp_status smoke_send_all(int fd,
+                                    const uint8_t* data,
+                                    size_t length)
 {
     size_t offset = 0u;
 #ifdef MSG_NOSIGNAL
@@ -1605,39 +1627,38 @@ static librdp_status smoke_integrity_send_slowpath(
     return status;
 }
 
-static librdp_status smoke_integrity_send_fastpath(
-    librdp_server_peer* peer)
+/*
+ * Wrap one server-to-client fast-path update with the active Standard
+ * Security context. Integrity fixtures may corrupt the completed signature;
+ * functional fixtures send the exact authenticated packet.
+ */
+static librdp_status smoke_standard_send_fastpath(
+    librdp_server_peer* peer,
+    const uint8_t* updates,
+    size_t updates_len,
+    int corrupt_signature)
 {
-    rdp_buffer update;
     rdp_buffer encrypted;
     rdp_buffer wire;
-    uint8_t signature[8];
+    uint8_t signature[8] = {0};
     size_t signature_offset = 0u;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!peer || !peer->standard_security_ready)
         return LIBRDP_STATUS_STATE;
-    rdp_buffer_init(&update);
+    if (!updates && updates_len > 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     rdp_buffer_init(&encrypted);
     rdp_buffer_init(&wire);
-    status = rdp_fastpath_write_update(
-        &update,
-        RDP_FASTPATH_UPDATE_SYNCHRONIZE,
-        RDP_FASTPATH_FRAGMENT_SINGLE,
-        0u,
-        0u,
-        NULL,
-        0u);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_security_mac_signature(
-            &peer->standard_security,
-            update.data,
-            update.length,
-            signature);
+    status = rdp_security_mac_signature(
+        &peer->standard_security,
+        updates,
+        updates_len,
+        signature);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append(&encrypted,
-                                   update.data,
-                                   update.length);
+                                   updates,
+                                   updates_len);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_security_encrypt_payload(
             &peer->standard_security,
@@ -1660,15 +1681,113 @@ static librdp_status smoke_integrity_send_fastpath(
                                    encrypted.length);
     if (status == LIBRDP_STATUS_OK)
     {
-        wire.data[signature_offset] ^= 0x40u;
-        status = smoke_integrity_send_all(peer->fd,
-                                          wire.data,
-                                          wire.length);
+        if (corrupt_signature)
+            wire.data[signature_offset] ^= 0x40u;
+        status = smoke_send_all(peer->fd,
+                                wire.data,
+                                wire.length);
     }
     OPENSSL_cleanse(signature, sizeof(signature));
     rdp_buffer_free(&wire);
     rdp_buffer_free(&encrypted);
+    return status;
+}
+
+static librdp_status smoke_integrity_send_fastpath(
+    librdp_server_peer* peer)
+{
+    rdp_buffer update;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&update);
+    status = rdp_fastpath_write_update(
+        &update,
+        RDP_FASTPATH_UPDATE_SYNCHRONIZE,
+        RDP_FASTPATH_FRAGMENT_SINGLE,
+        0u,
+        0u,
+        NULL,
+        0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = smoke_standard_send_fastpath(peer,
+                                              update.data,
+                                              update.length,
+                                              1);
     rdp_buffer_free(&update);
+    return status;
+}
+
+/*
+ * Send one authenticated fast-path bitmap update containing both raw
+ * bottom-up pixels and RLE pixels. The rectangles are disjoint so the final
+ * whole-surface digest proves that each decoder reached the normalized
+ * framebuffer.
+ */
+static librdp_status smoke_fastpath_bitmap_send(
+    librdp_server_peer* peer)
+{
+    static const uint8_t raw_pixels[] = {
+        0x90u, 0x80u, 0x70u, 0xffu,
+        0x60u, 0x50u, 0x40u, 0xffu,
+        0x30u, 0x20u, 0x10u, 0xffu,
+        0xc0u, 0xb0u, 0xa0u, 0xffu,
+    };
+    static const uint8_t rle_pixels[] = {
+        0xfdu, 0xfeu, 0xfeu, 0xfdu,
+    };
+    rdp_bitmap_rect rects[2];
+    rdp_buffer bitmap;
+    rdp_buffer update;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(rects, 0, sizeof(rects));
+    rects[0].dest_left = 3u;
+    rects[0].dest_top = 5u;
+    rects[0].dest_right = 4u;
+    rects[0].dest_bottom = 6u;
+    rects[0].width = 2u;
+    rects[0].height = 2u;
+    rects[0].bits_per_pixel = 32u;
+    rects[0].data = raw_pixels;
+    rects[0].data_len = (uint32_t)sizeof(raw_pixels);
+    rects[1].dest_left = 9u;
+    rects[1].dest_top = 7u;
+    rects[1].dest_right = 10u;
+    rects[1].dest_bottom = 8u;
+    rects[1].width = 2u;
+    rects[1].height = 2u;
+    rects[1].bits_per_pixel = 32u;
+    rects[1].flags = RDP_BITMAP_FLAG_COMPRESSED |
+                     RDP_BITMAP_FLAG_NO_COMPRESSION_HEADER;
+    rects[1].data = rle_pixels;
+    rects[1].data_len = (uint32_t)sizeof(rle_pixels);
+
+    rdp_buffer_init(&bitmap);
+    rdp_buffer_init(&update);
+    status = rdp_bitmap_write_fastpath_update(
+        &bitmap,
+        rects,
+        (uint16_t)(sizeof(rects) / sizeof(rects[0])));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_fastpath_write_update(
+            &update,
+            RDP_FASTPATH_UPDATE_BITMAP,
+            RDP_FASTPATH_FRAGMENT_SINGLE,
+            0u,
+            0u,
+            bitmap.data,
+            bitmap.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = smoke_standard_send_fastpath(peer,
+                                              update.data,
+                                              update.length,
+                                              0);
+    rdp_buffer_free(&update);
+    rdp_buffer_free(&bitmap);
     return status;
 }
 
@@ -1717,6 +1836,46 @@ static int smoke_integrity_wait_for_client_close(int fd)
 }
 
 /*
+ * Accept one loopback peer and drive the public server lifecycle until
+ * activation. Callers retain ownership of the server and returned peer.
+ */
+static librdp_status smoke_server_accept_active(
+    librdp_server* server,
+    librdp_server_peer** peer)
+{
+    unsigned int attempt = 0u;
+    librdp_status status = LIBRDP_STATUS_TIMEOUT;
+
+    if (!server || !peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *peer = NULL;
+    for (attempt = 0u; attempt < 500u && !*peer; attempt++)
+    {
+        status = librdp_server_accept(server, 20, peer);
+        if (status == LIBRDP_STATUS_TIMEOUT)
+            continue;
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    if (!*peer)
+        return LIBRDP_STATUS_TIMEOUT;
+    for (attempt = 0u; attempt < 500u; attempt++)
+    {
+        if (librdp_server_peer_get_state(*peer) ==
+            LIBRDP_SERVER_PEER_ACTIVE)
+            return LIBRDP_STATUS_OK;
+        status = librdp_server_peer_run_once(*peer, 20);
+        if (status != LIBRDP_STATUS_OK &&
+            status != LIBRDP_STATUS_TIMEOUT)
+            return status;
+    }
+    return librdp_server_peer_get_state(*peer) ==
+                   LIBRDP_SERVER_PEER_ACTIVE
+               ? LIBRDP_STATUS_OK
+               : LIBRDP_STATUS_TIMEOUT;
+}
+
+/*
  * Complete a real Standard Security activation, inject exactly one corrupted
  * encrypted packet, and retain the peer until the client closes its socket.
  * Each fixture instance owns one connection so cipher counters cannot leak
@@ -1728,7 +1887,6 @@ static void* smoke_integrity_peer_main(void* user_data)
         (smoke_integrity_peer*)user_data;
     librdp_server* server = NULL;
     librdp_server_peer* peer = NULL;
-    unsigned int attempt = 0u;
 
     if (!fixture)
         return NULL;
@@ -1745,39 +1903,74 @@ static void* smoke_integrity_peer_main(void* user_data)
     atomic_store_explicit(&fixture->port,
                           librdp_server_local_port(server),
                           memory_order_release);
-    for (attempt = 0u; attempt < 500u && !peer; attempt++)
-    {
-        fixture->status = librdp_server_accept(server, 20, &peer);
-        if (fixture->status == LIBRDP_STATUS_TIMEOUT)
-            continue;
-        if (fixture->status != LIBRDP_STATUS_OK)
-            goto cleanup;
-    }
-    if (!peer)
+    fixture->status = smoke_server_accept_active(server, &peer);
+    if (fixture->status != LIBRDP_STATUS_OK)
         goto cleanup;
-    for (attempt = 0u; attempt < 500u; attempt++)
-    {
-        if (librdp_server_peer_get_state(peer) ==
-            LIBRDP_SERVER_PEER_ACTIVE)
-            break;
-        fixture->status = librdp_server_peer_run_once(peer, 20);
-        if (fixture->status == LIBRDP_STATUS_TIMEOUT)
-            continue;
-        if (fixture->status != LIBRDP_STATUS_OK)
-            goto cleanup;
-    }
-    if (librdp_server_peer_get_state(peer) !=
-        LIBRDP_SERVER_PEER_ACTIVE)
-    {
-        fixture->status = LIBRDP_STATUS_TIMEOUT;
-        goto cleanup;
-    }
     if (fixture->tamper == SMOKE_INTEGRITY_FASTPATH_MAC)
         fixture->status = smoke_integrity_send_fastpath(peer);
     else
         fixture->status = smoke_integrity_send_slowpath(
             peer,
             fixture->tamper);
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    atomic_store_explicit(&fixture->packet_sent,
+                          1u,
+                          memory_order_release);
+    if (!smoke_integrity_wait_for_client_close(peer->fd))
+    {
+        fixture->status = LIBRDP_STATUS_TIMEOUT;
+        goto cleanup;
+    }
+    atomic_store_explicit(&fixture->client_closed,
+                          1u,
+                          memory_order_release);
+    fixture->status = LIBRDP_STATUS_OK;
+
+cleanup:
+    if (peer)
+    {
+        (void)librdp_server_peer_close(peer);
+        librdp_server_peer_free(peer);
+    }
+    if (server)
+    {
+        (void)librdp_server_close(server);
+        librdp_server_free(server);
+    }
+    return NULL;
+}
+
+/*
+ * Host the deterministic fast-path bitmap fixture until the client has
+ * verified the framebuffer and closed the transport.
+ */
+static void* smoke_fastpath_bitmap_peer_main(void* user_data)
+{
+    smoke_fastpath_bitmap_peer* fixture =
+        (smoke_fastpath_bitmap_peer*)user_data;
+    librdp_server* server = NULL;
+    librdp_server_peer* peer = NULL;
+
+    if (!fixture)
+        return NULL;
+    fixture->status = LIBRDP_STATUS_TIMEOUT;
+    server = librdp_server_new(&fixture->config);
+    if (!server)
+    {
+        fixture->status = LIBRDP_STATUS_NO_MEMORY;
+        return NULL;
+    }
+    fixture->status = librdp_server_listen(server);
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    atomic_store_explicit(&fixture->port,
+                          librdp_server_local_port(server),
+                          memory_order_release);
+    fixture->status = smoke_server_accept_active(server, &peer);
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    fixture->status = smoke_fastpath_bitmap_send(peer);
     if (fixture->status != LIBRDP_STATUS_OK)
         goto cleanup;
     atomic_store_explicit(&fixture->packet_sent,
@@ -4069,6 +4262,122 @@ static int smoke_run_standard_integrity(void)
     return 0;
 }
 
+/*
+ * Verify authenticated fast-path delivery against a whole-frame golden hash.
+ * The fixture exercises raw and RLE bitmap rectangles through the public
+ * client runtime rather than direct parser calls.
+ */
+static int smoke_run_fastpath_bitmap(void)
+{
+    smoke_fastpath_bitmap_peer fixture;
+    smoke_client_events events;
+    smoke_trace_capture trace_capture;
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint16_t port = 0u;
+    unsigned int cycle = 0u;
+    int thread_started = 0;
+    int result = 1;
+
+    memset(&fixture, 0, sizeof(fixture));
+    memset(&events, 0, sizeof(events));
+    memset(&trace_capture, 0, sizeof(trace_capture));
+    atomic_init(&fixture.port, 0u);
+    atomic_init(&fixture.packet_sent, 0u);
+    atomic_init(&fixture.client_closed, 0u);
+    fixture.status = LIBRDP_STATUS_AGAIN;
+    REQUIRE(librdp_server_config_init(&fixture.config) ==
+            LIBRDP_STATUS_OK);
+    fixture.config.bind_address = "127.0.0.1";
+    fixture.config.security_mode = LIBRDP_SECURITY_STANDARD;
+    fixture.config.width = SMOKE_WIDTH;
+    fixture.config.height = SMOKE_HEIGHT;
+    REQUIRE(pthread_create(&fixture.thread,
+                           NULL,
+                           smoke_fastpath_bitmap_peer_main,
+                           &fixture) == 0);
+    thread_started = 1;
+    REQUIRE(smoke_wait_for_port(&fixture.port, &port));
+
+    settings = librdp_settings_new();
+    REQUIRE(settings != NULL);
+    REQUIRE(librdp_settings_set_target(settings, "127.0.0.1") ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_port(settings, port) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_security_mode(
+                settings,
+                LIBRDP_SECURITY_STANDARD) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_desktop_size(settings,
+                                             SMOKE_WIDTH,
+                                             SMOKE_HEIGHT) ==
+            LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    REQUIRE(session != NULL);
+    librdp_session_set_event_callback(session,
+                                      smoke_client_event,
+                                      &events);
+    REQUIRE(librdp_trace_policy_init(&trace_policy) ==
+            LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = smoke_trace_callback;
+    trace_policy.callback_user_data = &trace_capture;
+    trace_policy.trace_id = "fastpath-bitmap";
+    trace_capture.target = "127.0.0.1";
+    trace_capture.port = port;
+    REQUIRE(librdp_session_set_trace_policy(session,
+                                            &trace_policy) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (cycle = 0u; cycle < SMOKE_PUMP_LIMIT; cycle++)
+    {
+        status = librdp_session_run_once(session, 50);
+        REQUIRE(status == LIBRDP_STATUS_OK);
+        if (events.active_seen &&
+            events.surface_events >= 2u &&
+            trace_capture.fastpath_bitmap_updates == 1u)
+            break;
+    }
+    REQUIRE(cycle < SMOKE_PUMP_LIMIT);
+    REQUIRE(events.active);
+    REQUIRE(events.error_events == 0u);
+    REQUIRE(events.surface_events >= 2u);
+    REQUIRE(trace_capture.fastpath_bitmap_updates == 1u);
+    REQUIRE(trace_capture.slowpath_bitmap_updates == 0u);
+    REQUIRE(trace_capture.integrity_failures == 0u);
+    REQUIRE(trace_capture.fastpath_integrity_failures == 0u);
+    REQUIRE(smoke_frame_matches_sha256(
+        librdp_surface_pixels(librdp_session_get_surface(session)),
+        (size_t)librdp_surface_stride(
+            librdp_session_get_surface(session)) *
+            librdp_surface_height(
+                librdp_session_get_surface(session)),
+        smoke_fastpath_bitmap_sha256));
+    REQUIRE(librdp_session_disconnect(session) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(pthread_join(fixture.thread, NULL) == 0);
+    thread_started = 0;
+    REQUIRE(fixture.status == LIBRDP_STATUS_OK);
+    REQUIRE(atomic_load_explicit(&fixture.packet_sent,
+                                 memory_order_acquire) == 1u);
+    REQUIRE(atomic_load_explicit(&fixture.client_closed,
+                                 memory_order_acquire) == 1u);
+    result = 0;
+
+cleanup:
+    librdp_session_free(session);
+    session = NULL;
+    if (thread_started)
+        (void)pthread_join(fixture.thread, NULL);
+    librdp_settings_free(settings);
+    return result;
+}
+
 static int smoke_parse_security(const char* value,
                                 librdp_security_mode* security,
                                 librdp_status* expected_status,
@@ -4183,6 +4492,8 @@ int main(int argc, char** argv)
         return smoke_run_credssp_timeout();
     if (argc == 2 && strcmp(argv[1], "standard-integrity") == 0)
         return smoke_run_standard_integrity();
+    if (argc == 2 && strcmp(argv[1], "fastpath-bitmap") == 0)
+        return smoke_run_fastpath_bitmap();
     if (argc == 2 && strcmp(argv[1], "security-downgrade") == 0)
         return smoke_run_security_error(
             SMOKE_SECURITY_PEER_DOWNGRADE,
@@ -4325,7 +4636,8 @@ int main(int argc, char** argv)
                 "standard|standard-dns|standard-ipv6|tls|nla|"
                 "nla-invalid|nla-expired|nla-locked|"
                 "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8|"
-                "timeout-credssp|standard-integrity|security-downgrade|"
+                "timeout-credssp|standard-integrity|fastpath-bitmap|"
+                "security-downgrade|"
                 "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake|"
                 "redirection-standard|redirection-tls|redirection-loop|"
                 "lifecycle-stress|output-control|"

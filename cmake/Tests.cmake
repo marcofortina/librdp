@@ -500,6 +500,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke timeout-credssp)
     add_test(NAME server_client_smoke_standard_integrity
              COMMAND test_server_client_smoke standard-integrity)
+    add_test(NAME server_client_smoke_fastpath_bitmap
+             COMMAND test_server_client_smoke fastpath-bitmap)
     add_test(NAME server_client_smoke_security_downgrade
              COMMAND test_server_client_smoke security-downgrade)
     add_test(NAME server_client_smoke_tls_untrusted
@@ -578,6 +580,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_nla_utf8
         server_client_smoke_credssp_timeout
         server_client_smoke_standard_integrity
+        server_client_smoke_fastpath_bitmap
         server_client_smoke_security_downgrade
         server_client_smoke_tls_untrusted
         server_client_smoke_tls_hostname

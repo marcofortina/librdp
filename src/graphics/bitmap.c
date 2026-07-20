@@ -23,8 +23,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define RDP_BITMAP_FLAG_COMPRESSED 0x0001u
-#define RDP_BITMAP_FLAG_NO_COMPRESSION_HEADER 0x0400u
 #define RDP_BITMAP_RLE_BG_RUN 0x00u
 #define RDP_BITMAP_RLE_FG_RUN 0x01u
 #define RDP_BITMAP_RLE_FGBG_IMAGE 0x02u
