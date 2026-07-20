@@ -876,6 +876,7 @@ struct librdp_session
     uint32_t share_id;
     librdp_session_state state;
     librdp_session_lifecycle lifecycle;
+    uint64_t activation_deadline_ns;
     librdp_error last_error;
     pthread_mutex_t owner_mutex;
     pthread_mutex_t transport_cancel_mutex;

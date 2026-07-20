@@ -22,6 +22,7 @@
 
 #include <librdp/error.h>
 
+librdp_status rdp_tcp_wait_connected(int fd, int timeout_ms);
 librdp_status rdp_tcp_connect(const char* host, uint16_t port, int timeout_ms, int* out_fd);
 
 #endif

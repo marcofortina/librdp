@@ -2760,7 +2760,8 @@ int start_handshake_server_full(uint16_t* port,
                                        int dynamic_channel_scenario,
                                        int gdi_scenario,
                                        int license_scenario,
-                                       int clipboard_scenario)
+                                       int clipboard_scenario,
+                                       int handshake_scenario)
 {
     int fd = -1;
     struct sockaddr_in addr;
@@ -2774,6 +2775,12 @@ int start_handshake_server_full(uint16_t* port,
         gdi_scenario != GDI_SCENARIO_ALTSEC_RUNTIME &&
         gdi_scenario != GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION &&
         gdi_scenario != GDI_SCENARIO_DESKTOP_COMPOSITION)
+        return 0;
+    if ((handshake_scenario != HANDSHAKE_SCENARIO_NORMAL &&
+         handshake_scenario != HANDSHAKE_SCENARIO_STALL_ACTIVATION &&
+         handshake_scenario != HANDSHAKE_SCENARIO_GRACEFUL_IDLE_EOF) ||
+        (handshake_scenario == HANDSHAKE_SCENARIO_STALL_ACTIVATION &&
+         encrypted))
         return 0;
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -2909,6 +2916,19 @@ int start_handshake_server_full(uint16_t* port,
                 (void)write_exact_fd(client, join_static_confirm, sizeof(join_static_confirm));
             }
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+            if (handshake_scenario ==
+                HANDSHAKE_SCENARIO_STALL_ACTIVATION)
+            {
+                ssize_t got = 0;
+
+                do
+                {
+                    got = read(client, input, sizeof(input));
+                } while (got > 0 || (got < 0 && errno == EINTR));
+                if (got < 0)
+                    _exit(4);
+                goto done_connection;
+            }
             if (encrypted)
             {
                 if (!validate_security_exchange(input, input_len))
@@ -3353,9 +3373,26 @@ int start_handshake_server_full(uint16_t* port,
                 }
             }
 done_connection:
-            ts.tv_sec = 1;
-            ts.tv_nsec = 0;
-            (void)nanosleep(&ts, NULL);
+            if (handshake_scenario ==
+                HANDSHAKE_SCENARIO_GRACEFUL_IDLE_EOF)
+            {
+                ssize_t got = 0;
+
+                if (shutdown(client, SHUT_WR) != 0)
+                    _exit(5);
+                do
+                {
+                    got = read(client, input, sizeof(input));
+                } while (got > 0 || (got < 0 && errno == EINTR));
+                if (got < 0)
+                    _exit(5);
+            }
+            else
+            {
+                ts.tv_sec = 1;
+                ts.tv_nsec = 0;
+                (void)nanosleep(&ts, NULL);
+            }
             close(client);
             rdp_buffer_free(&error_update);
             rdp_buffer_free(&static_last);
@@ -3407,7 +3444,40 @@ int start_handshake_server_multi(uint16_t* port,
                                        dynamic_channel_scenario,
                                        GDI_SCENARIO_NORMAL,
                                        license_scenario,
-                                       clipboard_scenario);
+                                       clipboard_scenario,
+                                       HANDSHAKE_SCENARIO_NORMAL);
+}
+
+int start_activation_stalling_server(uint16_t* port, pid_t* child_pid)
+{
+    return start_handshake_server_full(port,
+                                       child_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_NORMAL,
+                                       GDI_SCENARIO_NORMAL,
+                                       LICENSE_SCENARIO_NONE,
+                                       CLIPBOARD_SCENARIO_NONE,
+                                       HANDSHAKE_SCENARIO_STALL_ACTIVATION);
+}
+
+int start_idle_eof_server(uint16_t* port, pid_t* child_pid)
+{
+    return start_handshake_server_full(port,
+                                       child_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_NORMAL,
+                                       GDI_SCENARIO_NORMAL,
+                                       LICENSE_SCENARIO_NONE,
+                                       CLIPBOARD_SCENARIO_NONE,
+                                       HANDSHAKE_SCENARIO_GRACEFUL_IDLE_EOF);
 }
 
 int start_handshake_server_ex(uint16_t* port,

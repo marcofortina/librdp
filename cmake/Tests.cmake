@@ -301,6 +301,8 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME core_settings_session_error_metrics COMMAND test_core settings)
     add_test(NAME core_connect_timeout COMMAND test_core timeouts)
     add_test(NAME core_resolution_failure COMMAND test_core resolution)
+    add_test(NAME core_activation_timeout COMMAND test_core activation-timeout)
+    add_test(NAME core_idle_transport_eof COMMAND test_core idle-eof)
     add_test(NAME core_features COMMAND test_core features)
     add_test(NAME core_channels COMMAND test_core channels)
     add_test(NAME core_storage_devices COMMAND test_core storage)
@@ -322,6 +324,7 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME protocol_devices COMMAND test_protocol devices)
     add_test(NAME protocol_transport COMMAND test_protocol transport)
     add_test(NAME transport COMMAND test_transport)
+    add_test(NAME transport_timeout_boundaries COMMAND test_transport timeouts)
     add_test(NAME server COMMAND test_server)
     add_test(NAME server_config COMMAND test_server config)
     add_test(NAME server_feature_status COMMAND test_server features)
@@ -366,6 +369,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke nla-upn)
     add_test(NAME server_client_smoke_nla_utf8
              COMMAND test_server_client_smoke nla-utf8)
+    add_test(NAME server_client_smoke_credssp_timeout
+             COMMAND test_server_client_smoke timeout-credssp)
     set_tests_properties(
         common
         transport
@@ -388,6 +393,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_nla_empty_domain
         server_client_smoke_nla_upn
         server_client_smoke_nla_utf8
+        server_client_smoke_credssp_timeout
         PROPERTIES TIMEOUT 60
     )
     set_tests_properties(
@@ -413,6 +419,8 @@ if(LIBRDP_BUILD_TESTS)
         core_settings_session_error_metrics
         core_connect_timeout
         core_resolution_failure
+        core_activation_timeout
+        core_idle_transport_eof
         core_channels
         core_storage_devices
         core_graphics
@@ -421,6 +429,7 @@ if(LIBRDP_BUILD_TESTS)
         PROPERTIES TIMEOUT 60
     )
     set_tests_properties(core_features PROPERTIES TIMEOUT 30)
+    set_tests_properties(transport_timeout_boundaries PROPERTIES TIMEOUT 30)
     set_tests_properties(
         protocol
         protocol_codecs

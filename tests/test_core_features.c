@@ -55,7 +55,8 @@ static int run_optional_feature_runtime_scenario(librdp_feature feature,
                                       dynamic_channel_scenario,
                                       gdi_scenario,
                                       0,
-                                      CLIPBOARD_SCENARIO_NONE));
+                                      CLIPBOARD_SCENARIO_NONE,
+                                      HANDSHAKE_SCENARIO_NORMAL));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);

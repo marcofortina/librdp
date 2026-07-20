@@ -31,11 +31,9 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <signal.h>
-#ifdef RDP_HAVE_CURL
-#include <netinet/in.h>
-#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1082,6 +1080,37 @@ static int test_tls_handshake_timeout(void)
     return 0;
 }
 
+/*
+ * A descriptor that never becomes connect-writable must consume the requested
+ * timeout and return TIMEOUT without consulting SO_ERROR or external routing.
+ * A loopback listener supplies that deterministic non-writable socket state.
+ */
+static int test_tcp_connect_wait_timeout(void)
+{
+    struct sockaddr_in address;
+    int listener = -1;
+
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    TCHECK(listener >= 0);
+    TCHECK(bind(listener,
+                (const struct sockaddr*)&address,
+                (socklen_t)sizeof(address)) == 0);
+    TCHECK(listen(listener, 1) == 0);
+    TCHECK(rdp_tcp_wait_connected(listener, 25) == LIBRDP_STATUS_TIMEOUT);
+    close(listener);
+    return 0;
+}
+
+static int test_transport_timeout_boundaries(void)
+{
+    TCHECK(test_tcp_connect_wait_timeout() == 0);
+    TCHECK(test_tls_handshake_timeout() == 0);
+    return 0;
+}
+
 static int run_tls_client_case(EVP_PKEY* key,
                                X509* cert,
                                X509* trust_anchor,
@@ -1899,7 +1928,7 @@ int test_transport(void)
     rdp_transport_close(&transport);
 
     rdp_transport_init(&transport);
-    TCHECK(test_tls_handshake_timeout() == 0);
+    TCHECK(test_transport_timeout_boundaries() == 0);
     TCHECK(make_test_ca_certificate(&ca_key, &ca_cert));
     TCHECK(make_test_server_certificate(&server_key,
                                         &server_cert,
@@ -2164,6 +2193,8 @@ int main(int argc, char** argv)
 {
     if (argc == 2)
     {
+        if (strcmp(argv[1], "timeouts") == 0)
+            return test_transport_timeout_boundaries();
         if (strcmp(argv[1], "smoke-gateway") != 0)
             return 2;
 #ifdef RDP_HAVE_CURL

@@ -1473,7 +1473,8 @@ int test_gdi_altsec_runtime_orders(void)
                                       DVC_SCENARIO_NORMAL,
                                       GDI_SCENARIO_ALTSEC_RUNTIME,
                                       0,
-                                      CLIPBOARD_SCENARIO_NONE));
+                                      CLIPBOARD_SCENARIO_NONE,
+                                      HANDSHAKE_SCENARIO_NORMAL));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -1519,7 +1520,8 @@ int test_graphics_update_before_activation(void)
                                       DVC_SCENARIO_NORMAL,
                                       GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION,
                                       0,
-                                      CLIPBOARD_SCENARIO_NONE));
+                                      CLIPBOARD_SCENARIO_NONE,
+                                      HANDSHAKE_SCENARIO_NORMAL));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);

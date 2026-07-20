@@ -34,6 +34,16 @@ static int run_resolution(void)
     return test_resolution_failure();
 }
 
+static int run_activation_timeout(void)
+{
+    return test_activation_timeout();
+}
+
+static int run_idle_eof(void)
+{
+    return test_idle_transport_eof();
+}
+
 static int run_features(void)
 {
     if (test_optional_feature_runtime_paths() != 0 || test_feature_runtime_gates() != 0)
@@ -154,6 +164,10 @@ int test_client_core_named(const char* name)
         return run_timeouts();
     if (strcmp(name, "resolution") == 0)
         return run_resolution();
+    if (strcmp(name, "activation-timeout") == 0)
+        return run_activation_timeout();
+    if (strcmp(name, "idle-eof") == 0)
+        return run_idle_eof();
     if (strcmp(name, "features") == 0)
         return run_features();
     if (strcmp(name, "channels") == 0)

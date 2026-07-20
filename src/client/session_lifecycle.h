@@ -21,6 +21,10 @@
 
 librdp_settings* rdp_session_settings_mut(librdp_session* session);
 librdp_status rdp_session_disconnect_inner(librdp_session* session);
+librdp_status rdp_session_activation_deadline_start(librdp_session* session);
+int rdp_session_activation_timeout_ms(const librdp_session* session,
+                                      int* expired);
+void rdp_session_activation_deadline_clear(librdp_session* session);
 void rdp_session_composited_reset(librdp_session* session);
 void rdp_session_auth_redirection_channel_reset(librdp_session* session);
 void rdp_session_webauthn_channel_reset(librdp_session* session);

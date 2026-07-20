@@ -617,6 +617,8 @@ void rdp_session_set_state(librdp_session* session, librdp_session_state state)
 
     old_state = session->state;
     session->state = state;
+    if (state != LIBRDP_SESSION_CONNECTED)
+        rdp_session_activation_deadline_clear(session);
 
     event.type = LIBRDP_EVENT_STATE_CHANGED;
     event.data.state.old_state = (int)old_state;

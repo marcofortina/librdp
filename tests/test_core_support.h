@@ -109,6 +109,10 @@
 #define CLIPBOARD_SCENARIO_NONE 0
 #define CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES 1
 
+#define HANDSHAKE_SCENARIO_NORMAL 0
+#define HANDSHAKE_SCENARIO_STALL_ACTIVATION 1
+#define HANDSHAKE_SCENARIO_GRACEFUL_IDLE_EOF 2
+
 typedef struct event_counter
 {
     int states;
@@ -326,7 +330,11 @@ int start_handshake_server_full(uint16_t* port,
                                        int dynamic_channel_scenario,
                                        int gdi_scenario,
                                        int license_scenario,
-                                       int clipboard_scenario);
+                                       int clipboard_scenario,
+                                       int handshake_scenario);
+
+int start_activation_stalling_server(uint16_t* port, pid_t* child_pid);
+int start_idle_eof_server(uint16_t* port, pid_t* child_pid);
 
 int start_handshake_server_multi(uint16_t* port,
                                         pid_t* child_pid,

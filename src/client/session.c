@@ -3548,11 +3548,17 @@ librdp_status librdp_session_connect(librdp_session* session)
             status = rdp_transport_write_all(&session->transport, credssp_request.data, credssp_request.length);
         }
         if (status == LIBRDP_STATUS_OK)
+        {
+            credssp_failure_phase = "credssp.nla.challenge.read";
             status = rdp_session_read_credssp_ts_request(session,
                                                          &credssp_reply,
                                                          RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
+        }
         if (status == LIBRDP_STATUS_OK)
+        {
+            credssp_failure_phase = "credssp.nla.challenge";
             status = rdp_credssp_parse_ts_request(credssp_reply.data, credssp_reply.length, &ts_response);
+        }
         if (status == LIBRDP_STATUS_OK)
             rdp_trace_event(RDP_TRACE_PROTOCOL,
                             "credssp.nla.challenge",
@@ -3645,11 +3651,17 @@ librdp_status librdp_session_connect(librdp_session* session)
                                                  credssp_request.length);
             }
             if (status == LIBRDP_STATUS_OK)
+            {
+                credssp_failure_phase = "credssp.nla.pubkey.read";
                 status = rdp_session_read_credssp_ts_request(session,
                                                              &credssp_reply,
                                                              RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
+            }
             if (status == LIBRDP_STATUS_OK)
+            {
+                credssp_failure_phase = "credssp.nla.pubkey";
                 status = rdp_credssp_parse_ts_request(credssp_reply.data, credssp_reply.length, &pub_key_response);
+            }
             if (status == LIBRDP_STATUS_OK)
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
                                 "credssp.nla.pubkey_response",
@@ -4233,6 +4245,9 @@ librdp_status librdp_session_connect(librdp_session* session)
     }
 
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_ACTIVATING);
+    status = rdp_session_activation_deadline_start(session);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTED);
 
     rdp_session_emit_surface_invalidated(session,
@@ -4572,6 +4587,28 @@ static librdp_status rdp_session_run_once_idle(rdp_buffer* packet)
 }
 
 /*
+ * Fail a session that connected its transport but never received Demand
+ * Active. Teardown precedes the terminal error event so no partially activated
+ * channel or transport remains usable after the deadline.
+ */
+static librdp_status rdp_session_fail_activation_timeout(
+    librdp_session* session)
+{
+    rdp_session_set_last_error(session,
+                               LIBRDP_STATUS_TIMEOUT,
+                               0,
+                               LIBRDP_ERROR_COMPONENT_PROTOCOL,
+                               "rdp.activation.timeout",
+                               "server activation deadline expired");
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "rdp.activation.timeout",
+                    "timeout_ms=%u",
+                    (unsigned int)RDP_SESSION_HANDSHAKE_TIMEOUT_MS);
+    (void)rdp_session_disconnect_inner(session);
+    return rdp_session_fail(session, LIBRDP_STATUS_TIMEOUT);
+}
+
+/*
  * Run one iteration of the active session loop. Transport readiness, PDU
  * decoding, channel dispatch, framebuffer events, and disconnect conditions
  * are processed without re-entering callbacks concurrently.
@@ -4581,6 +4618,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
     short revents = 0;
     rdp_buffer packet;
     librdp_status status = LIBRDP_STATUS_OK;
+    int activation_expired = 0;
+    int activation_timeout_ms = -1;
 
     if (!session || timeout_ms < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -4589,6 +4628,12 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         return status;
     if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
         return rdp_session_finish_cancel(session);
+    activation_timeout_ms =
+        rdp_session_activation_timeout_ms(session, &activation_expired);
+    if (activation_expired)
+        return rdp_session_fail_activation_timeout(session);
+    if (activation_timeout_ms >= 0 && timeout_ms > activation_timeout_ms)
+        timeout_ms = activation_timeout_ms;
     status = rdp_session_usb_dispatch_completions(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -4718,6 +4763,13 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
     if (status == LIBRDP_STATUS_TIMEOUT)
     {
         rdp_session_echo_check_timeout(session);
+        (void)rdp_session_activation_timeout_ms(session,
+                                                &activation_expired);
+        if (activation_expired)
+        {
+            rdp_buffer_free(&packet);
+            return rdp_session_fail_activation_timeout(session);
+        }
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_DEBUG,
                               "client.active.loop.done",
@@ -5958,6 +6010,17 @@ librdp_status librdp_session_get_next_timeout(const librdp_session* session, int
         if (echo_timeout_ms >= 0 &&
             (*timeout_ms < 0 || echo_timeout_ms < *timeout_ms))
             *timeout_ms = echo_timeout_ms;
+    }
+    {
+        int activation_expired = 0;
+        int activation_timeout_ms =
+            rdp_session_activation_timeout_ms(session, &activation_expired);
+
+        if (activation_expired)
+            activation_timeout_ms = 0;
+        if (activation_timeout_ms >= 0 &&
+            (*timeout_ms < 0 || activation_timeout_ms < *timeout_ms))
+            *timeout_ms = activation_timeout_ms;
     }
     return LIBRDP_STATUS_OK;
 }

@@ -17,6 +17,12 @@ typedef struct resolution_trace_capture
     int resolve_failed;
 } resolution_trace_capture;
 
+typedef struct session_boundary_trace_capture
+{
+    int activation_timeout;
+    int tcp_eof;
+} session_boundary_trace_capture;
+
 static void on_resolution_trace(librdp_session* session,
                                 const librdp_trace_record* record,
                                 void* user_data)
@@ -28,6 +34,22 @@ static void on_resolution_trace(librdp_session* session,
     if (capture && record && record->event &&
         strcmp(record->event, "transport.tcp.resolve.failed") == 0)
         capture->resolve_failed = 1;
+}
+
+static void on_session_boundary_trace(librdp_session* session,
+                                      const librdp_trace_record* record,
+                                      void* user_data)
+{
+    session_boundary_trace_capture* capture =
+        (session_boundary_trace_capture*)user_data;
+
+    (void)session;
+    if (!capture || !record || !record->event)
+        return;
+    if (strcmp(record->event, "rdp.activation.timeout") == 0)
+        capture->activation_timeout = 1;
+    else if (strcmp(record->event, "transport.tcp.eof") == 0)
+        capture->tcp_eof = 1;
 }
 
 /*
@@ -1385,7 +1407,7 @@ int test_settings_surface_input_session(void)
     CHECK((session_pfds[1].events & POLLIN) != 0);
     CHECK(librdp_session_get_next_timeout(session, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_get_next_timeout(session, &next_timeout) == LIBRDP_STATUS_OK);
-    CHECK(next_timeout == -1);
+    CHECK(next_timeout > 0);
     CHECK(librdp_session_notify_poll(session, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     session_pfds[0].revents = 0;
     CHECK(librdp_session_notify_poll(session, session_pfds, session_pfd_count) == LIBRDP_STATUS_OK);
@@ -1916,6 +1938,151 @@ int test_resolution_failure(void)
 
     librdp_session_free(session);
     librdp_settings_free(settings);
+    return 0;
+}
+
+/*
+ * Coverage: stalls a valid Standard Security peer after Client Info and
+ * verifies that the activation deadline participates in the public poll
+ * timeout contract, tears down partial state, and reports the protocol phase.
+ */
+int test_activation_timeout(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_error_info error_info;
+    session_boundary_trace_capture capture;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    int next_timeout_ms = -1;
+
+    memset(&capture, 0, sizeof(capture));
+    CHECK(start_activation_stalling_server(&test_port, &server_pid));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(
+              settings,
+              LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = on_session_boundary_trace;
+    trace_policy.callback_user_data = &capture;
+    trace_policy.trace_id = "activation-timeout";
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(librdp_session_get_lifecycle(session) ==
+          LIBRDP_LIFECYCLE_ACTIVATING);
+    CHECK(librdp_session_get_next_timeout(session, &next_timeout_ms) ==
+          LIBRDP_STATUS_OK);
+    CHECK(next_timeout_ms > 0 && next_timeout_ms <= 10000);
+    CHECK(librdp_session_run_once(session, next_timeout_ms + 1000) ==
+          LIBRDP_STATUS_TIMEOUT);
+    CHECK(capture.activation_timeout == 1);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_FAILED);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(
+              librdp_session_last_error(session),
+              &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_TIMEOUT);
+    CHECK(error_info.os_errno == 0);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_PROTOCOL);
+    CHECK(error_info.phase != NULL &&
+          strcmp(error_info.phase, "rdp.activation.timeout") == 0);
+    CHECK(error_info.trace_id != NULL &&
+          strcmp(error_info.trace_id, "activation-timeout") == 0);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: lets an activated loopback peer close an otherwise idle
+ * connection and verifies that EOF becomes a clean disconnect rather than a
+ * protocol error or a permanently readable closed socket.
+ */
+int test_idle_transport_eof(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_error_info error_info;
+    session_boundary_trace_capture capture;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    int active_seen = 0;
+    size_t attempt = 0u;
+    librdp_status dispatch_status = LIBRDP_STATUS_OK;
+
+    memset(&capture, 0, sizeof(capture));
+    CHECK(start_idle_eof_server(&test_port, &server_pid));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(
+              settings,
+              LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = on_session_boundary_trace;
+    trace_policy.callback_user_data = &capture;
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (attempt = 0u;
+         attempt < 40u &&
+         librdp_session_get_state(session) != LIBRDP_SESSION_CLOSED;
+         attempt++)
+    {
+        dispatch_status = librdp_session_run_once(session, 250);
+        if (dispatch_status != LIBRDP_STATUS_OK)
+            fprintf(stderr,
+                    "idle EOF dispatch failed: status=%s state=%d lifecycle=%d attempt=%u\n",
+                    librdp_status_name(dispatch_status),
+                    (int)librdp_session_get_state(session),
+                    (int)librdp_session_get_lifecycle(session),
+                    (unsigned int)attempt);
+        CHECK(dispatch_status == LIBRDP_STATUS_OK);
+        if (librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE)
+            active_seen = 1;
+    }
+    CHECK(active_seen);
+    CHECK(attempt < 40u);
+    CHECK(capture.tcp_eof == 1);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CLOSED);
+    CHECK(librdp_session_get_lifecycle(session) ==
+          LIBRDP_LIFECYCLE_DISCONNECTED);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(
+              librdp_session_last_error(session),
+              &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_OK);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     return 0;
 }
 

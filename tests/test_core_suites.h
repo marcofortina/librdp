@@ -25,6 +25,8 @@ int test_reconnect_policy(void);
 int test_connect_cancellation(void);
 int test_connect_timeout(void);
 int test_resolution_failure(void);
+int test_activation_timeout(void);
+int test_idle_transport_eof(void);
 int test_reconnect_success(void);
 int test_dynamic_channel_duplicate_create(void);
 int test_dynamic_channel_close_pending_fragment(void);

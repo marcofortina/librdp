@@ -15,9 +15,58 @@
 
 #include <openssl/crypto.h>
 
+#include <limits.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+ * Start the bounded interval between Client Info completion and Demand Active.
+ * The absolute monotonic deadline is shared by run_once and external poll-loop
+ * timeout queries so both dispatch styles enforce the same activation policy.
+ */
+librdp_status rdp_session_activation_deadline_start(librdp_session* session)
+{
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_transport_deadline_create(RDP_SESSION_HANDSHAKE_TIMEOUT_MS,
+                                         &session->activation_deadline_ns);
+}
+
+/*
+ * Return the remaining activation interval rounded up to milliseconds. A
+ * negative result means no activation deadline applies; expired distinguishes
+ * a real deadline from that disabled state.
+ */
+int rdp_session_activation_timeout_ms(const librdp_session* session,
+                                      int* expired)
+{
+    uint64_t now_ns = 0u;
+    uint64_t remaining_ns = 0u;
+    uint64_t remaining_ms = 0u;
+
+    if (expired)
+        *expired = 0;
+    if (!session || session->state != LIBRDP_SESSION_CONNECTED ||
+        session->activation_deadline_ns == 0u)
+        return -1;
+    now_ns = rdp_session_monotonic_ns();
+    if (now_ns == 0u || now_ns >= session->activation_deadline_ns)
+    {
+        if (expired)
+            *expired = 1;
+        return 0;
+    }
+    remaining_ns = session->activation_deadline_ns - now_ns;
+    remaining_ms = (remaining_ns + 999999u) / 1000000u;
+    return remaining_ms > (uint64_t)INT_MAX ? INT_MAX : (int)remaining_ms;
+}
+
+void rdp_session_activation_deadline_clear(librdp_session* session)
+{
+    if (session)
+        session->activation_deadline_ns = 0u;
+}
 
 void rdp_session_composited_reset(librdp_session* session)
 {

@@ -96,6 +96,16 @@ typedef struct smoke_host
     librdp_status status;
 } smoke_host;
 
+typedef struct smoke_nla_stall
+{
+    librdp_server_config config;
+    pthread_t thread;
+    atomic_uint port;
+    atomic_uint stop;
+    atomic_uint authenticating;
+    librdp_status status;
+} smoke_nla_stall;
+
 typedef struct smoke_client_events
 {
     unsigned int state_events;
@@ -115,6 +125,7 @@ typedef struct smoke_trace_capture
     unsigned int records;
     unsigned int connect_starts;
     unsigned int connect_completions;
+    unsigned int credssp_failures;
     int leaked;
     int address_matched;
     const smoke_nla_identity* identity;
@@ -200,6 +211,9 @@ static void smoke_trace_callback(librdp_session* session,
     else if (record->event &&
              strcmp(record->event, "transport.tcp.connect.done") == 0)
         capture->connect_completions++;
+    else if (record->event &&
+             strcmp(record->event, "credssp.nla.failed") == 0)
+        capture->credssp_failures++;
     if (!capture->identity)
         return;
     if ((capture->identity->username &&
@@ -619,6 +633,77 @@ static void* smoke_host_main(void* user_data)
     return NULL;
 }
 
+/*
+ * Complete X.224 and TLS through the public server API, then stop dispatching
+ * as soon as CredSSP authentication begins. The client can therefore exercise
+ * its own bounded CredSSP read without a synthetic TLS implementation.
+ */
+static void* smoke_nla_stall_main(void* user_data)
+{
+    smoke_nla_stall* fixture = (smoke_nla_stall*)user_data;
+    librdp_server* server = NULL;
+    librdp_server_peer* peer = NULL;
+
+    if (!fixture)
+        return NULL;
+    fixture->status = LIBRDP_STATUS_NO_MEMORY;
+    server = librdp_server_new(&fixture->config);
+    if (!server)
+        return NULL;
+    fixture->status = librdp_server_listen(server);
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    atomic_store_explicit(&fixture->port,
+                          librdp_server_local_port(server),
+                          memory_order_release);
+    while (atomic_load_explicit(&fixture->stop, memory_order_acquire) == 0u &&
+           !peer)
+    {
+        fixture->status = librdp_server_accept(server, 20, &peer);
+        if (fixture->status == LIBRDP_STATUS_TIMEOUT)
+            continue;
+        if (fixture->status != LIBRDP_STATUS_OK)
+            goto cleanup;
+    }
+    while (atomic_load_explicit(&fixture->stop, memory_order_acquire) == 0u &&
+           peer)
+    {
+        if (librdp_server_peer_get_state(peer) ==
+            LIBRDP_SERVER_PEER_NLA_AUTHENTICATING)
+        {
+            atomic_store_explicit(&fixture->authenticating,
+                                  1u,
+                                  memory_order_release);
+            break;
+        }
+        fixture->status = librdp_server_peer_run_once(peer, 20);
+        if (fixture->status == LIBRDP_STATUS_TIMEOUT)
+            continue;
+        if (fixture->status != LIBRDP_STATUS_OK)
+            goto cleanup;
+    }
+    while (atomic_load_explicit(&fixture->stop, memory_order_acquire) == 0u)
+    {
+        struct timespec delay = {0, 10000000L};
+
+        (void)nanosleep(&delay, NULL);
+    }
+    fixture->status = LIBRDP_STATUS_OK;
+
+cleanup:
+    if (peer)
+    {
+        (void)librdp_server_peer_close(peer);
+        librdp_server_peer_free(peer);
+    }
+    if (server)
+    {
+        (void)librdp_server_close(server);
+        librdp_server_free(server);
+    }
+    return NULL;
+}
+
 static void smoke_client_event(librdp_session* session,
                                const librdp_event* event,
                                void* user_data)
@@ -666,16 +751,16 @@ static librdp_status smoke_client_pump(client_runtime* runtime)
     return client_runtime_dispatch_poll(runtime, 16u);
 }
 
-static int smoke_wait_for_port(const smoke_host* fixture, uint16_t* port)
+static int smoke_wait_for_port(const atomic_uint* source, uint16_t* port)
 {
     unsigned int attempt = 0u;
     struct timespec delay = {0, 10000000L};
 
-    if (!fixture || !port)
+    if (!source || !port)
         return 0;
     for (attempt = 0u; attempt < 500u; attempt++)
     {
-        unsigned int value = atomic_load_explicit(&fixture->port,
+        unsigned int value = atomic_load_explicit(source,
                                                   memory_order_acquire);
 
         if (value > 0u && value <= UINT16_MAX)
@@ -884,7 +969,7 @@ static int smoke_run_profile(librdp_security_mode security,
                            smoke_host_main,
                            &host_fixture) == 0);
     thread_started = 1;
-    REQUIRE(smoke_wait_for_port(&host_fixture, &port));
+    REQUIRE(smoke_wait_for_port(&host_fixture.port, &port));
     REQUIRE(port != default_port);
     REQUIRE(librdp_settings_set_port(settings, port) == LIBRDP_STATUS_OK);
     trace_capture.target = target;
@@ -1042,6 +1127,124 @@ cleanup:
     return result;
 }
 
+/*
+ * Hold a real NLA server immediately after TLS so the client must expire its
+ * CredSSP challenge read. The fixture also verifies phase attribution and that
+ * identity material never reaches the session trace callback.
+ */
+static int smoke_run_credssp_timeout(void)
+{
+    const smoke_nla_identity* identity = &smoke_nla_default_identity;
+    char cert_path[128] = {0};
+    char key_path[128] = {0};
+    smoke_nla_stall fixture;
+    smoke_trace_capture trace_capture;
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_tls_policy tls_policy;
+    librdp_trace_policy trace_policy;
+    librdp_error_info error_info;
+    uint16_t port = 0u;
+    int thread_started = 0;
+    int result = 1;
+
+    memset(&fixture, 0, sizeof(fixture));
+    memset(&trace_capture, 0, sizeof(trace_capture));
+    trace_capture.identity = identity;
+    atomic_init(&fixture.port, 0u);
+    atomic_init(&fixture.stop, 0u);
+    atomic_init(&fixture.authenticating, 0u);
+    REQUIRE(test_server_make_tls_files(cert_path,
+                                       sizeof(cert_path),
+                                       key_path,
+                                       sizeof(key_path)));
+    REQUIRE(librdp_server_config_init(&fixture.config) ==
+            LIBRDP_STATUS_OK);
+    fixture.config.bind_address = "127.0.0.1";
+    fixture.config.security_mode = LIBRDP_SECURITY_NLA;
+    fixture.config.tls_certificate_path = cert_path;
+    fixture.config.tls_private_key_path = key_path;
+    fixture.config.nla_domain = identity->domain;
+    fixture.config.nla_username = identity->username;
+    fixture.config.nla_password = identity->password;
+    REQUIRE(pthread_create(&fixture.thread,
+                           NULL,
+                           smoke_nla_stall_main,
+                           &fixture) == 0);
+    thread_started = 1;
+    REQUIRE(smoke_wait_for_port(&fixture.port, &port));
+
+    settings = librdp_settings_new();
+    REQUIRE(settings != NULL);
+    REQUIRE(librdp_settings_set_target(settings, "127.0.0.1") ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_port(settings, port) == LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_security_mode(settings,
+                                              LIBRDP_SECURITY_NLA) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_username(settings, identity->username) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_password(settings, identity->password) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_domain(settings, identity->domain) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_tls_policy_init(&tls_policy) == LIBRDP_STATUS_OK);
+    tls_policy.mode = LIBRDP_TLS_POLICY_INSECURE_LAB;
+    tls_policy.use_system_store = 0;
+    REQUIRE(librdp_settings_set_tls_policy(settings, &tls_policy) ==
+            LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    REQUIRE(session != NULL);
+    REQUIRE(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = smoke_trace_callback;
+    trace_policy.callback_user_data = &trace_capture;
+    trace_policy.trace_id = "credssp-timeout";
+    trace_capture.target = "127.0.0.1";
+    trace_capture.port = port;
+    REQUIRE(librdp_session_set_trace_policy(session, &trace_policy) ==
+            LIBRDP_STATUS_OK);
+
+    REQUIRE(librdp_session_connect(session) == LIBRDP_STATUS_TIMEOUT);
+    REQUIRE(atomic_load_explicit(&fixture.authenticating,
+                                 memory_order_acquire) == 1u);
+    REQUIRE(trace_capture.records > 0u);
+    REQUIRE(trace_capture.connect_starts == 1u);
+    REQUIRE(trace_capture.connect_completions == 1u);
+    REQUIRE(trace_capture.address_matched);
+    REQUIRE(trace_capture.credssp_failures == 1u);
+    REQUIRE(trace_capture.leaked == 0);
+    REQUIRE(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    REQUIRE(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    REQUIRE(librdp_error_copy_info(librdp_session_last_error(session),
+                                   &error_info) == LIBRDP_STATUS_OK);
+    REQUIRE(error_info.status == LIBRDP_STATUS_TIMEOUT);
+    REQUIRE(error_info.os_errno == 0);
+    REQUIRE(error_info.component == LIBRDP_ERROR_COMPONENT_CREDSSP);
+    REQUIRE(error_info.phase != NULL);
+    REQUIRE(strcmp(error_info.phase,
+                   "credssp.nla.challenge.read") == 0);
+    REQUIRE(error_info.trace_id != NULL);
+    REQUIRE(strcmp(error_info.trace_id, "credssp-timeout") == 0);
+    result = 0;
+
+cleanup:
+    atomic_store_explicit(&fixture.stop, 1u, memory_order_release);
+    if (thread_started)
+        (void)pthread_join(fixture.thread, NULL);
+    if (result == 0 && fixture.status != LIBRDP_STATUS_OK)
+        result = 1;
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    if (cert_path[0] != '\0')
+        (void)unlink(cert_path);
+    if (key_path[0] != '\0')
+        (void)unlink(key_path);
+    return result;
+}
+
 static int smoke_parse_security(const char* value,
                                 librdp_security_mode* security,
                                 librdp_status* expected_status,
@@ -1121,6 +1324,8 @@ int main(int argc, char** argv)
     const char* bind_address = NULL;
     const char* target = NULL;
 
+    if (argc == 2 && strcmp(argv[1], "timeout-credssp") == 0)
+        return smoke_run_credssp_timeout();
     if (argc != 2 ||
         !smoke_parse_security(argv[1],
                               &security,
@@ -1133,7 +1338,8 @@ int main(int argc, char** argv)
                 "usage: test_server_client_smoke "
                 "standard|standard-dns|standard-ipv6|tls|nla|"
                 "nla-invalid|nla-expired|nla-locked|"
-                "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8\n");
+                "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8|"
+                "timeout-credssp\n");
         return 2;
     }
     return smoke_run_profile(security,

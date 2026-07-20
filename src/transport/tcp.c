@@ -28,7 +28,12 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-static librdp_status rdp_tcp_wait_connected(int fd, int timeout_ms)
+/*
+ * Wait for a nonblocking connect to finish and verify SO_ERROR before the
+ * descriptor is handed to the transport. A writable descriptor alone does not
+ * prove that the connection succeeded.
+ */
+librdp_status rdp_tcp_wait_connected(int fd, int timeout_ms)
 {
     struct pollfd pfd;
     int result = 0;
