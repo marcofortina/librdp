@@ -158,7 +158,8 @@ typedef enum smoke_drive_mode
     SMOKE_DRIVE_NONE = 0,
     SMOKE_DRIVE_READ_ONLY = 1,
     SMOKE_DRIVE_WRITABLE = 2,
-    SMOKE_DRIVE_INFORMATION = 3
+    SMOKE_DRIVE_INFORMATION = 3,
+    SMOKE_DRIVE_ENUMERATION = 4
 } smoke_drive_mode;
 
 typedef enum smoke_drive_stage
@@ -190,8 +191,15 @@ typedef enum smoke_drive_stage
     SMOKE_DRIVE_STAGE_QUERY_DIRECTORY_CLASSES = 24,
     SMOKE_DRIVE_STAGE_CLOSE_INFORMATION_DIRECTORY = 25,
     SMOKE_DRIVE_STAGE_CLOSE_INFORMATION_FILE = 26,
-    SMOKE_DRIVE_STAGE_COMPLETE = 27,
-    SMOKE_DRIVE_STAGE_FAILED = 28
+    SMOKE_DRIVE_STAGE_OPEN_ENUMERATION_DIRECTORY = 27,
+    SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_MATCH = 28,
+    SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_END = 29,
+    SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_RESTART = 30,
+    SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_MISS = 31,
+    SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_GLOB = 32,
+    SMOKE_DRIVE_STAGE_CLOSE_ENUMERATION_DIRECTORY = 33,
+    SMOKE_DRIVE_STAGE_COMPLETE = 34,
+    SMOKE_DRIVE_STAGE_FAILED = 35
 } smoke_drive_stage;
 
 typedef struct smoke_drive_profile
@@ -207,6 +215,9 @@ static const smoke_drive_profile smoke_drive_writable = {
 };
 static const smoke_drive_profile smoke_drive_information = {
     SMOKE_DRIVE_INFORMATION,
+};
+static const smoke_drive_profile smoke_drive_enumeration = {
+    SMOKE_DRIVE_ENUMERATION,
 };
 static const uint8_t smoke_drive_marker_data[] =
     "temporary client drive\n";
@@ -1548,6 +1559,24 @@ static librdp_status smoke_drive_present(
                               memory_order_release);
     if (platform->drive_profile)
     {
+        if (platform->drive_profile->mode ==
+            SMOKE_DRIVE_ENUMERATION)
+        {
+            smoke_drive_submit(
+                platform,
+                SMOKE_DRIVE_STAGE_OPEN_ENUMERATION_DIRECTORY,
+                LIBRDP_SERVER_DRIVE_CREATE,
+                (librdp_server_drive_file_handle){0},
+                "",
+                NULL,
+                0u,
+                0u,
+                0u,
+                0u,
+                SMOKE_DRIVE_OPEN_EXISTING,
+                SMOKE_DRIVE_DIRECTORY_OPTION);
+            return LIBRDP_STATUS_OK;
+        }
         const char* path =
             platform->drive_profile->mode == SMOKE_DRIVE_WRITABLE
                 ? "created.bin"
@@ -2014,6 +2043,196 @@ static librdp_status smoke_drive_complete_information(
     return LIBRDP_STATUS_OK;
 }
 
+static int smoke_drive_enumeration_match(
+    const server_platform_drive_completion* completion,
+    librdp_server_drive_io_result io_result)
+{
+    const smoke_drive_information_case* test_case =
+        &smoke_drive_directory_information_cases[0];
+
+    return completion &&
+           completion->operation ==
+               LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY &&
+           completion->information_class ==
+               test_case->information_class &&
+           io_result == LIBRDP_SERVER_DRIVE_IO_SUCCESS &&
+           completion->transferred == completion->data_len &&
+           smoke_drive_validate_directory_payload(test_case,
+                                                  completion);
+}
+
+/*
+ * Validate restart and wildcard semantics over one live redirected-directory
+ * handle. Successful and empty results are interleaved so stale cursor or
+ * stale pattern state fails at the exact request that retained it.
+ */
+static librdp_status smoke_drive_complete_enumeration(
+    smoke_platform* platform,
+    smoke_drive_stage stage,
+    librdp_server_drive_io_result io_result,
+    const server_platform_drive_completion* completion)
+{
+    uint32_t information_class =
+        smoke_drive_directory_information_cases[0].information_class;
+
+    if (!platform || !completion)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (stage == SMOKE_DRIVE_STAGE_OPEN_ENUMERATION_DIRECTORY)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            completion->file.file_id == 0u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        platform->drive_directory = completion->file;
+        smoke_drive_submit_query(
+            platform,
+            SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_MATCH,
+            LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY,
+            platform->drive_directory,
+            "*.txt",
+            information_class,
+            1u,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_MATCH)
+    {
+        if (!smoke_drive_enumeration_match(completion, io_result))
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit_query(
+            platform,
+            SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_END,
+            LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY,
+            platform->drive_directory,
+            NULL,
+            information_class,
+            0u,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_END)
+    {
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY ||
+            completion->information_class != information_class ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_NO_MORE_FILES ||
+            completion->data_len != 0u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit_query(
+            platform,
+            SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_RESTART,
+            LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY,
+            platform->drive_directory,
+            "*.txt",
+            information_class,
+            1u,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_RESTART)
+    {
+        if (!smoke_drive_enumeration_match(completion, io_result))
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit_query(
+            platform,
+            SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_MISS,
+            LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY,
+            platform->drive_directory,
+            "*.bin",
+            information_class,
+            1u,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_MISS)
+    {
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY ||
+            completion->information_class != information_class ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_NO_MORE_FILES ||
+            completion->data_len != 0u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit_query(
+            platform,
+            SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_GLOB,
+            LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY,
+            platform->drive_directory,
+            "marker.?xt",
+            information_class,
+            1u,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_QUERY_ENUMERATION_GLOB)
+    {
+        if (!smoke_drive_enumeration_match(completion, io_result))
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(
+            platform,
+            SMOKE_DRIVE_STAGE_CLOSE_ENUMERATION_DIRECTORY,
+            LIBRDP_SERVER_DRIVE_CLOSE,
+            platform->drive_directory,
+            NULL,
+            NULL,
+            0u,
+            0u,
+            0u,
+            0u,
+            0u,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_CLOSE_ENUMERATION_DIRECTORY)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CLOSE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        atomic_store_explicit(&platform->drive_stage,
+                              SMOKE_DRIVE_STAGE_COMPLETE,
+                              memory_order_release);
+        return LIBRDP_STATUS_OK;
+    }
+    smoke_drive_fail(platform,
+                     LIBRDP_STATUS_PROTOCOL_ERROR,
+                     completion->io_status);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status smoke_drive_complete(
     void* context,
     const server_platform_drive_completion* completion)
@@ -2052,6 +2271,14 @@ static librdp_status smoke_drive_complete(
         SMOKE_DRIVE_INFORMATION)
     {
         return smoke_drive_complete_information(platform,
+                                                stage,
+                                                io_result,
+                                                completion);
+    }
+    if (platform->drive_profile->mode ==
+        SMOKE_DRIVE_ENUMERATION)
+    {
+        return smoke_drive_complete_enumeration(platform,
                                                 stage,
                                                 io_result,
                                                 completion);
@@ -7234,15 +7461,22 @@ static int smoke_run_profile_ex(
             REQUIRE(access(drive_created, F_OK) != 0);
             REQUIRE(access(drive_renamed, F_OK) != 0);
         }
-        else
+        else if (drive_profile->mode ==
+                 SMOKE_DRIVE_INFORMATION)
         {
-            REQUIRE(drive_profile->mode ==
-                    SMOKE_DRIVE_INFORMATION);
             REQUIRE(atomic_load_explicit(&platform.drive_completions,
                                          memory_order_acquire) == 52u);
             REQUIRE(access(drive_marker, F_OK) == 0);
             REQUIRE(access(drive_created, F_OK) != 0);
             REQUIRE(access(drive_renamed, F_OK) != 0);
+        }
+        else
+        {
+            REQUIRE(drive_profile->mode ==
+                    SMOKE_DRIVE_ENUMERATION);
+            REQUIRE(atomic_load_explicit(&platform.drive_completions,
+                                         memory_order_acquire) == 7u);
+            REQUIRE(access(drive_marker, F_OK) == 0);
         }
     }
     REQUIRE(atomic_load_explicit(&platform.key_events,
@@ -9757,6 +9991,8 @@ int main(int argc, char** argv)
         return smoke_run_drive_profile(&smoke_drive_writable);
     if (argc == 2 && strcmp(argv[1], "drive-information") == 0)
         return smoke_run_drive_profile(&smoke_drive_information);
+    if (argc == 2 && strcmp(argv[1], "drive-enumeration") == 0)
+        return smoke_run_drive_profile(&smoke_drive_enumeration);
     if (argc == 2)
     {
         const server_client_clipboard_profile* clipboard_profile =
