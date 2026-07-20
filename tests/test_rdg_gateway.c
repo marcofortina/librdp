@@ -665,6 +665,9 @@ static test_rdg_process_result test_rdg_process_packet(
     {
         if (!test_rdg_send_close_response(out_tls))
             return TEST_RDG_PROCESS_ERROR;
+        atomic_store_explicit(&gateway->closed,
+                              1u,
+                              memory_order_release);
         return TEST_RDG_PROCESS_CLOSED;
     }
     return TEST_RDG_PROCESS_ERROR;
@@ -1061,6 +1064,7 @@ int test_rdg_gateway_start(test_rdg_gateway* gateway,
     atomic_init(&gateway->tunnel, 0u);
     atomic_init(&gateway->authorized, 0u);
     atomic_init(&gateway->channel, 0u);
+    atomic_init(&gateway->closed, 0u);
     atomic_init(&gateway->downstream_sent, 0u);
     atomic_init(&gateway->downstream_received, 0u);
     if (pthread_mutex_init(&gateway->lock, NULL) != 0)
@@ -1123,12 +1127,19 @@ void test_rdg_gateway_cancel(test_rdg_gateway* gateway)
 
 int test_rdg_gateway_join(test_rdg_gateway* gateway)
 {
+    return test_rdg_gateway_join_status(gateway,
+                                        LIBRDP_STATUS_OK);
+}
+
+int test_rdg_gateway_join_status(test_rdg_gateway* gateway,
+                                 librdp_status expected_status)
+{
     if (!gateway || !gateway->thread_started)
         return 0;
     if (pthread_join(gateway->thread, NULL) != 0)
         return 0;
     gateway->thread_started = 0;
-    return gateway->status == LIBRDP_STATUS_OK;
+    return gateway->status == expected_status;
 }
 
 void test_rdg_gateway_clear(test_rdg_gateway* gateway)

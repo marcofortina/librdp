@@ -40,6 +40,7 @@ typedef struct test_rdg_gateway
     atomic_uint tunnel;
     atomic_uint authorized;
     atomic_uint channel;
+    atomic_uint closed;
     atomic_uint downstream_sent;
     atomic_uint downstream_received;
     int listener_fd;
@@ -57,6 +58,9 @@ int test_rdg_gateway_start(test_rdg_gateway* gateway,
 void test_rdg_gateway_cancel(test_rdg_gateway* gateway);
 
 int test_rdg_gateway_join(test_rdg_gateway* gateway);
+
+int test_rdg_gateway_join_status(test_rdg_gateway* gateway,
+                                 librdp_status expected_status);
 
 void test_rdg_gateway_clear(test_rdg_gateway* gateway);
 

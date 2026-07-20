@@ -1217,6 +1217,8 @@ static librdp_status rdp_rdg_curl_status(CURLcode code)
         return LIBRDP_STATUS_TIMEOUT;
     if (code == CURLE_UNSUPPORTED_PROTOCOL)
         return LIBRDP_STATUS_UNSUPPORTED;
+    if (code == CURLE_LOGIN_DENIED)
+        return LIBRDP_STATUS_AUTHENTICATION_FAILED;
     if (code == CURLE_PEER_FAILED_VERIFICATION ||
         code == CURLE_SSL_CACERT_BADFILE)
         return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;

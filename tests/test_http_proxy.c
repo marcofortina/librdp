@@ -409,41 +409,65 @@ static int test_http_proxy_challenge(int client_fd)
         sizeof(response) - 1u);
 }
 
-static int test_http_proxy_authorize(test_http_proxy* proxy,
-                                     int client_fd)
+static int test_http_proxy_validate_request(
+    test_http_proxy* proxy,
+    const char* request,
+    char* expected_uri,
+    size_t expected_uri_len)
 {
-    char request[TEST_HTTP_PROXY_HEADER_MAX];
     char expected_request[TEST_HTTP_PROXY_FIELD_MAX];
-    char expected_uri[TEST_HTTP_PROXY_FIELD_MAX];
-    const char* authorization = NULL;
     int written = 0;
 
-    if (!proxy ||
-        !test_http_proxy_read_headers(client_fd,
-                                      request,
-                                      sizeof(request)))
+    if (!proxy || !request || !expected_uri ||
+        expected_uri_len == 0u)
         return 0;
     written = snprintf(expected_uri,
-                       sizeof(expected_uri),
+                       expected_uri_len,
                        "%s:%u",
                        proxy->config.target_host,
                        (unsigned int)proxy->config.target_port);
-    if (written <= 0 || (size_t)written >= sizeof(expected_uri))
+    if (written <= 0 ||
+        (size_t)written >= expected_uri_len)
         return 0;
     written = snprintf(expected_request,
                        sizeof(expected_request),
                        "CONNECT %s HTTP/",
                        expected_uri);
-    if (written <= 0 || (size_t)written >= sizeof(expected_request) ||
+    if (written <= 0 ||
+        (size_t)written >= sizeof(expected_request) ||
         strstr(request, expected_request) == NULL)
         return 0;
-    if (test_http_proxy_contains_forbidden(&proxy->config, request))
+    atomic_fetch_add_explicit(&proxy->requests,
+                              1u,
+                              memory_order_acq_rel);
+    if (test_http_proxy_contains_forbidden(&proxy->config,
+                                           request))
     {
         atomic_store_explicit(&proxy->credential_leak,
                               1u,
                               memory_order_release);
         return 0;
     }
+    return 1;
+}
+
+static int test_http_proxy_authorize(test_http_proxy* proxy,
+                                     int client_fd)
+{
+    char request[TEST_HTTP_PROXY_HEADER_MAX];
+    char expected_uri[TEST_HTTP_PROXY_FIELD_MAX];
+    const char* authorization = NULL;
+
+    if (!proxy ||
+        !test_http_proxy_read_headers(client_fd,
+                                      request,
+                                      sizeof(request)))
+        return 0;
+    if (!test_http_proxy_validate_request(proxy,
+                                          request,
+                                          expected_uri,
+                                          sizeof(expected_uri)))
+        return 0;
     authorization = test_http_proxy_header(
         request,
         "Proxy-Authorization");
@@ -457,6 +481,75 @@ static int test_http_proxy_authorize(test_http_proxy* proxy,
                           1u,
                           memory_order_release);
     return 1;
+}
+
+static int test_http_proxy_run_failure_behavior(
+    test_http_proxy* proxy,
+    int client_fd)
+{
+    char request[TEST_HTTP_PROXY_HEADER_MAX];
+    char expected_uri[TEST_HTTP_PROXY_FIELD_MAX];
+
+    if (!proxy ||
+        !test_http_proxy_read_headers(client_fd,
+                                      request,
+                                      sizeof(request)) ||
+        !test_http_proxy_validate_request(proxy,
+                                          request,
+                                          expected_uri,
+                                          sizeof(expected_uri)))
+        return 0;
+    if (proxy->config.behavior == TEST_HTTP_PROXY_STALL)
+    {
+        while (atomic_load_explicit(&proxy->stop,
+                                    memory_order_acquire) == 0u)
+        {
+            struct pollfd pfd;
+            int ready = 0;
+
+            memset(&pfd, 0, sizeof(pfd));
+            pfd.fd = client_fd;
+            pfd.events = POLLIN;
+            do
+            {
+                ready = poll(&pfd, 1u, 25);
+            } while (ready < 0 && errno == EINTR);
+            if (ready < 0)
+                return 0;
+        }
+        proxy->status = LIBRDP_STATUS_TIMEOUT;
+        return 1;
+    }
+    if (proxy->config.behavior ==
+        TEST_HTTP_PROXY_MALFORMED_RESPONSE)
+    {
+        static const char malformed[] =
+            "not-an-http-response\r\n\r\n";
+
+        if (!test_http_proxy_send_all(
+                client_fd,
+                (const uint8_t*)malformed,
+                sizeof(malformed) - 1u))
+            return 0;
+        proxy->status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        return 1;
+    }
+    if (proxy->config.behavior == TEST_HTTP_PROXY_REFUSE)
+    {
+        static const char refused[] =
+            "HTTP/1.1 502 Bad Gateway\r\n"
+            "Content-Length: 0\r\n"
+            "Connection: close\r\n\r\n";
+
+        if (!test_http_proxy_send_all(
+                client_fd,
+                (const uint8_t*)refused,
+                sizeof(refused) - 1u))
+            return 0;
+        proxy->status = LIBRDP_STATUS_CLOSED;
+        return 1;
+    }
+    return 0;
 }
 
 static void test_http_proxy_set_active_fd(test_http_proxy* proxy,
@@ -571,6 +664,14 @@ static void* test_http_proxy_main(void* user_data)
         test_http_proxy_set_active_fd(proxy,
                                       &proxy->client_fd,
                                       client_fd);
+        if (proxy->config.behavior !=
+            TEST_HTTP_PROXY_FORWARD)
+        {
+            (void)test_http_proxy_run_failure_behavior(
+                proxy,
+                client_fd);
+            goto cleanup;
+        }
         result = test_http_proxy_authorize(proxy,
                                            client_fd);
         if (result == 2)
@@ -655,6 +756,7 @@ int test_http_proxy_start(test_http_proxy* proxy,
     atomic_init(&proxy->authenticated, 0u);
     atomic_init(&proxy->forwarded, 0u);
     atomic_init(&proxy->credential_leak, 0u);
+    atomic_init(&proxy->requests, 0u);
     atomic_init(&proxy->stop, 0u);
     if (pthread_mutex_init(&proxy->lock, NULL) != 0)
         return 0;

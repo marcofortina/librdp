@@ -21,6 +21,14 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
+typedef enum test_http_proxy_behavior
+{
+    TEST_HTTP_PROXY_FORWARD = 0,
+    TEST_HTTP_PROXY_STALL = 1,
+    TEST_HTTP_PROXY_MALFORMED_RESPONSE = 2,
+    TEST_HTTP_PROXY_REFUSE = 3
+} test_http_proxy_behavior;
+
 typedef struct test_http_proxy_config
 {
     const char* target_host;
@@ -31,6 +39,7 @@ typedef struct test_http_proxy_config
     const char* forbidden_username;
     const char* forbidden_password;
     const char* forbidden_domain;
+    test_http_proxy_behavior behavior;
 } test_http_proxy_config;
 
 typedef struct test_http_proxy
@@ -41,6 +50,7 @@ typedef struct test_http_proxy
     atomic_uint authenticated;
     atomic_uint forwarded;
     atomic_uint credential_leak;
+    atomic_uint requests;
     atomic_uint stop;
     int listener_fd;
     int client_fd;

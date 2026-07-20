@@ -134,6 +134,8 @@ static librdp_status rdp_gateway_curl_code_status(CURLcode code)
         return LIBRDP_STATUS_TIMEOUT;
     if (code == CURLE_UNSUPPORTED_PROTOCOL)
         return LIBRDP_STATUS_UNSUPPORTED;
+    if (code == CURLE_LOGIN_DENIED)
+        return LIBRDP_STATUS_AUTHENTICATION_FAILED;
     if (code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CACERT_BADFILE)
         return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
     return LIBRDP_STATUS_IO_ERROR;
@@ -180,6 +182,7 @@ librdp_status rdp_gateway_connect_transport(rdp_transport* transport,
     CURL* easy = NULL;
     CURLcode code = CURLE_OK;
     curl_socket_t socket_fd = CURL_SOCKET_BAD;
+    long proxy_status = 0l;
 
     pthread_once(&rdp_gateway_curl_once, rdp_gateway_curl_init_once);
     easy = curl_easy_init();
@@ -209,6 +212,11 @@ librdp_status rdp_gateway_connect_transport(rdp_transport* transport,
         curl_easy_setopt(easy, CURLOPT_PROXYPASSWORD, config->password);
     code = curl_easy_perform(easy);
     status = rdp_gateway_curl_code_status(code);
+    if (curl_easy_getinfo(easy,
+                          CURLINFO_HTTP_CONNECTCODE,
+                          &proxy_status) == CURLE_OK &&
+        proxy_status == 407l)
+        status = LIBRDP_STATUS_AUTHENTICATION_FAILED;
     if (status == LIBRDP_STATUS_OK)
     {
         code = curl_easy_getinfo(easy, CURLINFO_ACTIVESOCKET, &socket_fd);

@@ -392,8 +392,18 @@ if(LIBRDP_BUILD_TESTS)
                  COMMAND test_server_client_smoke gateway-session-credentials)
         add_test(NAME server_client_smoke_gateway_no_session_credentials
                  COMMAND test_server_client_smoke gateway-no-session-credentials)
+        add_test(NAME server_client_smoke_gateway_auth_failure
+                 COMMAND test_server_client_smoke gateway-auth-failure)
+        add_test(NAME server_client_smoke_gateway_timeout
+                 COMMAND test_server_client_smoke gateway-timeout)
+        add_test(NAME server_client_smoke_gateway_malformed
+                 COMMAND test_server_client_smoke gateway-malformed)
+        add_test(NAME server_client_smoke_gateway_refused
+                 COMMAND test_server_client_smoke gateway-refused)
         add_test(NAME server_client_smoke_gateway_rdg
                  COMMAND test_server_client_smoke gateway-rdg)
+        add_test(NAME server_client_smoke_gateway_rdg_untrusted
+                 COMMAND test_server_client_smoke gateway-rdg-untrusted)
     endif()
     set_tests_properties(
         common
@@ -431,7 +441,12 @@ if(LIBRDP_BUILD_TESTS)
             server_client_smoke_gateway_http_connect
             server_client_smoke_gateway_session_credentials
             server_client_smoke_gateway_no_session_credentials
+            server_client_smoke_gateway_auth_failure
+            server_client_smoke_gateway_timeout
+            server_client_smoke_gateway_malformed
+            server_client_smoke_gateway_refused
             server_client_smoke_gateway_rdg
+            server_client_smoke_gateway_rdg_untrusted
             PROPERTIES TIMEOUT 60
         )
     endif()
