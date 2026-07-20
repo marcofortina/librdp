@@ -535,6 +535,7 @@ typedef struct rdp_session_progressive_tile_cache
 {
     uint8_t active;
     uint16_t surface_id;
+    uint32_t codec_context_id;
     uint16_t x_idx;
     uint16_t y_idx;
     uint8_t has_pixels;

@@ -86,8 +86,34 @@ static void rdp_session_progressive_tiles_clear_surface(librdp_session* session,
     }
 }
 
+static void rdp_session_progressive_tiles_clear_context(
+    librdp_session* session,
+    uint16_t surface_id,
+    uint32_t codec_context_id)
+{
+    size_t i = 0;
+
+    if (!session)
+        return;
+    for (i = 0; i < RDP_SESSION_PROGRESSIVE_TILE_STATES; i++)
+    {
+        rdp_session_progressive_tile_cache* entry =
+            &session->progressive_tiles[i];
+
+        if (entry->active &&
+            entry->surface_id == surface_id &&
+            entry->codec_context_id == codec_context_id)
+        {
+            free(entry->state);
+            free(entry->pixels);
+            memset(entry, 0, sizeof(*entry));
+        }
+    }
+}
+
 static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_find(librdp_session* session,
                                                                              uint16_t surface_id,
+                                                                             uint32_t codec_context_id,
                                                                              uint16_t x_idx,
                                                                              uint16_t y_idx)
 {
@@ -100,6 +126,7 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_find(lib
         rdp_session_progressive_tile_cache* entry = &session->progressive_tiles[i];
 
         if (entry->active && entry->surface_id == surface_id &&
+            entry->codec_context_id == codec_context_id &&
             entry->x_idx == x_idx && entry->y_idx == y_idx)
             return entry;
     }
@@ -108,6 +135,7 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_find(lib
 
 static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_get(librdp_session* session,
                                                                             uint16_t surface_id,
+                                                                            uint32_t codec_context_id,
                                                                             uint16_t x_idx,
                                                                             uint16_t y_idx,
                                                                             int create)
@@ -118,6 +146,7 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_get(libr
     size_t victim_slot = 0;
     int evicting = 0;
     uint16_t old_surface_id = 0;
+    uint32_t old_codec_context_id = 0;
     uint16_t old_x_idx = 0;
     uint16_t old_y_idx = 0;
     uint32_t old_valid = 0;
@@ -125,7 +154,11 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_get(libr
 
     if (!session)
         return NULL;
-    entry = rdp_session_progressive_tile_find(session, surface_id, x_idx, y_idx);
+    entry = rdp_session_progressive_tile_find(session,
+                                              surface_id,
+                                              codec_context_id,
+                                              x_idx,
+                                              y_idx);
     if (entry)
     {
         entry->last_used = ++session->progressive_tile_clock;
@@ -153,6 +186,7 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_get(libr
     if (evicting)
     {
         old_surface_id = victim->surface_id;
+        old_codec_context_id = victim->codec_context_id;
         old_x_idx = victim->x_idx;
         old_y_idx = victim->y_idx;
         old_valid = victim->state ? victim->state->valid : 0u;
@@ -160,15 +194,17 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_get(libr
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_TRACE,
                               "client.graphics.progressive.tile_state.evict",
-                              "slot=%u old_surface_id=%u old_x_idx=%u old_y_idx=%u old_valid=%u old_pass=%u old_frame_id=%u new_surface_id=%u new_x_idx=%u new_y_idx=%u",
+                              "slot=%u old_surface_id=%u old_context_id=%u old_x_idx=%u old_y_idx=%u old_valid=%u old_pass=%u old_frame_id=%u new_surface_id=%u new_context_id=%u new_x_idx=%u new_y_idx=%u",
                               (unsigned)victim_slot,
                               old_surface_id,
+                              old_codec_context_id,
                               old_x_idx,
                               old_y_idx,
                               old_valid,
                               old_pass,
                               victim->updated_frame_id,
                               surface_id,
+                              codec_context_id,
                               x_idx,
                               y_idx);
     }
@@ -194,6 +230,7 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_get(libr
     }
     victim->active = 1;
     victim->surface_id = surface_id;
+    victim->codec_context_id = codec_context_id;
     victim->x_idx = x_idx;
     victim->y_idx = y_idx;
     victim->has_pixels = 0;
@@ -204,9 +241,10 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_get(libr
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_TRACE,
                           "client.graphics.progressive.tile_state.alloc",
-                          "slot=%u surface_id=%u x_idx=%u y_idx=%u evicted=%u",
+                          "slot=%u surface_id=%u context_id=%u x_idx=%u y_idx=%u evicted=%u",
                           (unsigned)victim_slot,
                           surface_id,
+                          codec_context_id,
                           x_idx,
                           y_idx,
                           (unsigned)evicting);
@@ -1421,6 +1459,7 @@ static librdp_status rdp_session_graphics_progressive_render_tile(librdp_session
         stage = "state";
         tile_cache = rdp_session_progressive_tile_get(session,
                                                       surface->surface_id,
+                                                      codec_context_id,
                                                       x_idx,
                                                       y_idx,
                                                       1);
@@ -1577,6 +1616,7 @@ static librdp_status rdp_session_graphics_progressive_render_upgrade(
 
     tile_cache = rdp_session_progressive_tile_get(session,
                                                   surface->surface_id,
+                                                  codec_context_id,
                                                   tile->x_idx,
                                                   tile->y_idx,
                                                   0);
@@ -1729,7 +1769,9 @@ static librdp_status rdp_session_graphics_progressive_flush_region(librdp_sessio
         int wrote = 0;
         librdp_status status = LIBRDP_STATUS_OK;
 
-        if (!tile_cache->active || tile_cache->surface_id != surface->surface_id ||
+        if (!tile_cache->active ||
+            tile_cache->surface_id != surface->surface_id ||
+            tile_cache->codec_context_id != codec_context_id ||
             tile_cache->updated_frame_id != session->graphics_current_frame_id ||
             !tile_cache->has_pixels || !tile_cache->pixels)
             continue;
@@ -2700,6 +2742,10 @@ librdp_status rdp_session_handle_graphics_message(librdp_session* session,
             status = rdp_graphics_parse_delete_encoding_context(pdu, header.pdu_length, &context);
             if (status != LIBRDP_STATUS_OK)
                 break;
+            rdp_session_progressive_tiles_clear_context(
+                session,
+                context.surface_id,
+                context.codec_context_id);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.graphics.encoding_context.delete",
                             "dvc_channel_id=%u surface_id=%u context_id=%u",
