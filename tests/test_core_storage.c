@@ -11,17 +11,16 @@
 
 #include "test_core_support.h"
 #include "test_core_suites.h"
+#include "test_xps_package.h"
 
 /*
- * Fixture: drives a printer file-backend job over RDPDR using the same parser
- * and writer functions as protocol tests. It covers create/write/read/query,
- * flush, close, and a post-close write rejection without requiring a print
- * system daemon.
+ * Fixture: drives a complete XPS package through the printer file backend over
+ * RDPDR. It covers create/write/read/query, flush, close, byte-preserving part
+ * order, and a post-close write rejection without a print system daemon.
  */
 int run_printer_job_server_scenario(int fd, uint8_t* input, size_t capacity)
 {
     static const uint8_t create_path[] = {0, 0};
-    static const uint8_t document[] = {'p', 'r', 'i', 'n', 't', '-', 'j', 'o', 'b', '\n'};
     static const uint8_t query_buffer[64] = {0};
     enum
     {
@@ -99,8 +98,9 @@ int run_printer_job_server_scenario(int fd, uint8_t* input, size_t capacity)
                                                         file_id,
                                                         completion_write,
                                                         0,
-                                                        document,
-                                                        (uint32_t)sizeof(document)) == LIBRDP_STATUS_OK &&
+                                                        test_xps_package,
+                                                        (uint32_t)sizeof(test_xps_package)) ==
+             LIBRDP_STATUS_OK &&
          write_device_static_packet_fd(fd, &request, device_channel_id) &&
          read_client_printer_write_response_fd(fd,
                                                input,
@@ -108,7 +108,7 @@ int run_printer_job_server_scenario(int fd, uint8_t* input, size_t capacity)
                                                device_channel_id,
                                                device_id,
                                                completion_write,
-                                               (uint32_t)sizeof(document),
+                                               (uint32_t)sizeof(test_xps_package),
                                                1);
     if (!ok)
         goto done;
@@ -118,7 +118,7 @@ int run_printer_job_server_scenario(int fd, uint8_t* input, size_t capacity)
                                                        device_id,
                                                        file_id,
                                                        completion_read,
-                                                       (uint32_t)sizeof(document),
+                                                       (uint32_t)sizeof(test_xps_package),
                                                        0) == LIBRDP_STATUS_OK &&
          write_device_static_packet_fd(fd, &request, device_channel_id) &&
          read_client_printer_read_response_fd(fd,
@@ -127,8 +127,8 @@ int run_printer_job_server_scenario(int fd, uint8_t* input, size_t capacity)
                                               device_channel_id,
                                               device_id,
                                               completion_read,
-                                              document,
-                                              (uint32_t)sizeof(document));
+                                              test_xps_package,
+                                              (uint32_t)sizeof(test_xps_package));
     if (!ok)
         goto done;
 
@@ -191,8 +191,9 @@ int run_printer_job_server_scenario(int fd, uint8_t* input, size_t capacity)
                                                         file_id,
                                                         completion_write_after_close,
                                                         0,
-                                                        document,
-                                                        (uint32_t)sizeof(document)) == LIBRDP_STATUS_OK &&
+                                                        test_xps_package,
+                                                        (uint32_t)sizeof(test_xps_package)) ==
+             LIBRDP_STATUS_OK &&
          write_device_static_packet_fd(fd, &request, device_channel_id) &&
          read_client_printer_write_response_fd(fd,
                                                input,
@@ -213,17 +214,16 @@ done:
 }
 
 /*
- * Coverage: validates printer redirection against a real file-backed spool
- * job. The mock server drives RDPDR negotiation and IRPs, while the client
- * creates, writes, reads, queries, flushes, closes, and rejects stale writes
- * for a redirected printer without relying on CUPS.
+ * Coverage: validates printer redirection against a real file-backed XPS
+ * spool job. The mock server drives RDPDR negotiation and IRPs, while the
+ * client preserves package bytes, closes the job, and rejects stale writes
+ * without relying on CUPS.
  */
 int test_printer_file_backend_job_lifecycle(void)
 {
-    static const uint8_t expected[] = {'p', 'r', 'i', 'n', 't', '-', 'j', 'o', 'b', '\n'};
     char output_dir[] = "/tmp/librdp-printer-XXXXXX";
     char output_path[512];
-    uint8_t actual[sizeof(expected)];
+    uint8_t actual[sizeof(test_xps_package)];
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     uint16_t test_port = 0;
@@ -295,7 +295,9 @@ int test_printer_file_backend_job_lifecycle(void)
     CHECK(read(output_fd, &extra, sizeof(extra)) == 0);
     CHECK(close(output_fd) == 0);
     output_fd = -1;
-    CHECK(memcmp(actual, expected, sizeof(expected)) == 0);
+    CHECK(memcmp(actual,
+                 test_xps_package,
+                 sizeof(test_xps_package)) == 0);
     CHECK(unlink(output_path) == 0);
     CHECK(rmdir(output_dir) == 0);
     return 0;
