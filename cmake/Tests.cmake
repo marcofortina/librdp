@@ -728,7 +728,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
             ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/optional_backend_matrix.cmake)
-    set_tests_properties(optional_backend_matrix PROPERTIES TIMEOUT 180)
+    set_tests_properties(optional_backend_matrix PROPERTIES TIMEOUT 300)
     add_test(NAME shared_symbol_visibility
         COMMAND ${CMAKE_COMMAND}
             "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"

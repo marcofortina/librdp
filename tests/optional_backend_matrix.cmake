@@ -12,9 +12,7 @@ set(work_dir "${LIBRDP_BINARY_DIR}/optional-backend-matrix")
 file(REMOVE_RECURSE "${work_dir}")
 file(MAKE_DIRECTORY "${work_dir}")
 
-set(all_backend_off_args
-    -DLIBRDP_WITH_FFMPEG_AVC=OFF
-    -DLIBRDP_WITH_OPENH264_AVC=OFF
+set(non_avc_backend_off_args
     -DLIBRDP_WITH_PCSC=OFF
     -DLIBRDP_WITH_LIBUSB=OFF
     -DLIBRDP_WITH_FIDO2=OFF
@@ -35,6 +33,11 @@ set(all_backend_off_args
     -DLIBRDP_WITH_FUSE3=OFF
     -DLIBRDP_WITH_PAM=OFF
     -DLIBRDP_WITH_BSDAUTH=OFF
+)
+set(all_backend_off_args
+    -DLIBRDP_WITH_FFMPEG_AVC=OFF
+    -DLIBRDP_WITH_OPENH264_AVC=OFF
+    ${non_avc_backend_off_args}
 )
 
 set(common_configure_args
@@ -80,7 +83,13 @@ function(librdp_matrix_build_and_probe name expectation)
         message(FATAL_ERROR "${name} configure failed with ${configure_result}")
     endif()
 
-    set(build_args --build "${case_dir}" --target test_optional_backend_probe)
+    set(build_args
+        --build "${case_dir}"
+        --target test_optional_backend_probe)
+    if(expectation STREQUAL "ffmpeg" OR
+       expectation STREQUAL "openh264")
+        list(APPEND build_args test_server_client_smoke)
+    endif()
     if(DEFINED LIBRDP_BUILD_CONFIG AND NOT "${LIBRDP_BUILD_CONFIG}" STREQUAL "")
         list(APPEND build_args --config "${LIBRDP_BUILD_CONFIG}")
     endif()
@@ -100,6 +109,21 @@ function(librdp_matrix_build_and_probe name expectation)
     )
     if(NOT probe_result EQUAL 0)
         message(FATAL_ERROR "${name} probe failed with ${probe_result}")
+    endif()
+
+    if(expectation STREQUAL "ffmpeg" OR
+       expectation STREQUAL "openh264")
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E env
+                "LIBRDP_SMOKE_TRACE_OUTPUT=1"
+                "${case_dir}/test_server_client_smoke"
+                graphics-avc
+            RESULT_VARIABLE smoke_result
+        )
+        if(NOT smoke_result EQUAL 0)
+            message(FATAL_ERROR
+                "${name} AVC runtime smoke failed with ${smoke_result}")
+        endif()
     endif()
 endfunction()
 
@@ -123,8 +147,19 @@ librdp_matrix_build_and_probe(all-off none ${all_backend_off_args})
 librdp_matrix_build_and_probe(auto auto)
 
 find_program(LIBRDP_MATRIX_PKG_CONFIG pkg-config)
+set(LIBRDP_MATRIX_FFMPEG_FOUND 0)
 set(LIBRDP_MATRIX_OPENH264_FOUND 0)
 if(LIBRDP_MATRIX_PKG_CONFIG)
+    execute_process(
+        COMMAND "${LIBRDP_MATRIX_PKG_CONFIG}"
+            --exists libavcodec libavutil libswscale
+        RESULT_VARIABLE ffmpeg_result
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+    if(ffmpeg_result EQUAL 0)
+        set(LIBRDP_MATRIX_FFMPEG_FOUND 1)
+    endif()
     execute_process(
         COMMAND "${LIBRDP_MATRIX_PKG_CONFIG}" --exists openh264
         RESULT_VARIABLE openh264_result
@@ -136,12 +171,26 @@ if(LIBRDP_MATRIX_PKG_CONFIG)
     endif()
 endif()
 
+if(LIBRDP_MATRIX_FFMPEG_FOUND)
+    librdp_matrix_build_and_probe(ffmpeg-only ffmpeg
+        ${non_avc_backend_off_args}
+        -DLIBRDP_WITH_FFMPEG_AVC=ON
+        -DLIBRDP_WITH_OPENH264_AVC=OFF)
+else()
+    librdp_matrix_expect_configure_failure(ffmpeg-on-missing
+        ${non_avc_backend_off_args}
+        -DLIBRDP_WITH_FFMPEG_AVC=ON
+        -DLIBRDP_WITH_OPENH264_AVC=OFF)
+endif()
+
 if(LIBRDP_MATRIX_OPENH264_FOUND)
-    librdp_matrix_build_and_probe(openh264-on openh264
-        ${all_backend_off_args}
+    librdp_matrix_build_and_probe(openh264-only openh264
+        ${non_avc_backend_off_args}
+        -DLIBRDP_WITH_FFMPEG_AVC=OFF
         -DLIBRDP_WITH_OPENH264_AVC=ON)
 else()
     librdp_matrix_expect_configure_failure(openh264-on-missing
-        ${all_backend_off_args}
+        ${non_avc_backend_off_args}
+        -DLIBRDP_WITH_FFMPEG_AVC=OFF
         -DLIBRDP_WITH_OPENH264_AVC=ON)
 endif()

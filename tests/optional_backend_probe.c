@@ -48,6 +48,66 @@ static int optional_probe_have_openh264(void)
 }
 
 /*
+ * Match graphics capability advertisement to the decoder paths proven
+ * operational by the runtime probe. The no-backend case must retain the base
+ * graphics versions while explicitly disabling AVC.
+ */
+static int optional_probe_avc_capabilities(
+    uint32_t expected_support)
+{
+    rdp_graphics_capset capsets[
+        RDP_GRAPHICS_DEFAULT_CAPSET_LIMIT];
+    uint16_t capset_count = 0u;
+    uint16_t index = 0u;
+    int have_avc420 = 0;
+    int have_avc444 = 0;
+    int have_avc444v2 = 0;
+    int have_avc_disabled = 0;
+
+    OCHECK(rdp_avc_runtime_support() == expected_support);
+    OCHECK(rdp_graphics_default_capsets_for_avc(
+               capsets,
+               (uint16_t)(sizeof(capsets) /
+                          sizeof(capsets[0])),
+               &capset_count,
+               expected_support) ==
+           LIBRDP_STATUS_OK);
+    for (index = 0u; index < capset_count; index++)
+    {
+        OCHECK(rdp_graphics_capset_is_supported_for_avc(
+                   &capsets[index],
+                   expected_support));
+        if (capsets[index].version ==
+                RDP_GRAPHICS_CAPVERSION_81 &&
+            (capsets[index].flags &
+             RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED) != 0u)
+            have_avc420 = 1;
+        if (capsets[index].version ==
+            RDP_GRAPHICS_CAPVERSION_106)
+            have_avc444 = 1;
+        if (capsets[index].version ==
+            RDP_GRAPHICS_CAPVERSION_107)
+            have_avc444v2 = 1;
+        if ((capsets[index].flags &
+             RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0u)
+            have_avc_disabled = 1;
+    }
+
+    OCHECK(have_avc420 ==
+           ((expected_support &
+             RDP_GRAPHICS_AVC_SUPPORT_AVC420) != 0u));
+    OCHECK(have_avc444 ==
+           ((expected_support &
+             RDP_GRAPHICS_AVC_SUPPORT_AVC444) != 0u));
+    OCHECK(have_avc444v2 ==
+           ((expected_support &
+             RDP_GRAPHICS_AVC_SUPPORT_AVC444V2) != 0u));
+    OCHECK(have_avc_disabled ==
+           (expected_support == 0u));
+    return 0;
+}
+
+/*
  * Disabled AVC probe: metadata is valid so a no-backend build must reach the
  * backend availability decision and return UNSUPPORTED rather than a parser or
  * bounds error.
@@ -74,7 +134,7 @@ static int optional_probe_avc_disabled_status(void)
     rdp_avc_frame_free(&frame);
     rdp_avc_decoder_free(decoder);
     OCHECK(status == LIBRDP_STATUS_UNSUPPORTED);
-    return 0;
+    return optional_probe_avc_capabilities(0u);
 }
 
 /*
@@ -86,7 +146,8 @@ static int optional_probe_expectation(void)
     const char* expect = getenv("LIBRDP_OPTIONAL_PROBE_EXPECT_AVC");
 
     if (!expect || strcmp(expect, "auto") == 0)
-        return 0;
+        return optional_probe_avc_capabilities(
+            rdp_avc_runtime_support());
     if (strcmp(expect, "none") == 0)
     {
         OCHECK(!optional_probe_have_ffmpeg());
@@ -95,8 +156,17 @@ static int optional_probe_expectation(void)
     }
     if (strcmp(expect, "openh264") == 0)
     {
+        OCHECK(!optional_probe_have_ffmpeg());
         OCHECK(optional_probe_have_openh264());
-        return 0;
+        return optional_probe_avc_capabilities(
+            RDP_GRAPHICS_AVC_SUPPORT_ALL);
+    }
+    if (strcmp(expect, "ffmpeg") == 0)
+    {
+        OCHECK(optional_probe_have_ffmpeg());
+        OCHECK(!optional_probe_have_openh264());
+        return optional_probe_avc_capabilities(
+            RDP_GRAPHICS_AVC_SUPPORT_ALL);
     }
 
     fprintf(stderr, "unknown optional backend probe expectation\n");
