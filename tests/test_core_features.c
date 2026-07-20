@@ -19,6 +19,87 @@ static int core_test_feature_reason_is_current(const librdp_feature_status* stat
            status->reason <= LIBRDP_FEATURE_REASON_NOT_ACTIVE;
 }
 
+typedef struct telemetry_runtime_capture
+{
+    const char* username_canary;
+    const char* password_canary;
+    const char* domain_canary;
+    uint32_t channel_events;
+    uint32_t trace_records;
+    uint32_t telemetry_trace_records;
+    int event_valid;
+    int trace_valid;
+    int leaked;
+} telemetry_runtime_capture;
+
+/*
+ * Accept only the fixed numeric telemetry record. Any other channel payload
+ * would expand the protocol's data surface beyond its four timing fields.
+ */
+static void on_telemetry_runtime_event(librdp_session* session,
+                                       const librdp_event* event,
+                                       void* user_data)
+{
+    telemetry_runtime_capture* capture =
+        (telemetry_runtime_capture*)user_data;
+    rdp_telemetry_pdu pdu;
+
+    (void)session;
+    if (!capture || !event || event->type != LIBRDP_EVENT_CHANNEL_DATA)
+        return;
+    capture->channel_events++;
+    if (event->data.channel_data.channel_id != 7u ||
+        rdp_telemetry_parse_pdu(event->data.channel_data.data,
+                                event->data.channel_data.data_len,
+                                &pdu) != LIBRDP_STATUS_OK ||
+        pdu.prompt_for_credentials_ms != 10u ||
+        pdu.prompt_for_credentials_done_ms != 20u ||
+        pdu.graphics_channel_opened_ms != 30u ||
+        pdu.first_graphics_received_ms != 40u)
+    {
+        capture->event_valid = 0;
+    }
+}
+
+/*
+ * Enforce the telemetry trace allowlist and detect accidental disclosure of
+ * identity fields while the client-info handshake is traced at maximum detail.
+ */
+static void on_telemetry_runtime_trace(librdp_session* session,
+                                       const librdp_trace_record* record,
+                                       void* user_data)
+{
+    telemetry_runtime_capture* capture =
+        (telemetry_runtime_capture*)user_data;
+
+    (void)session;
+    if (!capture || !record)
+        return;
+    capture->trace_records++;
+    if (record->line &&
+        ((capture->username_canary &&
+          strstr(record->line, capture->username_canary)) ||
+         (capture->password_canary &&
+          strstr(record->line, capture->password_canary)) ||
+         (capture->domain_canary &&
+          strstr(record->line, capture->domain_canary))))
+    {
+        capture->leaked = 1;
+    }
+    if (!record->event ||
+        strcmp(record->event, "client.telemetry.pdu") != 0)
+    {
+        return;
+    }
+    capture->telemetry_trace_records++;
+    if (!record->message ||
+        strcmp(record->message,
+               "dvc_channel_id=7 prompt_ms=10 first_graphics_ms=40") != 0)
+    {
+        capture->trace_valid = 0;
+    }
+}
+
 /*
  * Coverage: drives optional feature runtimes through the session dispatcher
  * instead of accepting settings-level readiness. It catches regressions where a
@@ -93,10 +174,6 @@ static int run_optional_feature_runtime_scenario(librdp_feature feature,
 
 int test_optional_feature_runtime_paths(void)
 {
-    CHECK(run_optional_feature_runtime_scenario(LIBRDP_FEATURE_TELEMETRY,
-                                                0,
-                                                DVC_SCENARIO_TELEMETRY_RUNTIME,
-                                                GDI_SCENARIO_NORMAL) == 0);
     CHECK(run_optional_feature_runtime_scenario(LIBRDP_FEATURE_MULTIPARTY,
                                                 1,
                                                 DVC_SCENARIO_MULTIPARTY_RUNTIME,
@@ -109,6 +186,115 @@ int test_optional_feature_runtime_paths(void)
                                                 0,
                                                 DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME,
                                                 GDI_SCENARIO_NORMAL) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: verifies that telemetry remains opt-in and carries only its fixed
+ * timing allowlist through events and trace. Synthetic identity canaries catch
+ * disclosure from the surrounding client-info handshake at TRACE level.
+ */
+int test_telemetry_runtime_privacy(void)
+{
+    static const char username_canary[] = "telemetry-user-private-marker";
+    static const char password_canary[] = "telemetry-password-private-marker";
+    static const char domain_canary[] = "telemetry-domain-private-marker";
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    librdp_trace_policy trace_policy;
+    telemetry_runtime_capture capture;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t i = 0u;
+
+    memset(&capture, 0, sizeof(capture));
+    capture.username_canary = username_canary;
+    capture.password_canary = password_canary;
+    capture.domain_canary = domain_canary;
+    capture.event_valid = 1;
+    capture.trace_valid = 1;
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(!librdp_settings_feature_enabled(settings,
+                                           LIBRDP_FEATURE_TELEMETRY));
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_TELEMETRY,
+                                             &feature_status) ==
+          LIBRDP_STATUS_OK);
+    CHECK(!feature_status.requested);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_REQUESTED);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings,
+                                            LIBRDP_SECURITY_STANDARD) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_username(settings, username_canary) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_password(settings, password_canary) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_domain(settings, domain_canary) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings,
+                                         LIBRDP_FEATURE_TELEMETRY,
+                                         1) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_full(&test_port,
+                                      &server_pid,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      1,
+                                      DVC_SCENARIO_TELEMETRY_RUNTIME,
+                                      GDI_SCENARIO_NORMAL,
+                                      LICENSE_SCENARIO_NONE,
+                                      CLIPBOARD_SCENARIO_NONE,
+                                      HANDSHAKE_SCENARIO_NORMAL));
+    CHECK(librdp_settings_set_port(settings, test_port) ==
+          LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session,
+                                      on_telemetry_runtime_event,
+                                      &capture);
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.hex_bytes = 64u;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = on_telemetry_runtime_trace;
+    trace_policy.callback_user_data = &capture;
+    trace_policy.trace_id = "telemetry-privacy";
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) ==
+          LIBRDP_STATUS_OK);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0u; i < 16u && capture.channel_events == 0u; i++)
+    {
+        status = librdp_session_run_once(session, 1000);
+        CHECK(status == LIBRDP_STATUS_OK);
+    }
+    CHECK(capture.channel_events == 1u);
+    CHECK(capture.event_valid);
+    CHECK(capture.trace_records > 0u);
+    CHECK(capture.telemetry_trace_records == 1u);
+    CHECK(capture.trace_valid);
+    CHECK(!capture.leaked);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_TELEMETRY,
+                                            &feature_status) ==
+          LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built);
+    CHECK(feature_status.backend_ready && feature_status.negotiated);
+    CHECK(feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     return 0;
 }
 

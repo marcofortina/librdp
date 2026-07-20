@@ -35,6 +35,7 @@ int test_dynamic_channel_nested_data_first(void);
 int test_dynamic_channel_empty_compressed_fragments(void);
 int test_dynamic_channel_soft_sync_runtime(void);
 int test_optional_feature_runtime_paths(void);
+int test_telemetry_runtime_privacy(void);
 int test_video_geometry_runtime_lifecycle(void);
 int test_feature_runtime_gates(void);
 int test_client_feature_status_reason_contract(void);
