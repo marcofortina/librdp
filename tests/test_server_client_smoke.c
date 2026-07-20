@@ -28,6 +28,7 @@
 #include <librdp/librdp.h>
 
 #include <openssl/err.h>
+#include <openssl/evp.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -59,6 +60,7 @@
 #define SMOKE_LIFECYCLE_STRESS_WARMUP_CYCLES 4u
 #define SMOKE_LIFECYCLE_STRESS_RSS_ALLOWANCE (32u * 1024u * 1024u)
 #define SMOKE_DESCRIPTOR_SCAN_LIMIT 1048576L
+#define SMOKE_SHA256_BYTES 32u
 
 #if defined(__SANITIZE_ADDRESS__)
 #define SMOKE_ADDRESS_SANITIZER_ACTIVE 1
@@ -113,6 +115,18 @@ static const smoke_nla_identity smoke_gateway_reject_identity = {
     "gateway-reject-user-827",
     "gateway-reject-secret-829",
     "GATEWAY-REJECT-DOMAIN-839",
+};
+static const uint8_t smoke_frame_sha256[SMOKE_SHA256_BYTES] = {
+    0x91, 0x43, 0x12, 0xa9, 0x79, 0x81, 0xea, 0x05,
+    0x7b, 0xc0, 0x70, 0x89, 0xd2, 0x35, 0x85, 0x90,
+    0xa7, 0x9d, 0x05, 0xcc, 0x05, 0xb9, 0x07, 0x3d,
+    0x7a, 0x63, 0x59, 0x09, 0xb9, 0xfc, 0x7b, 0xec,
+};
+static const uint8_t smoke_alternate_frame_sha256[SMOKE_SHA256_BYTES] = {
+    0xac, 0x72, 0x02, 0xe7, 0xf6, 0x7f, 0x6a, 0x48,
+    0x98, 0x87, 0xb6, 0xca, 0x2e, 0x2e, 0x55, 0x19,
+    0x40, 0x42, 0xc0, 0x0e, 0x14, 0xe6, 0xa9, 0x77,
+    0x96, 0x55, 0x26, 0xbc, 0x9e, 0x7f, 0xfd, 0xf5,
 };
 
 typedef struct smoke_platform
@@ -387,6 +401,7 @@ typedef struct smoke_trace_capture
     unsigned int redirections;
     unsigned int redirection_reconnects;
     unsigned int redirection_loops;
+    unsigned int slowpath_bitmap_updates;
     unsigned int refresh_requests;
     unsigned int output_suppressions;
     unsigned int output_resumptions;
@@ -443,6 +458,33 @@ static uint64_t smoke_now_ns(void)
     if (clock_gettime(CLOCK_MONOTONIC, &value) != 0)
         return 0u;
     return (uint64_t)value.tv_sec * 1000000000u + (uint64_t)value.tv_nsec;
+}
+
+/*
+ * Hash a complete presented surface with the mandatory crypto backend. Fixed
+ * digests detect row-order, stride, tiling, and partial-update regressions
+ * without retaining image artifacts.
+ */
+static int smoke_frame_matches_sha256(
+    const uint8_t* pixels,
+    size_t pixels_len,
+    const uint8_t expected[SMOKE_SHA256_BYTES])
+{
+    uint8_t digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0u;
+
+    if (!pixels || !expected ||
+        EVP_Digest(pixels,
+                   pixels_len,
+                   digest,
+                   &digest_len,
+                   EVP_sha256(),
+                   NULL) != 1)
+        return 0;
+    return digest_len == SMOKE_SHA256_BYTES &&
+           CRYPTO_memcmp(digest,
+                         expected,
+                         SMOKE_SHA256_BYTES) == 0;
 }
 
 static librdp_status smoke_nla_credentials_provider(
@@ -579,6 +621,10 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event,
                     "client.redirection.loop_rejected") == 0)
         capture->redirection_loops++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "rdp.slowpath.bitmap_update") == 0)
+        capture->slowpath_bitmap_updates++;
     else if (record->event &&
              strcmp(record->event,
                     "client.active.refresh_rect") == 0)
@@ -2854,9 +2900,11 @@ static int smoke_run_profile(librdp_security_mode security,
                 librdp_surface_pixels(surface);
 
             if (pixels &&
-                memcmp(pixels,
-                       platform.alternate_pixels,
-                       sizeof(initial_pixel)) == 0 &&
+                smoke_frame_matches_sha256(
+                    pixels,
+                    (size_t)librdp_surface_stride(surface) *
+                        librdp_surface_height(surface),
+                    smoke_alternate_frame_sha256) &&
                 events.surface_events >
                     surface_events_before_resume)
             {
@@ -2960,6 +3008,18 @@ static int smoke_run_profile(librdp_security_mode security,
             SMOKE_WIDTH);
     REQUIRE(librdp_surface_height(librdp_session_get_surface(session)) ==
             SMOKE_HEIGHT);
+    REQUIRE(librdp_surface_stride(librdp_session_get_surface(session)) ==
+            SMOKE_WIDTH * 4u);
+    REQUIRE(trace_capture.slowpath_bitmap_updates > 0u);
+    REQUIRE(smoke_frame_matches_sha256(
+        librdp_surface_pixels(librdp_session_get_surface(session)),
+        (size_t)librdp_surface_stride(
+            librdp_session_get_surface(session)) *
+            librdp_surface_height(
+                librdp_session_get_surface(session)),
+        exercise_output_control
+            ? smoke_alternate_frame_sha256
+            : smoke_frame_sha256));
     REQUIRE(clipboard_sent);
     REQUIRE(input_sent);
     REQUIRE(atomic_load_explicit(&platform.capture_requests,
