@@ -1923,8 +1923,8 @@ static int test_host_trace_metrics(void)
     server_host_config_init(&config);
     config.max_peers = 1u;
     config.input_policy = SERVER_HOST_INPUT_EXPLICIT;
-    config.server.width = 8u;
-    config.server.height = 8u;
+    config.server.width = LIBRDP_DESKTOP_MIN_DIMENSION;
+    config.server.height = LIBRDP_DESKTOP_MIN_DIMENSION;
     config.dirty.max_regions = 2u;
     config.dirty.max_regions_per_frame = 1u;
     config.trace_callback = mock_trace_event;
