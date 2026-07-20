@@ -100,6 +100,7 @@
 #define GDI_SCENARIO_ALTSEC_RUNTIME 1
 #define GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION 2
 #define GDI_SCENARIO_DESKTOP_COMPOSITION 3
+#define GDI_SCENARIO_GOLDEN_RUNTIME 4
 
 #define LICENSE_SCENARIO_NONE 0
 #define LICENSE_SCENARIO_NEW 1
@@ -449,6 +450,7 @@ int test_gdiplus_antialias_affects_line_edges(void);
 int test_gdiplus_clip_limits_visual_output(void);
 
 int test_gdi_altsec_runtime_orders(void);
+int test_gdi_orders_runtime_golden(void);
 
 int test_graphics_update_before_activation(void);
 

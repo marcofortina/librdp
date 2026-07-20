@@ -1414,12 +1414,30 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
     };
     rdp_buffer orders;
     rdp_buffer cache_bitmap;
+    rdp_buffer frame_marker;
+    rdp_buffer frame_marker_payload;
+    rdp_gdi_frame_marker_order marker;
     int ok = 0;
 
     rdp_buffer_init(&orders);
     rdp_buffer_init(&cache_bitmap);
+    rdp_buffer_init(&frame_marker);
+    rdp_buffer_init(&frame_marker_payload);
+    memset(&marker, 0, sizeof(marker));
 
-    ok = rdp_gdi_write_secondary_order(&cache_bitmap,
+    ok = rdp_gdi_write_frame_marker_order(
+             &frame_marker_payload,
+             &marker) == LIBRDP_STATUS_OK &&
+         rdp_gdi_write_altsec_order(
+             &frame_marker,
+             RDP_GDI_ALTSEC_FRAME_MARKER,
+             frame_marker_payload.data,
+             frame_marker_payload.length) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(
+             &orders,
+             frame_marker.data,
+             frame_marker.length) == LIBRDP_STATUS_OK &&
+         rdp_gdi_write_secondary_order(&cache_bitmap,
                                        0,
                                        RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED,
                                        cache_bitmap_payload,
@@ -1430,9 +1448,33 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
          rdp_buffer_append(&orders, render_patblt, sizeof(render_patblt)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&orders, render_lineto, sizeof(render_lineto)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&orders, render_memblt, sizeof(render_memblt)) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append(&orders, render_mem3blt, sizeof(render_mem3blt)) == LIBRDP_STATUS_OK &&
-         build_gdi_update_packet_from_orders(out, orders.data, orders.length, 7);
+         rdp_buffer_append(&orders, render_mem3blt, sizeof(render_mem3blt)) == LIBRDP_STATUS_OK;
+    frame_marker.length = 0u;
+    frame_marker_payload.length = 0u;
+    marker.action = 1u;
+    if (ok)
+    {
+        ok = rdp_gdi_write_frame_marker_order(
+                 &frame_marker_payload,
+                 &marker) == LIBRDP_STATUS_OK &&
+             rdp_gdi_write_altsec_order(
+                 &frame_marker,
+                 RDP_GDI_ALTSEC_FRAME_MARKER,
+                 frame_marker_payload.data,
+                 frame_marker_payload.length) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(
+                 &orders,
+                 frame_marker.data,
+                 frame_marker.length) == LIBRDP_STATUS_OK &&
+             build_gdi_update_packet_from_orders(
+                 out,
+                 orders.data,
+                 orders.length,
+                 9u);
+    }
 
+    rdp_buffer_free(&frame_marker_payload);
+    rdp_buffer_free(&frame_marker);
     rdp_buffer_free(&cache_bitmap);
     rdp_buffer_free(&orders);
     return ok;
@@ -2996,7 +3038,8 @@ int start_handshake_server_full(uint16_t* port,
     if (gdi_scenario != GDI_SCENARIO_NORMAL &&
         gdi_scenario != GDI_SCENARIO_ALTSEC_RUNTIME &&
         gdi_scenario != GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION &&
-        gdi_scenario != GDI_SCENARIO_DESKTOP_COMPOSITION)
+        gdi_scenario != GDI_SCENARIO_DESKTOP_COMPOSITION &&
+        gdi_scenario != GDI_SCENARIO_GOLDEN_RUNTIME)
         return 0;
     if (license_scenario != LICENSE_SCENARIO_NONE &&
         license_scenario != LICENSE_SCENARIO_NEW &&
@@ -3285,7 +3328,8 @@ int start_handshake_server_full(uint16_t* port,
                     {
                         _exit(5);
                     }
-                    if (gdi_scenario == GDI_SCENARIO_ALTSEC_RUNTIME)
+                    if (gdi_scenario == GDI_SCENARIO_ALTSEC_RUNTIME ||
+                        gdi_scenario == GDI_SCENARIO_GOLDEN_RUNTIME)
                         goto done_connection;
                     if (dynamic_channel_scenario == DVC_SCENARIO_MULTIPARTY_RUNTIME)
                     {

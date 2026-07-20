@@ -12,6 +12,9 @@
 #include "test_core_support.h"
 #include "test_core_suites.h"
 
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+
 #include "graphics/gdi_image.h"
 
 static int append_gdiplus_record(rdp_buffer* stream, uint16_t type, uint16_t flags, const rdp_buffer* payload)
@@ -1440,6 +1443,116 @@ int test_gdi_bitmap_cache_limits(void)
     rdp_buffer_free(&payload);
     librdp_session_free(session);
     librdp_settings_free(settings);
+    return 0;
+}
+
+/*
+ * Exercise primary, secondary and alternate-secondary orders through a real
+ * loopback session. The whole-surface digest catches changes in order state,
+ * bitmap orientation, cache lookup, clipping and dirty-frame commit.
+ */
+int test_gdi_orders_runtime_golden(void)
+{
+    static const uint8_t expected_digest[32] = {
+        0x66u, 0x22u, 0x77u, 0x58u, 0xe0u, 0x26u, 0xc8u, 0x93u,
+        0x59u, 0xbau, 0x57u, 0xbfu, 0xc6u, 0x17u, 0xf4u, 0x28u,
+        0x2au, 0x6fu, 0x83u, 0x24u, 0x3cu, 0x3bu, 0x0eu, 0xf7u,
+        0xefu, 0x44u, 0x93u, 0xf9u, 0xd1u, 0xa0u, 0x8fu, 0x4cu
+    };
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    const librdp_surface* surface = NULL;
+    graphics_update_capture graphics;
+    librdp_metrics metrics;
+    uint8_t digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0u;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t surface_bytes = 0u;
+    size_t i = 0u;
+
+    memset(&graphics, 0, sizeof(graphics));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(
+              settings,
+              LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_desktop_size(settings, 640u, 480u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_full(
+        &test_port,
+        &server_pid,
+        0,
+        0,
+        0,
+        0,
+        1,
+        DVC_SCENARIO_NORMAL,
+        GDI_SCENARIO_GOLDEN_RUNTIME,
+        0,
+        CLIPBOARD_SCENARIO_NONE,
+        HANDSHAKE_SCENARIO_NORMAL));
+    CHECK(librdp_settings_set_port(settings, test_port) ==
+          LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_graphics_update_callback(
+        session,
+        on_graphics_update,
+        &graphics);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0u; i < 8u && graphics.frame_end == 0; i++)
+    {
+        status = librdp_session_run_once(session, 1000);
+        CHECK(status == LIBRDP_STATUS_OK ||
+              status == LIBRDP_STATUS_TIMEOUT);
+    }
+    CHECK(graphics.invalid == 0);
+    CHECK(graphics.frame_begin == 1);
+    CHECK(graphics.frame_end == 1);
+    CHECK(graphics.pixel_rect >= 2);
+    CHECK(graphics.borrowed_pixels == graphics.pixel_rect);
+    surface = librdp_session_get_surface(session);
+    CHECK(surface != NULL);
+    CHECK(librdp_surface_width(surface) == 640u);
+    CHECK(librdp_surface_height(surface) == 480u);
+    surface_bytes = librdp_surface_stride(surface) *
+                    librdp_surface_height(surface);
+    CHECK(EVP_Digest(librdp_surface_pixels(surface),
+                     surface_bytes,
+                     digest,
+                     &digest_len,
+                     EVP_sha256(),
+                     NULL) == 1);
+    CHECK(digest_len == sizeof(expected_digest));
+    if (CRYPTO_memcmp(digest,
+                      expected_digest,
+                      sizeof(expected_digest)) != 0)
+    {
+        fprintf(stderr, "GDI framebuffer SHA-256:");
+        for (i = 0u; i < sizeof(expected_digest); i++)
+            fprintf(stderr, "%02x", digest[i]);
+        fputc('\n', stderr);
+    }
+    CHECK(CRYPTO_memcmp(digest,
+                        expected_digest,
+                        sizeof(expected_digest)) == 0);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.frames == 1u);
+    CHECK(metrics.surface_updates >= 2u);
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     return 0;
 }
 
