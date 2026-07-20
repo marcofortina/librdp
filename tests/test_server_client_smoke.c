@@ -23,6 +23,7 @@
 #include "channels/graphics_pipeline.h"
 #include "graphics/bitmap.h"
 #include "graphics/planar.h"
+#include "graphics/rfx_codec.h"
 #include "graphics/surface_commands.h"
 #include "protocol/fastpath.h"
 #include "protocol/session_selection.h"
@@ -440,6 +441,8 @@ typedef struct smoke_trace_capture
     unsigned int slowpath_bitmap_updates;
     unsigned int fastpath_bitmap_updates;
     unsigned int surface_nscodec_updates;
+    unsigned int surface_rfx_updates;
+    unsigned int surface_rfx_tiles;
     unsigned int graphics_caps_confirms;
     unsigned int graphics_surface_creates;
     unsigned int graphics_surface_maps;
@@ -682,6 +685,19 @@ static void smoke_trace_callback(librdp_session* session,
              record->message &&
              strstr(record->message, "codec_id=1 ") != NULL)
         capture->surface_nscodec_updates++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.surface.rfx.blit") == 0 &&
+             record->message)
+    {
+        unsigned int tiles = 0u;
+
+        capture->surface_rfx_updates++;
+        if (sscanf(record->message,
+                   "frame_id=%*u width=%*u height=%*u tiles=%u",
+                   &tiles) == 1)
+            capture->surface_rfx_tiles += tiles;
+    }
     else if (record->event &&
              strcmp(record->event,
                     "client.graphics.caps_confirm") == 0)
@@ -1931,6 +1947,428 @@ static librdp_status smoke_fastpath_nscodec_send(
     }
     rdp_buffer_free(&update);
     rdp_buffer_free(&commands);
+    return status;
+}
+
+enum smoke_rfx_block_type
+{
+    SMOKE_RFX_BLOCK_SYNC = 0xccc0u,
+    SMOKE_RFX_BLOCK_CODEC_VERSIONS = 0xccc1u,
+    SMOKE_RFX_BLOCK_CHANNELS = 0xccc2u,
+    SMOKE_RFX_BLOCK_CONTEXT = 0xccc3u,
+    SMOKE_RFX_BLOCK_FRAME_BEGIN = 0xccc4u,
+    SMOKE_RFX_BLOCK_FRAME_END = 0xccc5u,
+    SMOKE_RFX_BLOCK_REGION = 0xccc6u,
+    SMOKE_RFX_BLOCK_EXTENSION = 0xccc7u,
+    SMOKE_RFX_BLOCK_REGION_DATA = 0xcac1u,
+    SMOKE_RFX_BLOCK_TILESET = 0xcac2u,
+    SMOKE_RFX_BLOCK_TILE = 0xcac3u
+};
+
+static librdp_status smoke_rfx_append_block(
+    rdp_buffer* output,
+    uint16_t type,
+    const rdp_buffer* payload)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!output || !payload ||
+        payload->length > UINT32_MAX - 6u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(output, type);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u32_le(
+            output,
+            (uint32_t)payload->length + 6u);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append(output,
+                                   payload->data,
+                                   payload->length);
+    }
+    return status;
+}
+
+static librdp_status smoke_rfx_append_channel_block(
+    rdp_buffer* output,
+    uint16_t type,
+    uint8_t channel_id,
+    const rdp_buffer* payload)
+{
+    rdp_buffer wrapped;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!output || !payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&wrapped);
+    status = rdp_buffer_append_u8(&wrapped, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&wrapped, channel_id);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append(&wrapped,
+                                   payload->data,
+                                   payload->length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = smoke_rfx_append_block(output, type, &wrapped);
+    rdp_buffer_free(&wrapped);
+    return status;
+}
+
+/*
+ * Append one zero-coefficient RemoteFX tile and its matching region. Keeping
+ * the vector construction typed makes the smoke sensitive to block framing,
+ * region placement, entropy decoding, and tile clipping.
+ */
+static librdp_status smoke_rfx_append_region(
+    rdp_buffer* output,
+    uint16_t x,
+    uint16_t y,
+    uint16_t tile_x)
+{
+    rdp_buffer payload;
+    rdp_buffer tile;
+    rdp_buffer zeroes;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    rdp_buffer_init(&tile);
+    rdp_buffer_init(&zeroes);
+
+    status = rdp_buffer_append_u8(&payload, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, x);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, y);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 64u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 64u);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u16_le(
+            &payload,
+            SMOKE_RFX_BLOCK_REGION_DATA);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 1u);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_rfx_append_channel_block(
+            output,
+            SMOKE_RFX_BLOCK_REGION,
+            0u,
+            &payload);
+    }
+
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_rfx_rlgr_write_zeroes(
+            &zeroes,
+            RDP_RFX_TILE_COEFFICIENTS);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u16_le(
+            &tile,
+            SMOKE_RFX_BLOCK_TILE);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u32_le(
+            &tile,
+            19u + (uint32_t)zeroes.length * 3u);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&tile, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&tile, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&tile, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&tile, tile_x);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&tile, 0u);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u16_le(
+            &tile,
+            (uint16_t)zeroes.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u16_le(
+            &tile,
+            (uint16_t)zeroes.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u16_le(
+            &tile,
+            (uint16_t)zeroes.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append(&tile,
+                                   zeroes.data,
+                                   zeroes.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append(&tile,
+                                   zeroes.data,
+                                   zeroes.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append(&tile,
+                                   zeroes.data,
+                                   zeroes.length);
+    }
+
+    payload.length = 0u;
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u16_le(
+            &payload,
+            SMOKE_RFX_BLOCK_TILESET);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&payload, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&payload, 64u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 1u);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u32_le(
+            &payload,
+            (uint32_t)tile.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        static const uint8_t quant[] = {
+            0x11u, 0x11u, 0x11u, 0x11u, 0x11u
+        };
+
+        status = rdp_buffer_append(&payload,
+                                   quant,
+                                   sizeof(quant));
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append(&payload,
+                                   tile.data,
+                                   tile.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_rfx_append_channel_block(
+            output,
+            SMOKE_RFX_BLOCK_EXTENSION,
+            0u,
+            &payload);
+    }
+
+    rdp_buffer_free(&zeroes);
+    rdp_buffer_free(&tile);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+static librdp_status smoke_rfx_build_stream(
+    rdp_buffer* output,
+    uint16_t width,
+    uint16_t frame_id,
+    uint16_t region_count)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint16_t region = 0u;
+
+    if (!output ||
+        (region_count != 1u && region_count != 2u) ||
+        width != (uint16_t)(region_count * 64u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+
+    status = rdp_buffer_append_u32_le(&payload, 0xcaccaccau);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 0x0100u);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_rfx_append_block(
+            output,
+            SMOKE_RFX_BLOCK_SYNC,
+            &payload);
+    }
+    payload.length = 0u;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&payload, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&payload, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 0x0100u);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_rfx_append_block(
+            output,
+            SMOKE_RFX_BLOCK_CODEC_VERSIONS,
+            &payload);
+    }
+    payload.length = 0u;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&payload, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&payload, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, width);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 64u);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_rfx_append_block(
+            output,
+            SMOKE_RFX_BLOCK_CHANNELS,
+            &payload);
+    }
+    payload.length = 0u;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&payload, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 64u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 0x0200u);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_rfx_append_channel_block(
+            output,
+            SMOKE_RFX_BLOCK_CONTEXT,
+            0xffu,
+            &payload);
+    }
+    payload.length = 0u;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, frame_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, region_count);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_rfx_append_channel_block(
+            output,
+            SMOKE_RFX_BLOCK_FRAME_BEGIN,
+            0u,
+            &payload);
+    }
+    for (region = 0u;
+         status == LIBRDP_STATUS_OK && region < region_count;
+         region++)
+    {
+        status = smoke_rfx_append_region(
+            output,
+            (uint16_t)(region * 64u),
+            0u,
+            region);
+    }
+    payload.length = 0u;
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_rfx_append_channel_block(
+            output,
+            SMOKE_RFX_BLOCK_FRAME_END,
+            0u,
+            &payload);
+    }
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+/*
+ * Send independent single- and multi-tile RemoteFX streams in one encrypted
+ * fast-path update. The second stream uses the image codec identifier and
+ * therefore also validates that both negotiated Surface Bits variants route
+ * through the same normalized decoder.
+ */
+static librdp_status smoke_fastpath_rfx_send(
+    librdp_server_peer* peer)
+{
+    rdp_surface_bits bits;
+    rdp_buffer single;
+    rdp_buffer multi;
+    rdp_buffer commands;
+    rdp_buffer update;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&single);
+    rdp_buffer_init(&multi);
+    rdp_buffer_init(&commands);
+    rdp_buffer_init(&update);
+    status = smoke_rfx_build_stream(&single, 64u, 7u, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = smoke_rfx_build_stream(&multi, 128u, 8u, 2u);
+
+    memset(&bits, 0, sizeof(bits));
+    bits.command_type = RDP_SURFACE_COMMAND_SET_BITS;
+    bits.dest_left = 0u;
+    bits.dest_top = 0u;
+    bits.dest_right = 64u;
+    bits.dest_bottom = 64u;
+    bits.bpp = 32u;
+    bits.codec_id = RDP_SURFACE_CODEC_REMOTEFX;
+    bits.width = 64u;
+    bits.height = 64u;
+    bits.bitmap_data_length = (uint32_t)single.length;
+    bits.bitmap_data = single.data;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_surface_commands_write_bits(&commands, &bits);
+
+    bits.dest_left = 64u;
+    bits.dest_top = 64u;
+    bits.dest_right = 192u;
+    bits.dest_bottom = 128u;
+    bits.codec_id = RDP_SURFACE_CODEC_IMAGE_REMOTEFX;
+    bits.width = 128u;
+    bits.height = 64u;
+    bits.bitmap_data_length = (uint32_t)multi.length;
+    bits.bitmap_data = multi.data;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_surface_commands_write_bits(&commands, &bits);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_fastpath_write_update(
+            &update,
+            RDP_FASTPATH_UPDATE_SURFACE_COMMANDS,
+            RDP_FASTPATH_FRAGMENT_SINGLE,
+            0u,
+            0u,
+            commands.data,
+            commands.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_standard_send_fastpath(
+            peer,
+            update.data,
+            update.length,
+            0);
+    }
+    rdp_buffer_free(&update);
+    rdp_buffer_free(&commands);
+    rdp_buffer_free(&multi);
+    rdp_buffer_free(&single);
     return status;
 }
 
@@ -4970,6 +5408,163 @@ cleanup:
     return result;
 }
 
+static int smoke_rfx_surface_matches(
+    const librdp_surface* surface)
+{
+    const uint8_t* pixels = NULL;
+    size_t stride = 0u;
+    uint32_t y = 0u;
+    uint32_t x = 0u;
+
+    if (!surface ||
+        librdp_surface_width(surface) != SMOKE_WIDTH ||
+        librdp_surface_height(surface) != SMOKE_HEIGHT)
+        return 0;
+    pixels = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    if (!pixels || stride != (size_t)SMOKE_WIDTH * 4u)
+        return 0;
+
+    for (y = 0u; y < SMOKE_HEIGHT; y++)
+    {
+        for (x = 0u; x < SMOKE_WIDTH; x++)
+        {
+            const uint8_t* pixel =
+                pixels + ((size_t)y * stride) + ((size_t)x * 4u);
+            int written =
+                (x < 64u && y < 64u) ||
+                (x >= 64u && x < 192u &&
+                 y >= 64u && y < 128u);
+
+            if (written)
+            {
+                if (pixel[0] != 128u ||
+                    pixel[1] != 128u ||
+                    pixel[2] != 128u ||
+                    pixel[3] != 0xffu)
+                    return 0;
+            }
+            else if (pixel[0] != 0u ||
+                     pixel[1] != 0u ||
+                     pixel[2] != 0u ||
+                     pixel[3] != 0u)
+                return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * Decode independent single- and multi-tile RemoteFX frames through Surface
+ * Commands and verify every destination and untouched framebuffer pixel.
+ */
+static int smoke_run_fastpath_rfx(void)
+{
+    smoke_fastpath_peer fixture;
+    smoke_client_events events;
+    smoke_trace_capture trace_capture;
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint16_t port = 0u;
+    unsigned int cycle = 0u;
+    int thread_started = 0;
+    int result = 1;
+
+    memset(&fixture, 0, sizeof(fixture));
+    memset(&events, 0, sizeof(events));
+    memset(&trace_capture, 0, sizeof(trace_capture));
+    atomic_init(&fixture.port, 0u);
+    atomic_init(&fixture.packet_sent, 0u);
+    atomic_init(&fixture.client_closed, 0u);
+    fixture.send = smoke_fastpath_rfx_send;
+    fixture.status = LIBRDP_STATUS_AGAIN;
+    REQUIRE(librdp_server_config_init(&fixture.config) ==
+            LIBRDP_STATUS_OK);
+    fixture.config.bind_address = "127.0.0.1";
+    fixture.config.security_mode = LIBRDP_SECURITY_STANDARD;
+    fixture.config.width = SMOKE_WIDTH;
+    fixture.config.height = SMOKE_HEIGHT;
+    REQUIRE(pthread_create(&fixture.thread,
+                           NULL,
+                           smoke_fastpath_peer_main,
+                           &fixture) == 0);
+    thread_started = 1;
+    REQUIRE(smoke_wait_for_port(&fixture.port, &port));
+
+    settings = librdp_settings_new();
+    REQUIRE(settings != NULL);
+    REQUIRE(librdp_settings_set_target(settings, "127.0.0.1") ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_port(settings, port) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_security_mode(
+                settings,
+                LIBRDP_SECURITY_STANDARD) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_desktop_size(settings,
+                                             SMOKE_WIDTH,
+                                             SMOKE_HEIGHT) ==
+            LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    REQUIRE(session != NULL);
+    librdp_session_set_event_callback(session,
+                                      smoke_client_event,
+                                      &events);
+    REQUIRE(librdp_trace_policy_init(&trace_policy) ==
+            LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = smoke_trace_callback;
+    trace_policy.callback_user_data = &trace_capture;
+    trace_policy.trace_id = "fastpath-rfx";
+    trace_capture.target = "127.0.0.1";
+    trace_capture.port = port;
+    REQUIRE(librdp_session_set_trace_policy(session,
+                                            &trace_policy) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (cycle = 0u; cycle < SMOKE_PUMP_LIMIT; cycle++)
+    {
+        status = librdp_session_run_once(session, 50);
+        REQUIRE(status == LIBRDP_STATUS_OK);
+        if (events.active_seen &&
+            trace_capture.surface_rfx_updates == 2u &&
+            trace_capture.surface_rfx_tiles == 3u)
+            break;
+    }
+    REQUIRE(cycle < SMOKE_PUMP_LIMIT);
+    REQUIRE(events.active);
+    REQUIRE(events.error_events == 0u);
+    REQUIRE(events.surface_events >= 3u);
+    REQUIRE(trace_capture.surface_rfx_updates == 2u);
+    REQUIRE(trace_capture.surface_rfx_tiles == 3u);
+    REQUIRE(trace_capture.integrity_failures == 0u);
+    REQUIRE(trace_capture.fastpath_integrity_failures == 0u);
+    REQUIRE(smoke_rfx_surface_matches(
+        librdp_session_get_surface(session)));
+    REQUIRE(librdp_session_disconnect(session) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(pthread_join(fixture.thread, NULL) == 0);
+    thread_started = 0;
+    REQUIRE(fixture.status == LIBRDP_STATUS_OK);
+    REQUIRE(atomic_load_explicit(&fixture.packet_sent,
+                                 memory_order_acquire) == 1u);
+    REQUIRE(atomic_load_explicit(&fixture.client_closed,
+                                 memory_order_acquire) == 1u);
+    result = 0;
+
+cleanup:
+    librdp_session_free(session);
+    session = NULL;
+    if (thread_started)
+        (void)pthread_join(fixture.thread, NULL);
+    librdp_settings_free(settings);
+    return result;
+}
+
 static int smoke_run_graphics_planar(void)
 {
     static const uint8_t expected_row[] = {
@@ -5226,6 +5821,8 @@ int main(int argc, char** argv)
         return smoke_run_fastpath_bitmap();
     if (argc == 2 && strcmp(argv[1], "fastpath-nscodec") == 0)
         return smoke_run_fastpath_nscodec();
+    if (argc == 2 && strcmp(argv[1], "fastpath-rfx") == 0)
+        return smoke_run_fastpath_rfx();
     if (argc == 2 && strcmp(argv[1], "graphics-planar") == 0)
         return smoke_run_graphics_planar();
     if (argc == 2 && strcmp(argv[1], "security-downgrade") == 0)
