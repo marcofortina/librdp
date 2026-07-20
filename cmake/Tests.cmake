@@ -80,6 +80,9 @@ if(LIBRDP_BUILD_TESTS)
         if(LIBRDP_CURL_FOUND)
             target_compile_definitions(${target} PRIVATE RDP_HAVE_CURL=1)
         endif()
+        if(LIBRDP_ATTR_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            target_compile_definitions(${target} PRIVATE RDP_HAVE_ATTR=1)
+        endif()
         if(LIBRDP_LIBXML2_FOUND)
             target_compile_definitions(${target} PRIVATE RDP_HAVE_LIBXML2=1)
         endif()
@@ -584,6 +587,10 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke drive-locking)
     add_test(NAME server_client_smoke_drive_notify
              COMMAND test_server_client_smoke drive-notify)
+    if(LIBRDP_ATTR_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME server_client_smoke_drive_metadata
+                 COMMAND test_server_client_smoke drive-metadata)
+    endif()
     if(TARGET test_workspace_launch_smoke)
         add_test(NAME workspace_desktop_launch_smoke
             COMMAND test_workspace_launch_smoke
@@ -815,6 +822,12 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_cancel_activating
         PROPERTIES TIMEOUT 60
     )
+    if(TEST server_client_smoke_drive_metadata)
+        set_tests_properties(
+            server_client_smoke_drive_metadata
+            PROPERTIES TIMEOUT 60
+        )
+    endif()
     set_tests_properties(
         server_client_smoke_lifecycle_stress
         PROPERTIES TIMEOUT 180

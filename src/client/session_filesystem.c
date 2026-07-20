@@ -25,7 +25,11 @@
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <limits.h>
+#if defined(__linux__)
+#include <linux/fs.h>
+#endif
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -37,6 +41,20 @@
 #endif
 #include <time.h>
 #include <unistd.h>
+
+#if defined(SEEK_DATA) && defined(SEEK_HOLE)
+#define RDP_SESSION_SEEK_DATA SEEK_DATA
+#define RDP_SESSION_SEEK_HOLE SEEK_HOLE
+#endif
+
+#define RDP_SESSION_DOS_ATTRIBUTES_XATTR "user.DOSATTRIB"
+#define RDP_SESSION_FILE_ATTRIBUTE_STORED_MASK                                  \
+    (RDP_SESSION_FILE_ATTRIBUTE_HIDDEN | RDP_SESSION_FILE_ATTRIBUTE_SYSTEM |    \
+     RDP_SESSION_FILE_ATTRIBUTE_ARCHIVE)
+#define RDP_SESSION_FILE_ATTRIBUTE_SETTABLE_MASK                                \
+    (RDP_SESSION_FILE_ATTRIBUTE_READONLY |                                      \
+     RDP_SESSION_FILE_ATTRIBUTE_STORED_MASK |                                   \
+     RDP_SESSION_FILE_ATTRIBUTE_NORMAL)
 
 librdp_status rdp_session_utf16le_path_to_utf8(const uint8_t* data, uint32_t data_len, char** out)
 {
@@ -809,10 +827,9 @@ static uint64_t rdp_session_stat_allocation_size(const struct stat* st)
 {
     if (!st || S_ISDIR(st->st_mode))
         return 0;
-#if defined(st_blocks)
-    if (st->st_blocks > 0)
+    if (st->st_blocks > 0 &&
+        (uint64_t)st->st_blocks <= UINT64_MAX / 512u)
         return (uint64_t)st->st_blocks * 512ull;
-#endif
     return rdp_session_stat_size(st);
 }
 
@@ -830,7 +847,38 @@ static uint64_t rdp_session_stat_volume_serial(const struct stat* st)
     return (uint64_t)st->st_dev;
 }
 
-static uint32_t rdp_session_stat_attributes(const struct stat* st)
+static uint32_t rdp_session_fd_stored_attributes(int fd)
+{
+#if defined(RDP_HAVE_ATTR) && defined(__linux__)
+    char value[32];
+    char* end = NULL;
+    unsigned long parsed = 0ul;
+    ssize_t length = 0;
+
+    if (fd < 0)
+        return 0u;
+    length = fgetxattr(fd,
+                       RDP_SESSION_DOS_ATTRIBUTES_XATTR,
+                       value,
+                       sizeof(value) - 1u);
+    if (length <= 0 || (size_t)length >= sizeof(value))
+        return 0u;
+    value[length] = '\0';
+    errno = 0;
+    parsed = strtoul(value, &end, 0);
+    if (errno != 0 || end == value || *end != '\0' ||
+        parsed > UINT32_MAX)
+        return 0u;
+    return (uint32_t)parsed &
+           RDP_SESSION_FILE_ATTRIBUTE_STORED_MASK;
+#else
+    (void)fd;
+    return 0u;
+#endif
+}
+
+static uint32_t rdp_session_stat_attributes(const struct stat* st,
+                                            int fd)
 {
     uint32_t attributes = 0;
 
@@ -842,7 +890,175 @@ static uint32_t rdp_session_stat_attributes(const struct stat* st)
         attributes |= RDP_SESSION_FILE_ATTRIBUTE_NORMAL;
     if ((st->st_mode & S_IWUSR) == 0)
         attributes |= RDP_SESSION_FILE_ATTRIBUTE_READONLY;
+    attributes |= rdp_session_fd_stored_attributes(fd);
     return attributes;
+}
+
+#if defined(RDP_HAVE_ATTR) && defined(__linux__)
+static void rdp_session_restore_dos_attributes(int fd,
+                                               const uint8_t* previous,
+                                               size_t previous_len,
+                                               int previous_present)
+{
+    if (previous_present)
+    {
+        (void)fsetxattr(fd,
+                        RDP_SESSION_DOS_ATTRIBUTES_XATTR,
+                        previous,
+                        previous_len,
+                        0);
+    }
+    else
+    {
+        (void)fremovexattr(fd,
+                           RDP_SESSION_DOS_ATTRIBUTES_XATTR);
+    }
+}
+#endif
+
+/*
+ * Apply the portable read-only bit and persist DOS-only attributes through the
+ * host extended-attribute facility. The prior metadata is restored if chmod
+ * fails, so a rejected request cannot leave a partially committed attribute
+ * update.
+ */
+static uint32_t rdp_session_apply_file_attributes(int fd,
+                                                  const struct stat* st,
+                                                  uint32_t attributes)
+{
+    mode_t mode = 0;
+    mode_t write_mask =
+        (mode_t)(S_IWUSR | S_IWGRP | S_IWOTH);
+    uint32_t stored =
+        attributes & RDP_SESSION_FILE_ATTRIBUTE_STORED_MASK;
+
+    if (fd < 0 || !st ||
+        (attributes &
+         ~RDP_SESSION_FILE_ATTRIBUTE_SETTABLE_MASK) != 0u)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+#if defined(RDP_HAVE_ATTR) && defined(__linux__)
+    {
+        uint8_t* previous = NULL;
+        ssize_t previous_len = 0;
+        int previous_present = 0;
+        int changed = 0;
+
+        previous_len = fgetxattr(fd,
+                                 RDP_SESSION_DOS_ATTRIBUTES_XATTR,
+                                 NULL,
+                                 0);
+        if (previous_len >= 0)
+        {
+            previous_present = 1;
+            if ((uint64_t)previous_len >
+                RDP_SESSION_MAX_FILE_IO_BYTES)
+                return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+            if (previous_len > 0)
+            {
+                previous =
+                    (uint8_t*)malloc((size_t)previous_len);
+                if (!previous)
+                    return RDP_SESSION_DEVICE_UNSUCCESSFUL;
+                if (fgetxattr(fd,
+                              RDP_SESSION_DOS_ATTRIBUTES_XATTR,
+                              previous,
+                              (size_t)previous_len) !=
+                    previous_len)
+                {
+                    uint32_t io_status =
+                        rdp_session_errno_to_device_status(errno);
+
+                    free(previous);
+                    return io_status;
+                }
+            }
+        }
+        else if (errno != ENODATA && errno != ENOTSUP)
+        {
+            return rdp_session_errno_to_device_status(errno);
+        }
+        if (stored != 0u)
+        {
+            char value[16];
+            int length = snprintf(value,
+                                  sizeof(value),
+                                  "0x%08x",
+                                  stored);
+
+            if (length <= 0 ||
+                (size_t)length >= sizeof(value))
+            {
+                free(previous);
+                return RDP_SESSION_DEVICE_UNSUCCESSFUL;
+            }
+            if (fsetxattr(fd,
+                          RDP_SESSION_DOS_ATTRIBUTES_XATTR,
+                          value,
+                          (size_t)length,
+                          0) != 0)
+            {
+                uint32_t io_status =
+                    rdp_session_errno_to_device_status(errno);
+
+                free(previous);
+                return io_status;
+            }
+            changed = 1;
+        }
+        else if (previous_present)
+        {
+            if (fremovexattr(fd,
+                             RDP_SESSION_DOS_ATTRIBUTES_XATTR) !=
+                    0 &&
+                errno != ENODATA)
+            {
+                uint32_t io_status =
+                    rdp_session_errno_to_device_status(errno);
+
+                free(previous);
+                return io_status;
+            }
+            changed = 1;
+        }
+        mode = st->st_mode;
+        if ((attributes &
+             RDP_SESSION_FILE_ATTRIBUTE_READONLY) != 0u)
+            mode = (mode_t)(mode & (mode_t)(~write_mask));
+        else
+            mode = (mode_t)(mode | S_IWUSR);
+        if (fchmod(fd, mode) != 0)
+        {
+            uint32_t io_status =
+                rdp_session_errno_to_device_status(errno);
+
+            if (changed)
+            {
+                rdp_session_restore_dos_attributes(
+                    fd,
+                    previous,
+                    previous_len > 0
+                        ? (size_t)previous_len
+                        : 0u,
+                    previous_present);
+            }
+            free(previous);
+            return io_status;
+        }
+        free(previous);
+    }
+#else
+    if (stored != 0u)
+        return RDP_SESSION_DEVICE_NOT_SUPPORTED;
+    mode = st->st_mode;
+    if ((attributes &
+         RDP_SESSION_FILE_ATTRIBUTE_READONLY) != 0u)
+        mode = (mode_t)(mode & (mode_t)(~write_mask));
+    else
+        mode = (mode_t)(mode | S_IWUSR);
+    if (fchmod(fd, mode) != 0)
+        return rdp_session_errno_to_device_status(errno);
+#endif
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 }
 
 librdp_status rdp_session_utf8_to_utf16le(const char* text, rdp_buffer* out, uint8_t append_null)
@@ -1162,7 +1378,8 @@ librdp_status rdp_session_handle_remote_programs_message(librdp_session* session
 }
 
 static librdp_status rdp_session_write_file_basic_information(rdp_buffer* buffer,
-                                                              const struct stat* st)
+                                                              const struct stat* st,
+                                                              int fd)
 {
     librdp_status status = LIBRDP_STATUS_OK;
     uint64_t change_time = rdp_session_stat_ctime(st);
@@ -1177,7 +1394,10 @@ static librdp_status rdp_session_write_file_basic_information(rdp_buffer* buffer
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_append_u64_le(buffer, change_time);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(buffer, rdp_session_stat_attributes(st));
+        status =
+            rdp_buffer_append_u32_le(
+                buffer,
+                rdp_session_stat_attributes(st, fd));
     return status;
 }
 
@@ -1202,13 +1422,17 @@ static librdp_status rdp_session_write_file_standard_information(rdp_buffer* buf
 }
 
 static librdp_status rdp_session_write_file_attribute_tag_information(rdp_buffer* buffer,
-                                                                      const struct stat* st)
+                                                                      const struct stat* st,
+                                                                      int fd)
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
     status = rdp_buffer_append_u32_le(buffer, 8);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(buffer, rdp_session_stat_attributes(st));
+        status =
+            rdp_buffer_append_u32_le(
+                buffer,
+                rdp_session_stat_attributes(st, fd));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, 0);
     return status;
@@ -1239,7 +1463,8 @@ static librdp_status rdp_session_write_file_internal_information(rdp_buffer* buf
 }
 
 static librdp_status rdp_session_write_file_network_open_information(rdp_buffer* buffer,
-                                                                     const struct stat* st)
+                                                                     const struct stat* st,
+                                                                     int fd)
 {
     uint64_t change_time = rdp_session_stat_ctime(st);
     librdp_status status = LIBRDP_STATUS_OK;
@@ -1258,7 +1483,10 @@ static librdp_status rdp_session_write_file_network_open_information(rdp_buffer*
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_append_u64_le(buffer, rdp_session_stat_size(st));
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(buffer, rdp_session_stat_attributes(st));
+        status =
+            rdp_buffer_append_u32_le(
+                buffer,
+                rdp_session_stat_attributes(st, fd));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, 0);
     return status;
@@ -1454,7 +1682,10 @@ static librdp_status rdp_session_write_file_all_information(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_append_u64_le(buffer, change_time);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(buffer, rdp_session_stat_attributes(st));
+        status =
+            rdp_buffer_append_u32_le(
+                buffer,
+                rdp_session_stat_attributes(st, file->fd));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_append_zero(buffer, 4u);
     if (status == LIBRDP_STATUS_OK)
@@ -1732,7 +1963,10 @@ librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
     switch (information_class)
     {
         case RDP_SESSION_FILE_BASIC_INFORMATION:
-            return rdp_session_write_file_basic_information(buffer, st);
+            return rdp_session_write_file_basic_information(
+                buffer,
+                st,
+                file ? file->fd : -1);
         case RDP_SESSION_FILE_STANDARD_INFORMATION:
             return rdp_session_write_file_standard_information(buffer, st);
         case RDP_SESSION_FILE_INTERNAL_INFORMATION:
@@ -1760,9 +1994,15 @@ librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
         case RDP_SESSION_FILE_COMPRESSION_INFORMATION:
             return rdp_session_write_file_compression_information(buffer, st);
         case RDP_SESSION_FILE_NETWORK_OPEN_INFORMATION:
-            return rdp_session_write_file_network_open_information(buffer, st);
+            return rdp_session_write_file_network_open_information(
+                buffer,
+                st,
+                file ? file->fd : -1);
         case RDP_SESSION_FILE_ATTRIBUTE_TAG_INFORMATION:
-            return rdp_session_write_file_attribute_tag_information(buffer, st);
+            return rdp_session_write_file_attribute_tag_information(
+                buffer,
+                st,
+                file ? file->fd : -1);
         case RDP_SESSION_FILE_ID_INFORMATION:
             return rdp_session_write_file_id_information(buffer, st);
         case RDP_SESSION_FILE_CASE_SENSITIVE_INFORMATION:
@@ -1901,7 +2141,10 @@ librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_append_u64_le(buffer, allocation_size);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(buffer, rdp_session_stat_attributes(st));
+        status =
+            rdp_buffer_append_u32_le(
+                buffer,
+                rdp_session_stat_attributes(st, -1));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, (uint32_t)utf16.length);
     if (information_class == RDP_SESSION_FILE_ID_EXTD_DIRECTORY_INFORMATION ||
@@ -2183,8 +2426,6 @@ uint32_t rdp_session_apply_basic_information(rdp_session_redirected_file* file,
     uint64_t access_time = 0;
     uint64_t write_time = 0;
     uint32_t attributes = 0;
-    mode_t mode = 0;
-    mode_t write_mask = (mode_t)(S_IWUSR | S_IWGRP | S_IWOTH);
 
     if (!file || !file->path || !data || length != 36u)
         return RDP_SESSION_DEVICE_INVALID_PARAMETER;
@@ -2196,21 +2437,23 @@ uint32_t rdp_session_apply_basic_information(rdp_session_redirected_file* file,
     write_time = rdp_session_read_u64_le_raw(data + 16);
     attributes = (uint32_t)data[32] | ((uint32_t)data[33] << 8) | ((uint32_t)data[34] << 16) |
                  ((uint32_t)data[35] << 24);
+    if ((attributes &
+         ~RDP_SESSION_FILE_ATTRIBUTE_SETTABLE_MASK) != 0u)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+#if !defined(RDP_HAVE_ATTR) || !defined(__linux__)
+    if ((attributes &
+         RDP_SESSION_FILE_ATTRIBUTE_STORED_MASK) != 0u)
+        return RDP_SESSION_DEVICE_NOT_SUPPORTED;
+#endif
     if (rdp_session_timespec_from_filetime(access_time, &times[0]) != 0 ||
         rdp_session_timespec_from_filetime(write_time, &times[1]) != 0)
         return RDP_SESSION_DEVICE_INVALID_PARAMETER;
     if (futimens(file->fd, times) != 0)
         return rdp_session_errno_to_device_status(errno);
     if (attributes != 0)
-    {
-        mode = st.st_mode;
-        if ((attributes & RDP_SESSION_FILE_ATTRIBUTE_READONLY) != 0)
-            mode = (mode_t)(mode & (mode_t)(~write_mask));
-        else
-            mode = (mode_t)(mode | S_IWUSR);
-        if (fchmod(file->fd, mode) != 0)
-            return rdp_session_errno_to_device_status(errno);
-    }
+        return rdp_session_apply_file_attributes(file->fd,
+                                                 &st,
+                                                 attributes);
     return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 }
 
@@ -2369,7 +2612,7 @@ static uint32_t rdp_session_query_allocated_ranges(rdp_session_redirected_file* 
     file_size = (uint64_t)st.st_size;
     if (end > file_size)
         end = file_size;
-#if defined(SEEK_DATA) && defined(SEEK_HOLE)
+#if defined(RDP_SESSION_SEEK_DATA) && defined(RDP_SESSION_SEEK_HOLE)
     {
         off_t pos = (off_t)offset;
         off_t limit = (off_t)end;
@@ -2377,7 +2620,8 @@ static uint32_t rdp_session_query_allocated_ranges(rdp_session_redirected_file* 
 
         while (pos < limit)
         {
-            off_t data_offset = lseek(file->fd, pos, SEEK_DATA);
+            off_t data_offset =
+                lseek(file->fd, pos, RDP_SESSION_SEEK_DATA);
             off_t hole_offset = 0;
             uint64_t range_offset = 0;
             uint64_t range_end = 0;
@@ -2394,7 +2638,10 @@ static uint32_t rdp_session_query_allocated_ranges(rdp_session_redirected_file* 
             used_seek_data = 1;
             if (data_offset >= limit)
                 return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
-            hole_offset = lseek(file->fd, data_offset, SEEK_HOLE);
+            hole_offset =
+                lseek(file->fd,
+                      data_offset,
+                      RDP_SESSION_SEEK_HOLE);
             if (hole_offset < 0)
             {
                 if (errno == EINVAL)
@@ -3060,6 +3307,37 @@ static librdp_status rdp_session_handle_filesystem_create(librdp_session* sessio
         else
         {
             io_status = rdp_session_drive_open_path(session, request.io.device_id, path, flags, 0600, &fd);
+        }
+    }
+    if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
+        fd >= 0 &&
+        (request.create_options &
+         RDP_SESSION_FILE_DIRECTORY_FILE) == 0u &&
+        request.file_attributes != 0u)
+    {
+        struct stat opened_st;
+
+        memset(&opened_st, 0, sizeof(opened_st));
+        if (fstat(fd, &opened_st) != 0)
+            io_status =
+                rdp_session_errno_to_device_status(errno);
+        else
+            io_status = rdp_session_apply_file_attributes(
+                fd,
+                &opened_st,
+                request.file_attributes);
+        if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+        {
+            (void)close(fd);
+            fd = -1;
+            if (!existed)
+            {
+                (void)rdp_session_drive_unlinkat(
+                    session,
+                    request.io.device_id,
+                    path,
+                    0);
+            }
         }
     }
 
@@ -4217,7 +4495,7 @@ static librdp_status rdp_session_directory_snapshot_append(
     entry->change_time = rdp_session_stat_ctime(st);
     entry->owner_id = (uint64_t)st->st_uid;
     entry->group_id = (uint64_t)st->st_gid;
-    entry->attributes = rdp_session_stat_attributes(st);
+    entry->attributes = rdp_session_stat_attributes(st, -1);
     entry->directory = S_ISDIR(st->st_mode) ? 1u : 0u;
     snapshot->count++;
     return LIBRDP_STATUS_OK;
