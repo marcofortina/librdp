@@ -486,6 +486,10 @@ librdp_status rdp_session_pointer_apply_update(librdp_session* session, const rd
                                 update->cache_index);
                 return LIBRDP_STATUS_OK;
             }
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.pointer.cached",
+                            "cache_index=%u",
+                            update->cache_index);
             rdp_session_pointer_emit_shape(session, &session->pointer_cache[update->cache_index]);
             return LIBRDP_STATUS_OK;
         case RDP_POINTER_UPDATE_KIND_SHAPE:
@@ -494,4 +498,3 @@ librdp_status rdp_session_pointer_apply_update(librdp_session* session, const rd
             return LIBRDP_STATUS_UNSUPPORTED;
     }
 }
-

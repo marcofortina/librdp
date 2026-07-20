@@ -29,7 +29,16 @@ IGNORED_PREFIXES = (
 def tracked_files():
     try:
         output = subprocess.check_output(
-            ["git", "-C", str(ROOT), "ls-files", "-z"],
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
             stderr=subprocess.DEVNULL,
         )
     except (OSError, subprocess.CalledProcessError):
@@ -63,6 +72,8 @@ def read_text(path):
 def main():
     errors = []
     for path in tracked_files():
+        if not path.is_file():
+            continue
         text = read_text(path)
         if text is None:
             continue

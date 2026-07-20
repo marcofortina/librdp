@@ -240,6 +240,7 @@ if(LIBRDP_BUILD_TESTS)
     add_executable(test_server_client_smoke
         tests/test_server_client_smoke.c
         tests/test_http_proxy.c
+        tests/test_process_state.c
         tests/test_rdg_gateway.c
         tests/test_server_support.c
     )
@@ -259,43 +260,59 @@ if(LIBRDP_BUILD_TESTS)
     librdp_configure_test_executable(test_server_client_smoke)
     if(TARGET librdp-viewer AND
        LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
-        find_program(LIBRDP_GRAPHICS_SMOKE_XVFB_EXECUTABLE NAMES Xvfb)
-        if(LIBRDP_GRAPHICS_SMOKE_XVFB_EXECUTABLE)
-            add_executable(test_x11_viewer_graphics_smoke
-                tests/test_x11_viewer_graphics_smoke.c
+        find_program(LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE NAMES Xvfb)
+        if(LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE)
+            add_executable(test_viewer_pointer_server
+                tests/test_process_state.c
+                tests/test_viewer_pointer_server.c
             )
             target_include_directories(
-                test_x11_viewer_graphics_smoke
+                test_viewer_pointer_server
+                PRIVATE
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+            )
+            librdp_configure_test_executable(
+                test_viewer_pointer_server
+            )
+            add_executable(test_x11_viewer_presentation_smoke
+                tests/test_process_state.c
+                tests/test_x11_viewer_presentation_smoke.c
+            )
+            target_include_directories(
+                test_x11_viewer_presentation_smoke
                 PRIVATE
                     ${X11_INCLUDE_DIR}
             )
             target_compile_definitions(
-                test_x11_viewer_graphics_smoke
+                test_x11_viewer_presentation_smoke
                 PRIVATE
-                    LIBRDP_TEST_XVFB_PATH="${LIBRDP_GRAPHICS_SMOKE_XVFB_EXECUTABLE}"
+                    LIBRDP_TEST_XVFB_PATH="${LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE}"
                     LIBRDP_TEST_VIEWER_PATH="$<TARGET_FILE:librdp-viewer>"
                     LIBRDP_TEST_GRAPHICS_SERVER_PATH="$<TARGET_FILE:test_server_client_smoke>"
+                    LIBRDP_TEST_POINTER_SERVER_PATH="$<TARGET_FILE:test_viewer_pointer_server>"
             )
             if(LIBRDP_FFMPEG_AVC_FOUND OR
                LIBRDP_OPENH264_AVC_FOUND)
                 target_compile_definitions(
-                    test_x11_viewer_graphics_smoke
+                    test_x11_viewer_presentation_smoke
                     PRIVATE LIBRDP_TEST_HAVE_AVC=1
                 )
             endif()
             target_link_libraries(
-                test_x11_viewer_graphics_smoke
+                test_x11_viewer_presentation_smoke
                 PRIVATE
                     OpenSSL::Crypto
                     ${X11_LIBRARIES}
+                    X11::Xfixes
             )
             add_dependencies(
-                test_x11_viewer_graphics_smoke
+                test_x11_viewer_presentation_smoke
                 librdp-viewer
                 test_server_client_smoke
+                test_viewer_pointer_server
             )
             librdp_configure_test_executable(
-                test_x11_viewer_graphics_smoke
+                test_x11_viewer_presentation_smoke
             )
         endif()
     endif()
@@ -380,7 +397,8 @@ if(LIBRDP_BUILD_TESTS)
     endif()
     foreach(LIBRDP_NATIVE_TEST_TARGET IN ITEMS
         test_x11_viewer_render
-        test_x11_viewer_graphics_smoke
+        test_x11_viewer_presentation_smoke
+        test_viewer_pointer_server
         test_x11_viewer_audio
         test_x11_viewer_camera
         test_x11_viewer_keyboard
@@ -618,14 +636,14 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke graphics-backpressure)
     add_test(NAME server_client_smoke_graphics_motion
              COMMAND test_server_client_smoke graphics-motion)
-    if(TARGET test_x11_viewer_graphics_smoke)
-        add_test(NAME x11_viewer_graphics_smoke
-                 COMMAND test_x11_viewer_graphics_smoke)
+    if(TARGET test_x11_viewer_presentation_smoke)
+        add_test(NAME x11_viewer_presentation_smoke
+                 COMMAND test_x11_viewer_presentation_smoke)
         set_tests_properties(
-            x11_viewer_graphics_smoke
+            x11_viewer_presentation_smoke
             PROPERTIES
                 RUN_SERIAL TRUE
-                TIMEOUT 300
+                TIMEOUT 360
         )
     endif()
     if(LIBRDP_FFMPEG_AVC_FOUND OR

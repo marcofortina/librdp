@@ -17,6 +17,7 @@
 #include "server_host.h"
 #include "server_platform.h"
 #include "test_http_proxy.h"
+#include "test_process_state.h"
 #include "test_rdg_gateway.h"
 #include "test_server_support.h"
 
@@ -7957,62 +7958,6 @@ static const smoke_gateway_profile* smoke_gateway_profile_by_name(
     return NULL;
 }
 
-static int smoke_viewer_state_write(const char* path,
-                                    uint16_t port,
-                                    int frame_ready)
-{
-    char temporary[PATH_MAX];
-    char contents[96];
-    size_t offset = 0u;
-    size_t length = 0u;
-    int temporary_length = 0;
-    int contents_length = 0;
-    int fd = -1;
-
-    if (!path || path[0] == '\0' || port == 0u)
-        return 0;
-    temporary_length = snprintf(temporary,
-                                sizeof(temporary),
-                                "%s.tmp.%ld",
-                                path,
-                                (long)getpid());
-    contents_length = snprintf(contents,
-                               sizeof(contents),
-                               "port=%u\nframe_ready=%u\n",
-                               (unsigned int)port,
-                               frame_ready ? 1u : 0u);
-    if (temporary_length <= 0 ||
-        (size_t)temporary_length >= sizeof(temporary) ||
-        contents_length <= 0 ||
-        (size_t)contents_length >= sizeof(contents))
-        return 0;
-    length = (size_t)contents_length;
-    fd = open(temporary,
-              O_WRONLY | O_CREAT | O_TRUNC,
-              S_IRUSR | S_IWUSR);
-    if (fd < 0)
-        return 0;
-    while (offset < length)
-    {
-        ssize_t written = write(fd,
-                                contents + offset,
-                                length - offset);
-
-        if (written < 0 && errno == EINTR)
-            continue;
-        if (written <= 0)
-            break;
-        offset += (size_t)written;
-    }
-    if (close(fd) != 0 || offset != length ||
-        rename(temporary, path) != 0)
-    {
-        (void)unlink(temporary);
-        return 0;
-    }
-    return 1;
-}
-
 static int smoke_viewer_graphics_mode(const char* name,
                                       smoke_graphics_mode* mode)
 {
@@ -8123,7 +8068,7 @@ static int smoke_serve_viewer_graphics(const char* name,
     if (!smoke_wait_for_port(
             fastpath_send ? &fastpath.port : &graphics.port,
             &port) ||
-        !smoke_viewer_state_write(state_path, port, 0))
+        !test_process_state_write(state_path, port, 0u))
         return 1;
     for (attempt = 0u; attempt < 3000u; attempt++)
     {
@@ -8135,7 +8080,7 @@ static int smoke_serve_viewer_graphics(const char* name,
         (void)nanosleep(&delay, NULL);
     }
     if (attempt == 3000u ||
-        !smoke_viewer_state_write(state_path, port, 1))
+        !test_process_state_write(state_path, port, 1u))
         return 1;
     if (pthread_join(*thread, NULL) != 0)
         return 1;

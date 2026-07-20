@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /*
- * Module: isolated X11 viewer graphics integration smoke.
+ * Module: isolated X11 viewer graphics and pointer integration smoke.
  * Coverage: actual viewer process, X11 window presentation, Standard Security,
- * bitmap codecs, RemoteFX, and negotiated Graphics Pipeline codecs.
+ * bitmap codecs, RemoteFX, negotiated Graphics Pipeline codecs, pointer
+ * shape/cache state, visibility, and server-directed position.
  * Bug classes: decoder output never presented, black windows, unstable frames,
  * row or channel corruption, process teardown failures, and trace errors.
  * Determinism: every family is rendered twice on a private Xvfb server and the
@@ -18,8 +19,12 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/Xfixes.h>
 
 #include <openssl/evp.h>
+
+#include "test_process_state.h"
+#include "test_viewer_pointer_fixture.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -53,6 +58,16 @@ typedef struct viewer_smoke_processes
     pid_t server;
     pid_t viewer;
 } viewer_smoke_processes;
+
+typedef struct viewer_smoke_cursor_snapshot
+{
+    unsigned short width;
+    unsigned short height;
+    unsigned short xhot;
+    unsigned short yhot;
+    unsigned long serial;
+    uint8_t digest[VIEWER_SMOKE_SHA256_BYTES];
+} viewer_smoke_cursor_snapshot;
 
 static void viewer_smoke_sleep_ms(unsigned int milliseconds)
 {
@@ -278,36 +293,36 @@ static pid_t viewer_smoke_start_server(const char* family,
     _exit(127);
 }
 
-static int viewer_smoke_read_state(const char* path,
-                                   uint16_t* port,
-                                   int* frame_ready)
+static pid_t viewer_smoke_start_pointer_server(
+    const char* state_path,
+    const char* ack_path,
+    const char* log_path)
 {
-    FILE* file = NULL;
-    unsigned int parsed_port = 0u;
-    unsigned int parsed_ready = 0u;
-    int fields = 0;
+    pid_t child = fork();
 
-    if (!path || !port || !frame_ready)
-        return 0;
-    file = fopen(path, "rb");
-    if (!file)
-        return 0;
-    fields = fscanf(file,
-                    "port=%u\nframe_ready=%u\n",
-                    &parsed_port,
-                    &parsed_ready);
-    fclose(file);
-    if (fields != 2 || parsed_port == 0u ||
-        parsed_port > UINT16_MAX || parsed_ready > 1u)
-        return 0;
-    *port = (uint16_t)parsed_port;
-    *frame_ready = parsed_ready ? 1 : 0;
-    return 1;
+    if (child != 0)
+        return child;
+    {
+        int log = viewer_smoke_open_log(log_path);
+
+        if (log < 0 ||
+            dup2(log, STDOUT_FILENO) < 0 ||
+            dup2(log, STDERR_FILENO) < 0)
+            _exit(126);
+        if (log > STDERR_FILENO)
+            close(log);
+    }
+    execl(LIBRDP_TEST_POINTER_SERVER_PATH,
+          LIBRDP_TEST_POINTER_SERVER_PATH,
+          state_path,
+          ack_path,
+          (char*)NULL);
+    _exit(127);
 }
 
 static int viewer_smoke_wait_state(const char* state_path,
                                    pid_t server,
-                                   int require_frame,
+                                   uint32_t required_stage,
                                    uint16_t* port)
 {
     unsigned int step = 0u;
@@ -315,12 +330,12 @@ static int viewer_smoke_wait_state(const char* state_path,
     for (step = 0u; step < VIEWER_SMOKE_WAIT_STEPS; step++)
     {
         uint16_t parsed_port = 0u;
-        int frame_ready = 0;
+        uint32_t stage = 0u;
 
-        if (viewer_smoke_read_state(state_path,
+        if (test_process_state_read(state_path,
                                     &parsed_port,
-                                    &frame_ready) &&
-            (!require_frame || frame_ready))
+                                    &stage) &&
+            stage >= required_stage)
         {
             *port = parsed_port;
             return 1;
@@ -630,6 +645,244 @@ static int viewer_smoke_close_window(Display* display,
     return 1;
 }
 
+static int viewer_smoke_capture_cursor(
+    Display* display,
+    viewer_smoke_cursor_snapshot* snapshot)
+{
+    XFixesCursorImage* image = NULL;
+    uint8_t* pixels = NULL;
+    size_t pixel_count = 0u;
+    size_t byte_count = 0u;
+    unsigned int digest_length = 0u;
+    size_t index = 0u;
+    int result = 0;
+
+    if (!display || !snapshot)
+        return 0;
+    XSync(display, False);
+    image = XFixesGetCursorImage(display);
+    if (!image || image->width == 0u || image->height == 0u ||
+        (size_t)image->width >
+            SIZE_MAX / (size_t)image->height)
+        goto cleanup;
+    pixel_count =
+        (size_t)image->width * (size_t)image->height;
+    if (pixel_count > SIZE_MAX / 4u)
+        goto cleanup;
+    byte_count = pixel_count * 4u;
+    pixels = (uint8_t*)malloc(byte_count);
+    if (!pixels)
+        goto cleanup;
+    for (index = 0u; index < pixel_count; index++)
+    {
+        uint32_t pixel = (uint32_t)image->pixels[index];
+        size_t offset = index * 4u;
+
+        pixels[offset] = (uint8_t)(pixel & 0xffu);
+        pixels[offset + 1u] =
+            (uint8_t)((pixel >> 8u) & 0xffu);
+        pixels[offset + 2u] =
+            (uint8_t)((pixel >> 16u) & 0xffu);
+        pixels[offset + 3u] =
+            (uint8_t)((pixel >> 24u) & 0xffu);
+    }
+    if (EVP_Digest(pixels,
+                   byte_count,
+                   snapshot->digest,
+                   &digest_length,
+                   EVP_sha256(),
+                   NULL) != 1 ||
+        digest_length != VIEWER_SMOKE_SHA256_BYTES)
+        goto cleanup;
+    snapshot->width = image->width;
+    snapshot->height = image->height;
+    snapshot->xhot = image->xhot;
+    snapshot->yhot = image->yhot;
+    snapshot->serial = image->cursor_serial;
+    result = 1;
+
+cleanup:
+    free(pixels);
+    if (image)
+        XFree(image);
+    return result;
+}
+
+static int viewer_smoke_cursor_equal(
+    const viewer_smoke_cursor_snapshot* left,
+    const viewer_smoke_cursor_snapshot* right)
+{
+    return left && right &&
+           left->width == right->width &&
+           left->height == right->height &&
+           left->xhot == right->xhot &&
+           left->yhot == right->yhot &&
+           memcmp(left->digest,
+                  right->digest,
+                  sizeof(left->digest)) == 0;
+}
+
+static int viewer_smoke_wait_cursor_equal(
+    Display* display,
+    pid_t viewer,
+    const viewer_smoke_cursor_snapshot* expected)
+{
+    unsigned int step = 0u;
+
+    for (step = 0u; step < VIEWER_SMOKE_WAIT_STEPS; step++)
+    {
+        viewer_smoke_cursor_snapshot current;
+
+        memset(&current, 0, sizeof(current));
+        if (viewer_smoke_capture_cursor(display, &current) &&
+            viewer_smoke_cursor_equal(expected, &current))
+            return 1;
+        if (!viewer_smoke_process_alive(viewer))
+            return 0;
+        viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    }
+    return 0;
+}
+
+static int viewer_smoke_cursor_is_shape(
+    Display* display,
+    unsigned long excluded_serial,
+    unsigned long* serial)
+{
+    XFixesCursorImage* image = NULL;
+    uint16_t y = 0u;
+    uint16_t x = 0u;
+    int result = 1;
+
+    if (!display || !serial)
+        return 0;
+    XSync(display, False);
+    image = XFixesGetCursorImage(display);
+    if (!image ||
+        image->width != TEST_VIEWER_POINTER_WIDTH ||
+        image->height != TEST_VIEWER_POINTER_HEIGHT ||
+        image->xhot != TEST_VIEWER_POINTER_HOTSPOT_X ||
+        image->yhot != TEST_VIEWER_POINTER_HOTSPOT_Y ||
+        (excluded_serial != 0u &&
+         image->cursor_serial == excluded_serial))
+        result = 0;
+    for (y = 0u;
+         result && y < TEST_VIEWER_POINTER_HEIGHT;
+         y++)
+    {
+        for (x = 0u;
+             x < TEST_VIEWER_POINTER_WIDTH;
+             x++)
+        {
+            size_t index =
+                (size_t)y * TEST_VIEWER_POINTER_WIDTH + x;
+
+            if ((uint32_t)image->pixels[index] !=
+                test_viewer_pointer_argb(x, y))
+            {
+                result = 0;
+                break;
+            }
+        }
+    }
+    if (result)
+        *serial = image->cursor_serial;
+    if (image)
+        XFree(image);
+    return result;
+}
+
+static int viewer_smoke_wait_cursor_shape(
+    Display* display,
+    pid_t viewer,
+    unsigned long excluded_serial,
+    unsigned long* serial)
+{
+    unsigned int step = 0u;
+
+    for (step = 0u; step < VIEWER_SMOKE_WAIT_STEPS; step++)
+    {
+        if (viewer_smoke_cursor_is_shape(display,
+                                         excluded_serial,
+                                         serial))
+            return 1;
+        if (!viewer_smoke_process_alive(viewer))
+            return 0;
+        viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    }
+    return 0;
+}
+
+static int viewer_smoke_wait_hidden_cursor(Display* display,
+                                           pid_t viewer)
+{
+    unsigned int step = 0u;
+
+    for (step = 0u; step < VIEWER_SMOKE_WAIT_STEPS; step++)
+    {
+        XFixesCursorImage* image = NULL;
+        int hidden = 0;
+
+        XSync(display, False);
+        image = XFixesGetCursorImage(display);
+        hidden = image && image->width == 1u &&
+                 image->height == 1u &&
+                 ((uint32_t)image->pixels[0] >> 24u) == 0u;
+        if (image)
+            XFree(image);
+        if (hidden)
+            return 1;
+        if (!viewer_smoke_process_alive(viewer))
+            return 0;
+        viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    }
+    return 0;
+}
+
+static int viewer_smoke_wait_pointer_position(
+    Display* display,
+    Window window,
+    pid_t viewer)
+{
+    unsigned int step = 0u;
+
+    for (step = 0u; step < VIEWER_SMOKE_WAIT_STEPS; step++)
+    {
+        Window root = None;
+        Window child = None;
+        int root_x = 0;
+        int root_y = 0;
+        int window_x = 0;
+        int window_y = 0;
+        unsigned int mask = 0u;
+
+        XSync(display, False);
+        if (XQueryPointer(display,
+                          window,
+                          &root,
+                          &child,
+                          &root_x,
+                          &root_y,
+                          &window_x,
+                          &window_y,
+                          &mask) &&
+            window_x == TEST_VIEWER_POINTER_POSITION_X &&
+            window_y == TEST_VIEWER_POINTER_POSITION_Y)
+            return 1;
+        if (!viewer_smoke_process_alive(viewer))
+            return 0;
+        viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    }
+    return 0;
+}
+
+static int viewer_smoke_ack_pointer_stage(const char* ack_path,
+                                          uint16_t port,
+                                          uint32_t stage)
+{
+    return test_process_state_write(ack_path, port, stage);
+}
+
 static void viewer_smoke_print_digest(
     const char* family,
     unsigned int run,
@@ -770,6 +1023,253 @@ cleanup:
     return result;
 }
 
+static int viewer_smoke_run_pointer(
+    Display* display,
+    const char* root)
+{
+    char state_path[PATH_MAX];
+    char ack_path[PATH_MAX];
+    char server_log[PATH_MAX];
+    char viewer_log[PATH_MAX];
+    viewer_smoke_processes processes;
+    viewer_smoke_cursor_snapshot default_cursor;
+    Window window = None;
+    uint16_t port = 0u;
+    uint32_t completed_stage = TEST_VIEWER_POINTER_LISTENING;
+    unsigned long shape_serial = 0u;
+    unsigned long position_serial = 0u;
+    unsigned long cached_serial = 0u;
+    int event_base = 0;
+    int error_base = 0;
+    int result = 0;
+
+    memset(&processes, 0, sizeof(processes));
+    memset(&default_cursor, 0, sizeof(default_cursor));
+    if (snprintf(state_path,
+                 sizeof(state_path),
+                 "%s/pointer.state",
+                 root) <= 0 ||
+        snprintf(ack_path,
+                 sizeof(ack_path),
+                 "%s/pointer.ack",
+                 root) <= 0 ||
+        snprintf(server_log,
+                 sizeof(server_log),
+                 "%s/pointer-server.log",
+                 root) <= 0 ||
+        snprintf(viewer_log,
+                 sizeof(viewer_log),
+                 "%s/pointer-viewer.log",
+                 root) <= 0)
+        return 0;
+    processes.server =
+        viewer_smoke_start_pointer_server(state_path,
+                                          ack_path,
+                                          server_log);
+    if (processes.server <= 0 ||
+        !viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_LISTENING,
+            &port))
+        goto cleanup;
+    processes.viewer =
+        viewer_smoke_start_viewer(
+            DisplayString(display),
+            port,
+            TEST_VIEWER_POINTER_DESKTOP_WIDTH,
+            TEST_VIEWER_POINTER_DESKTOP_HEIGHT,
+            viewer_log);
+    if (processes.viewer <= 0)
+        goto cleanup;
+    window = viewer_smoke_find_window(display,
+                                      processes.viewer);
+    if (window == None ||
+        !XFixesQueryExtension(display,
+                              &event_base,
+                              &error_base) ||
+        !viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_DEFAULT,
+            &port))
+        goto cleanup;
+    XWarpPointer(display,
+                 None,
+                 window,
+                 0,
+                 0,
+                 0,
+                 0,
+                 12,
+                 12);
+    XSync(display, False);
+    if (!viewer_smoke_capture_cursor(display,
+                                     &default_cursor) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_DEFAULT))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_DEFAULT;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_SHAPE,
+            &port) ||
+        !viewer_smoke_wait_cursor_shape(
+            display,
+            processes.viewer,
+            default_cursor.serial,
+            &shape_serial) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_SHAPE))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_SHAPE;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_POSITION,
+            &port) ||
+        !viewer_smoke_wait_pointer_position(
+            display,
+            window,
+            processes.viewer) ||
+        !viewer_smoke_cursor_is_shape(
+            display,
+            0u,
+            &position_serial) ||
+        position_serial != shape_serial ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_POSITION))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_POSITION;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_CACHED,
+            &port) ||
+        !viewer_smoke_wait_cursor_shape(
+            display,
+            processes.viewer,
+            shape_serial,
+            &cached_serial) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_CACHED))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_CACHED;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_HIDDEN,
+            &port) ||
+        !viewer_smoke_wait_hidden_cursor(
+            display,
+            processes.viewer) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_HIDDEN))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_HIDDEN;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_RESTORED,
+            &port) ||
+        !viewer_smoke_wait_cursor_equal(
+            display,
+            processes.viewer,
+            &default_cursor) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_RESTORED))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_RESTORED;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_COMPLETE,
+            &port))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_COMPLETE;
+    if (!viewer_smoke_close_window(display, window) ||
+        !viewer_smoke_wait_success(&processes.viewer,
+                                   VIEWER_SMOKE_WAIT_STEPS) ||
+        !viewer_smoke_wait_success(&processes.server,
+                                   VIEWER_SMOKE_WAIT_STEPS))
+        goto cleanup;
+    if (!viewer_smoke_file_contains(
+            viewer_log,
+            "event=client.connect.done") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=client.pointer.cached") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.pointer.default") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.pointer.shape") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.pointer.position") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.pointer.hidden") ||
+        viewer_smoke_file_contains(
+            viewer_log,
+            "status=protocol_error") ||
+        viewer_smoke_file_contains(
+            viewer_log,
+            "event=client.connect.failed"))
+        goto cleanup;
+    fprintf(stdout,
+            "pointer default=%ux%u shape_serial=%lu cached_serial=%lu position=%u,%u\n",
+            (unsigned int)default_cursor.width,
+            (unsigned int)default_cursor.height,
+            shape_serial,
+            cached_serial,
+            TEST_VIEWER_POINTER_POSITION_X,
+            TEST_VIEWER_POINTER_POSITION_Y);
+    result = 1;
+
+cleanup:
+    if (!result)
+    {
+        fprintf(stderr,
+                "viewer pointer smoke failed stage=%lu\n",
+                (unsigned long)completed_stage);
+        viewer_smoke_dump_file("pointer server",
+                               server_log);
+        viewer_smoke_dump_file("pointer viewer",
+                               viewer_log);
+    }
+    viewer_smoke_stop_process(&processes.viewer);
+    viewer_smoke_stop_process(&processes.server);
+    if (!getenv("LIBRDP_TEST_KEEP_TEMP"))
+    {
+        (void)unlink(state_path);
+        (void)unlink(ack_path);
+        (void)unlink(server_log);
+        (void)unlink(viewer_log);
+    }
+    return result;
+}
+
 int main(void)
 {
     static const viewer_smoke_family families[] = {
@@ -784,7 +1284,7 @@ int main(void)
         {"avc", 200u, 200u},
 #endif
     };
-    char root[] = "/tmp/librdp-viewer-graphics-XXXXXX";
+    char root[] = "/tmp/librdp-viewer-presentation-XXXXXX";
     char display_name[32];
     char xvfb_log[PATH_MAX];
     viewer_smoke_processes processes;
@@ -840,6 +1340,8 @@ int main(void)
             goto cleanup;
         }
     }
+    if (!viewer_smoke_run_pointer(display, root))
+        goto cleanup;
     result = 0;
 
 cleanup:
