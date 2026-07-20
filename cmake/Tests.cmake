@@ -528,6 +528,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke cancel-authenticating)
     add_test(NAME server_client_smoke_cancel_activating
              COMMAND test_server_client_smoke cancel-activating)
+    add_test(NAME server_client_smoke_lifecycle_stress
+             COMMAND test_server_client_smoke lifecycle-stress)
     if(LIBRDP_CURL_FOUND)
         add_test(NAME server_client_smoke_gateway_http_connect
                  COMMAND test_server_client_smoke gateway-http-connect)
@@ -585,7 +587,16 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_redirection_tls
         server_client_smoke_redirection_loop
         server_client_smoke_output_control
+        server_client_smoke_cancel_connecting
+        server_client_smoke_cancel_negotiating
+        server_client_smoke_cancel_tls
+        server_client_smoke_cancel_authenticating
+        server_client_smoke_cancel_activating
         PROPERTIES TIMEOUT 60
+    )
+    set_tests_properties(
+        server_client_smoke_lifecycle_stress
+        PROPERTIES TIMEOUT 180
     )
     if(TEST server_client_smoke_gateway_http_connect)
         set_tests_properties(

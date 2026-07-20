@@ -29,6 +29,7 @@
 
 #include <openssl/err.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -54,6 +55,22 @@
 #define SMOKE_LIFECYCLE_CAPACITY 32u
 #define SMOKE_TRACE_RECENT_CAPACITY 32u
 #define SMOKE_TRACE_RECENT_LINE 256u
+#define SMOKE_LIFECYCLE_STRESS_CYCLES 24u
+#define SMOKE_LIFECYCLE_STRESS_WARMUP_CYCLES 4u
+#define SMOKE_LIFECYCLE_STRESS_RSS_ALLOWANCE (32u * 1024u * 1024u)
+#define SMOKE_DESCRIPTOR_SCAN_LIMIT 1048576L
+
+#if defined(__SANITIZE_ADDRESS__)
+#define SMOKE_ADDRESS_SANITIZER_ACTIVE 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define SMOKE_ADDRESS_SANITIZER_ACTIVE 1
+#else
+#define SMOKE_ADDRESS_SANITIZER_ACTIVE 0
+#endif
+#else
+#define SMOKE_ADDRESS_SANITIZER_ACTIVE 0
+#endif
 
 typedef struct smoke_nla_identity
 {
@@ -3514,6 +3531,208 @@ cleanup:
     return result;
 }
 
+typedef struct smoke_resource_snapshot
+{
+    size_t descriptor_count;
+    size_t thread_count;
+    uint64_t resident_bytes;
+    int thread_count_available;
+    int resident_bytes_available;
+} smoke_resource_snapshot;
+
+/*
+ * Prefer procfs for constant-time descriptor accounting, then fall back to a
+ * bounded POSIX descriptor scan on systems without procfs.
+ */
+static int smoke_count_descriptors(size_t* count)
+{
+    DIR* directory = NULL;
+    struct dirent* entry = NULL;
+    size_t total = 0u;
+    long descriptor_limit = 0;
+    int descriptor = 0;
+
+    if (!count)
+        return 0;
+    directory = opendir("/proc/self/fd");
+    if (directory)
+    {
+        while ((entry = readdir(directory)) != NULL)
+        {
+            if (strcmp(entry->d_name, ".") != 0 &&
+                strcmp(entry->d_name, "..") != 0)
+                total++;
+        }
+        (void)closedir(directory);
+        if (total == 0u)
+            return 0;
+        *count = total - 1u;
+        return 1;
+    }
+
+    descriptor_limit = sysconf(_SC_OPEN_MAX);
+    if (descriptor_limit <= 0)
+        return 0;
+    if (descriptor_limit > SMOKE_DESCRIPTOR_SCAN_LIMIT)
+        descriptor_limit = SMOKE_DESCRIPTOR_SCAN_LIMIT;
+    for (descriptor = 0;
+         (long)descriptor < descriptor_limit;
+         descriptor++)
+    {
+        errno = 0;
+        if (fcntl(descriptor, F_GETFD) >= 0 || errno != EBADF)
+            total++;
+    }
+    *count = total;
+    return 1;
+}
+
+/*
+ * Procfs provides current thread and resident-memory observations on Linux.
+ * Other supported systems still receive portable descriptor checks and run
+ * this same loop under leak sanitizers in their configured test jobs.
+ */
+static void smoke_read_optional_process_resources(
+    smoke_resource_snapshot* snapshot)
+{
+    DIR* directory = NULL;
+    struct dirent* entry = NULL;
+#if !SMOKE_ADDRESS_SANITIZER_ACTIVE
+    FILE* statm = NULL;
+    unsigned long long virtual_pages = 0u;
+    unsigned long long resident_pages = 0u;
+    long page_size = 0;
+#endif
+
+    directory = opendir("/proc/self/task");
+    if (directory)
+    {
+        while ((entry = readdir(directory)) != NULL)
+        {
+            if (strcmp(entry->d_name, ".") != 0 &&
+                strcmp(entry->d_name, "..") != 0)
+                snapshot->thread_count++;
+        }
+        (void)closedir(directory);
+        snapshot->thread_count_available = 1;
+    }
+
+#if !SMOKE_ADDRESS_SANITIZER_ACTIVE
+    statm = fopen("/proc/self/statm", "r");
+    if (!statm)
+        return;
+    page_size = sysconf(_SC_PAGESIZE);
+    if (page_size > 0 &&
+        fscanf(statm,
+               "%llu %llu",
+               &virtual_pages,
+               &resident_pages) == 2 &&
+        resident_pages <= UINT64_MAX / (uint64_t)page_size)
+    {
+        snapshot->resident_bytes =
+            (uint64_t)resident_pages * (uint64_t)page_size;
+        snapshot->resident_bytes_available = 1;
+    }
+    (void)virtual_pages;
+    (void)fclose(statm);
+#endif
+}
+
+static int smoke_take_resource_snapshot(smoke_resource_snapshot* snapshot)
+{
+    if (!snapshot)
+        return 0;
+    memset(snapshot, 0, sizeof(*snapshot));
+    if (!smoke_count_descriptors(&snapshot->descriptor_count))
+        return 0;
+    smoke_read_optional_process_resources(snapshot);
+    return 1;
+}
+
+/*
+ * Alternate all client security paths, tear every fixture down completely,
+ * and periodically include a protocol-driven reconnect. Exact descriptor and
+ * thread baselines catch leaked transports or workers; bounded resident growth
+ * complements the allocator-level sanitizer run.
+ */
+static int smoke_run_lifecycle_stress(void)
+{
+    smoke_resource_snapshot baseline;
+    smoke_resource_snapshot current;
+    uint64_t resident_floor = 0u;
+    unsigned int cycle = 0u;
+
+    CHECK(smoke_take_resource_snapshot(&baseline));
+    for (cycle = 0u;
+         cycle < SMOKE_LIFECYCLE_STRESS_CYCLES;
+         cycle++)
+    {
+        librdp_security_mode security = LIBRDP_SECURITY_STANDARD;
+        const smoke_nla_identity* identity = NULL;
+
+        if (cycle % 3u == 1u)
+            security = LIBRDP_SECURITY_TLS;
+        else if (cycle % 3u == 2u)
+        {
+            security = LIBRDP_SECURITY_NLA;
+            identity = &smoke_nla_default_identity;
+        }
+        CHECK(smoke_run_profile(security,
+                                LIBRDP_STATUS_OK,
+                                identity,
+                                "127.0.0.1",
+                                "127.0.0.1",
+                                NULL,
+                                0,
+                                -1) == 0);
+        if (cycle % 6u == 5u)
+            CHECK(smoke_run_redirection((cycle / 6u) % 2u, 0) == 0);
+
+        CHECK(smoke_take_resource_snapshot(&current));
+        if (current.descriptor_count != baseline.descriptor_count)
+        {
+            fprintf(stderr,
+                    "lifecycle stress descriptor growth cycle=%u baseline=%llu current=%llu\n",
+                    cycle,
+                    (unsigned long long)baseline.descriptor_count,
+                    (unsigned long long)current.descriptor_count);
+            return 1;
+        }
+        if (baseline.thread_count_available &&
+            current.thread_count_available &&
+            current.thread_count != baseline.thread_count)
+        {
+            fprintf(stderr,
+                    "lifecycle stress thread growth cycle=%u baseline=%llu current=%llu\n",
+                    cycle,
+                    (unsigned long long)baseline.thread_count,
+                    (unsigned long long)current.thread_count);
+            return 1;
+        }
+        if (current.resident_bytes_available &&
+            cycle == SMOKE_LIFECYCLE_STRESS_WARMUP_CYCLES)
+            resident_floor = current.resident_bytes;
+        else if (current.resident_bytes_available &&
+                 cycle > SMOKE_LIFECYCLE_STRESS_WARMUP_CYCLES)
+        {
+            if (current.resident_bytes < resident_floor)
+                resident_floor = current.resident_bytes;
+            if (current.resident_bytes >
+                resident_floor +
+                    SMOKE_LIFECYCLE_STRESS_RSS_ALLOWANCE)
+            {
+                fprintf(stderr,
+                        "lifecycle stress resident growth cycle=%u floor=%llu current=%llu\n",
+                        cycle,
+                        (unsigned long long)resident_floor,
+                        (unsigned long long)current.resident_bytes);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 /*
  * Hold a real NLA server immediately after TLS so the client must expire its
  * CredSSP challenge read. The fixture also verifies phase attribution and that
@@ -3940,6 +4159,8 @@ int main(int argc, char** argv)
         return smoke_run_redirection(1, 0);
     if (argc == 2 && strcmp(argv[1], "redirection-loop") == 0)
         return smoke_run_redirection(0, 1);
+    if (argc == 2 && strcmp(argv[1], "lifecycle-stress") == 0)
+        return smoke_run_lifecycle_stress();
     if (argc == 2 && strcmp(argv[1], "output-control") == 0)
     {
         return smoke_run_profile(LIBRDP_SECURITY_STANDARD,
@@ -4047,7 +4268,8 @@ int main(int argc, char** argv)
                 "timeout-credssp|standard-integrity|security-downgrade|"
                 "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake|"
                 "redirection-standard|redirection-tls|redirection-loop|"
-                "output-control|cancel-connecting|cancel-negotiating|"
+                "lifecycle-stress|output-control|"
+                "cancel-connecting|cancel-negotiating|"
                 "cancel-tls|cancel-authenticating|cancel-activating|"
                 "gateway-http-connect|gateway-session-credentials|"
                 "gateway-no-session-credentials|gateway-auth-failure|"
