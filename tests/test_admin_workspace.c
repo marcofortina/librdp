@@ -263,6 +263,9 @@ static int test_workspace_selection(void)
       "<Alias>tool</Alias><RemoteAppProgram>||tool</RemoteAppProgram>"
       "</RemoteApp>"
       "</Resources></Workspace>";
+    librdp_workspace_config config;
+    librdp_workspace* workspace = NULL;
+#ifdef RDP_HAVE_LIBXML2
     static const char duplicate_feed[] =
       "<Workspace><Resources>"
       "<Resource><ID>shared-resource</ID><Title>First Desktop</Title>"
@@ -272,9 +275,6 @@ static int test_workspace_selection(void)
       "<Type>Desktop</Type><TerminalServer>second.example.test</TerminalServer>"
       "</Resource>"
       "</Resources></Workspace>";
-    librdp_workspace_config config;
-    librdp_workspace* workspace = NULL;
-#ifdef RDP_HAVE_LIBXML2
     size_t selected = 99u;
 #endif
     FILE* errors = tmpfile();
