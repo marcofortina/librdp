@@ -3269,7 +3269,7 @@ static librdp_status rdp_session_handle_filesystem_create(librdp_session* sessio
     {
         uint32_t open_count = 0;
 
-        for (size_t i = 0; i < RDP_SESSION_MAX_REDIRECTED_FILES; i++)
+        for (size_t i = 0; i < session->limits.file_handles; i++)
         {
             if (session->redirected_files[i].active &&
                 session->redirected_files[i].device_id == request.io.device_id)
@@ -3350,6 +3350,13 @@ static librdp_status rdp_session_handle_filesystem_create(librdp_session* sessio
             (void)close(fd);
             fd = -1;
             file_id = 0;
+            if (!existed)
+            {
+                (void)rdp_session_drive_unlinkat(session,
+                                                 request.io.device_id,
+                                                 path,
+                                                 0);
+            }
         }
         else
         {
@@ -4903,6 +4910,25 @@ static int rdp_session_directory_notify_filter_supported(
     return (completion_filter & ~supported) == 0u;
 }
 
+static uint32_t rdp_session_directory_notify_active_count(
+    const librdp_session* session)
+{
+    uint32_t count = 0u;
+    size_t index = 0u;
+
+    if (!session)
+        return 0u;
+    for (index = 0u; index < session->limits.file_handles; index++)
+    {
+        const rdp_session_redirected_file* file =
+            &session->redirected_files[index];
+
+        if (file->active && file->notify.active)
+            count++;
+    }
+    return count;
+}
+
 /*
  * Install one watch only after validating the directory handle and supported
  * filter set. The initial snapshot becomes request-owned state; invalid or
@@ -4938,6 +4964,12 @@ static librdp_status rdp_session_handle_filesystem_notify_change(librdp_session*
     else if (!rdp_session_directory_notify_filter_supported(
                  request.completion_filter))
         io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
+    else if (rdp_session_directory_notify_active_count(session) >=
+             session->limits.pending_requests)
+    {
+        rdp_session_metric_add(&session->metrics.limits_rejected, 1);
+        io_status = RDP_SESSION_DEVICE_TOO_MANY_OPENED_FILES;
+    }
     else
     {
         file->notify.watch_tree = request.watch_tree;

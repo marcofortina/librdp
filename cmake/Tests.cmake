@@ -591,6 +591,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke drive-confinement)
     add_test(NAME server_client_smoke_drive_device_node
              COMMAND test_server_client_smoke drive-device-node)
+    add_test(NAME server_client_smoke_drive_limits
+             COMMAND test_server_client_smoke drive-limits)
     if(LIBRDP_ATTR_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME server_client_smoke_drive_metadata
                  COMMAND test_server_client_smoke drive-metadata)
@@ -793,6 +795,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_drive_notify
         server_client_smoke_drive_confinement
         server_client_smoke_drive_device_node
+        server_client_smoke_drive_limits
         server_client_smoke_nla_invalid
         server_client_smoke_nla_expired
         server_client_smoke_nla_locked

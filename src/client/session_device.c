@@ -851,7 +851,7 @@ rdp_session_redirected_file* rdp_session_redirected_file_alloc(librdp_session* s
 
     if (!session || !file_id)
         return NULL;
-    for (i = 0; i < RDP_SESSION_MAX_REDIRECTED_FILES; i++)
+    for (i = 0; i < session->limits.file_handles; i++)
     {
         if (!session->redirected_files[i].active)
         {
@@ -867,6 +867,7 @@ rdp_session_redirected_file* rdp_session_redirected_file_alloc(librdp_session* s
             return &session->redirected_files[i];
         }
     }
+    rdp_session_metric_add(&session->metrics.limits_rejected, 1);
     return NULL;
 }
 
