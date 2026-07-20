@@ -593,6 +593,67 @@ static int viewer_smoke_inject_keyboard(Display* display,
     return 1;
 }
 
+static int viewer_smoke_inject_focus_loss(
+    Display* display,
+    Window window,
+    KeyCode* held_key,
+    int* held_button)
+{
+    KeyCode key_shift = 0u;
+
+    if (!display || window == None ||
+        !held_key || !held_button)
+        return 0;
+    key_shift =
+        XKeysymToKeycode(display, XK_Shift_L);
+    if (key_shift == 0u ||
+        !XTestFakeButtonEvent(display,
+                              Button1,
+                              True,
+                              CurrentTime))
+        return 0;
+    *held_button = 1;
+    XSync(display, False);
+    viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    if (!viewer_smoke_fake_key(display,
+                               key_shift,
+                               True))
+        return 0;
+    *held_key = key_shift;
+    XSetInputFocus(display,
+                   DefaultRootWindow(display),
+                   RevertToParent,
+                   CurrentTime);
+    XSync(display, False);
+    return 1;
+}
+
+static void viewer_smoke_release_focus_inputs(
+    Display* display,
+    KeyCode* held_key,
+    int* held_button)
+{
+    if (!display)
+        return;
+    if (held_key && *held_key != 0u)
+    {
+        (void)XTestFakeKeyEvent(display,
+                                *held_key,
+                                False,
+                                CurrentTime);
+        *held_key = 0u;
+    }
+    if (held_button && *held_button)
+    {
+        (void)XTestFakeButtonEvent(display,
+                                   Button1,
+                                   False,
+                                   CurrentTime);
+        *held_button = 0;
+    }
+    XSync(display, False);
+}
+
 static uint8_t viewer_smoke_channel(unsigned long pixel,
                                     unsigned long mask)
 {
@@ -1256,6 +1317,8 @@ static int viewer_smoke_run_pointer(
     Window window = None;
     uint16_t port = 0u;
     uint32_t completed_stage = TEST_VIEWER_POINTER_LISTENING;
+    KeyCode held_key = 0u;
+    int held_button = 0;
     unsigned long shape_serial = 0u;
     unsigned long position_serial = 0u;
     unsigned long cached_serial = 0u;
@@ -1578,6 +1641,43 @@ static int viewer_smoke_run_pointer(
     if (!viewer_smoke_wait_state(
             state_path,
             processes.server,
+            TEST_VIEWER_POINTER_FOCUS_READY,
+            &port) ||
+        !viewer_smoke_inject_focus_loss(
+            display,
+            window,
+            &held_key,
+            &held_button) ||
+        !viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_FOCUS_RELEASED,
+            &port))
+        goto cleanup;
+    viewer_smoke_release_focus_inputs(
+        display,
+        &held_key,
+        &held_button);
+    if (!viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_FOCUS_RELEASED) ||
+        !viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_FOCUS_COMPLETE,
+            &port))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_FOCUS_COMPLETE;
+    XSetInputFocus(display,
+                   window,
+                   RevertToParent,
+                   CurrentTime);
+    XSync(display, False);
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
             TEST_VIEWER_POINTER_COMPLETE,
             &port))
         goto cleanup;
@@ -1639,6 +1739,9 @@ static int viewer_smoke_run_pointer(
         !viewer_smoke_file_contains(
             viewer_log,
             "message=\"kind=keyboard") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.mouse.release_all") ||
         viewer_smoke_file_contains(
             viewer_log,
             "status=protocol_error") ||
@@ -1661,6 +1764,10 @@ static int viewer_smoke_run_pointer(
     result = 1;
 
 cleanup:
+    viewer_smoke_release_focus_inputs(
+        display,
+        &held_key,
+        &held_button);
     if (!result)
     {
         fprintf(stderr,

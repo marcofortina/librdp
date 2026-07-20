@@ -51,8 +51,10 @@ typedef struct pointer_server_input_context
 {
     size_t mouse_received;
     size_t keyboard_received;
+    size_t focus_received;
     int mouse_armed;
     int keyboard_armed;
+    int focus_armed;
     int failed;
 } pointer_server_input_context;
 
@@ -88,6 +90,30 @@ static const pointer_server_expected_input
         { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x8000u, 0x001eu },
 };
 
+static const pointer_server_expected_input
+    pointer_server_focus_sequence[] = {
+        { LIBRDP_SERVER_INPUT_MOUSE, 0x9000u, 0u },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x0000u, 0x002au },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x8000u, 0x002au },
+        { LIBRDP_SERVER_INPUT_MOUSE, 0x1000u, 0u },
+};
+
+static int pointer_server_input_matches(
+    const librdp_server_input_event* event,
+    const pointer_server_expected_input* expected)
+{
+    if (!event || !expected ||
+        event->type != expected->type ||
+        event->flags != expected->flags)
+        return 0;
+    if (event->type == LIBRDP_SERVER_INPUT_MOUSE ||
+        event->type == LIBRDP_SERVER_INPUT_EXTENDED_MOUSE)
+        return event->x == TEST_VIEWER_POINTER_MOUSE_X &&
+               event->y == TEST_VIEWER_POINTER_MOUSE_Y;
+    return event->param1 == expected->param1 &&
+           event->param2 == 0u;
+}
+
 static void pointer_server_input_callback(
     librdp_server_peer* peer,
     const librdp_server_input_event* event,
@@ -100,6 +126,38 @@ static void pointer_server_input_callback(
     (void)peer;
     if (!context || !event)
         return;
+    if (context->focus_armed)
+    {
+        if (context->focus_received >=
+            sizeof(pointer_server_focus_sequence) /
+                sizeof(pointer_server_focus_sequence[0]))
+        {
+            context->failed = 1;
+            return;
+        }
+        expected =
+            &pointer_server_focus_sequence[
+                context->focus_received];
+        if (!pointer_server_input_matches(event,
+                                          expected))
+        {
+            fprintf(stderr,
+                    "focus input mismatch index=%lu type=%u flags=0x%04x param1=0x%04x x=%u y=%u expected_type=%u expected_flags=0x%04x expected_param1=0x%04x\n",
+                    (unsigned long)context->focus_received,
+                    (unsigned int)event->type,
+                    event->flags,
+                    event->param1,
+                    event->x,
+                    event->y,
+                    (unsigned int)expected->type,
+                    expected->flags,
+                    expected->param1);
+            context->failed = 1;
+            return;
+        }
+        context->focus_received++;
+        return;
+    }
     if (context->mouse_armed &&
         (event->type == LIBRDP_SERVER_INPUT_MOUSE ||
          event->type == LIBRDP_SERVER_INPUT_EXTENDED_MOUSE))
@@ -586,6 +644,89 @@ static librdp_status pointer_server_wait_keyboard(
     return LIBRDP_STATUS_TIMEOUT;
 }
 
+static librdp_status pointer_server_wait_focus(
+    librdp_server_peer* peer,
+    pointer_server_input_context* context)
+{
+    unsigned int attempt = 0u;
+    const size_t expected_count =
+        sizeof(pointer_server_focus_sequence) /
+        sizeof(pointer_server_focus_sequence[0]);
+
+    if (!peer || !context)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (attempt = 0u;
+         attempt < POINTER_SERVER_WAIT_STEPS;
+         attempt++)
+    {
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (context->failed)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (context->focus_received == expected_count)
+            return LIBRDP_STATUS_OK;
+        status = librdp_server_peer_run_once(peer, 20);
+        if (status != LIBRDP_STATUS_OK &&
+            status != LIBRDP_STATUS_TIMEOUT)
+            return status;
+    }
+    return LIBRDP_STATUS_TIMEOUT;
+}
+
+static librdp_status pointer_server_wait_focus_settle(
+    librdp_server_peer* peer,
+    pointer_server_input_context* context,
+    const char* ack_path,
+    uint16_t port)
+{
+    unsigned int attempt = 0u;
+    int acknowledged = 0;
+
+    if (!peer || !context || !ack_path)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (attempt = 0u;
+         attempt < POINTER_SERVER_WAIT_STEPS;
+         attempt++)
+    {
+        uint16_t ack_port = 0u;
+        uint32_t ack_stage = 0u;
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (context->failed)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (test_process_state_read(ack_path,
+                                    &ack_port,
+                                    &ack_stage) &&
+            ack_port == port &&
+            ack_stage >=
+                TEST_VIEWER_POINTER_FOCUS_RELEASED)
+        {
+            acknowledged = 1;
+            break;
+        }
+        status = librdp_server_peer_run_once(peer, 20);
+        if (status != LIBRDP_STATUS_OK &&
+            status != LIBRDP_STATUS_TIMEOUT)
+            return status;
+    }
+    if (!acknowledged)
+        return LIBRDP_STATUS_TIMEOUT;
+    for (attempt = 0u; attempt < 20u; attempt++)
+    {
+        librdp_status status =
+            librdp_server_peer_run_once(peer, 20);
+
+        if (context->failed)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status != LIBRDP_STATUS_OK &&
+            status != LIBRDP_STATUS_TIMEOUT)
+            return status;
+    }
+    return context->failed
+               ? LIBRDP_STATUS_PROTOCOL_ERROR
+               : LIBRDP_STATUS_OK;
+}
+
 int main(int argc, char** argv)
 {
     uint8_t shape[TEST_VIEWER_POINTER_WIDTH *
@@ -819,6 +960,42 @@ int main(int argc, char** argv)
                 argv[1],
                 port,
                 TEST_VIEWER_POINTER_KEYBOARD_COMPLETE))
+            status = LIBRDP_STATUS_IO_ERROR;
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        input_context.focus_armed = 1;
+        if (!test_process_state_write(
+                argv[1],
+                port,
+                TEST_VIEWER_POINTER_FOCUS_READY))
+            status = LIBRDP_STATUS_IO_ERROR;
+        else
+            status = pointer_server_wait_focus(
+                peer,
+                &input_context);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        if (!test_process_state_write(
+                argv[1],
+                port,
+                TEST_VIEWER_POINTER_FOCUS_RELEASED))
+            status = LIBRDP_STATUS_IO_ERROR;
+        else
+            status = pointer_server_wait_focus_settle(
+                peer,
+                &input_context,
+                argv[2],
+                port);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        input_context.focus_armed = 0;
+        if (!test_process_state_write(
+                argv[1],
+                port,
+                TEST_VIEWER_POINTER_FOCUS_COMPLETE))
             status = LIBRDP_STATUS_IO_ERROR;
     }
     if (status == LIBRDP_STATUS_OK)

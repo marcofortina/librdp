@@ -285,6 +285,7 @@ int x11_keyboard_record_press(x11_pressed_key* pressed,
     if (pressed[keycode].down)
         return 0;
     pressed[keycode].down = 1;
+    pressed[keycode].suppress_release = 0;
     pressed[keycode].event = *event;
     if (*pressed_count < capacity)
         (*pressed_count)++;
@@ -302,8 +303,27 @@ int x11_keyboard_prepare_release(x11_pressed_key* pressed,
     *event = pressed[keycode].event;
     event->state = LIBRDP_KEY_RELEASED;
     pressed[keycode].down = 0;
+    pressed[keycode].suppress_release = 0;
     if (*pressed_count > 0)
         (*pressed_count)--;
+    return 1;
+}
+
+/*
+ * Consume the physical release that follows a synthetic remote release on
+ * focus loss. A new press clears this marker, so a key pressed again after
+ * focus restoration still receives its matching remote key-up.
+ */
+int x11_keyboard_consume_suppressed_release(
+    x11_pressed_key* pressed,
+    size_t capacity,
+    unsigned int keycode)
+{
+    if (!pressed || (size_t)keycode >= capacity ||
+        pressed[keycode].down ||
+        !pressed[keycode].suppress_release)
+        return 0;
+    pressed[keycode].suppress_release = 0;
     return 1;
 }
 
@@ -418,6 +438,7 @@ void x11_keyboard_release_all_remote_keys(x11_app* app)
             event.state = LIBRDP_KEY_RELEASED;
             send_remote_key(app, &event);
             app->pressed[i].down = 0;
+            app->pressed[i].suppress_release = 1;
         }
     }
     app->pressed_count = 0;
@@ -475,6 +496,19 @@ void x11_keyboard_handle_key_release(x11_app* app, XKeyEvent* key)
         return;
     if (is_auto_repeat_release(app, key))
         return;
+    if (x11_keyboard_consume_suppressed_release(
+            app->pressed,
+            sizeof(app->pressed) /
+                sizeof(app->pressed[0]),
+            key->keycode))
+    {
+        x11_trace_event(
+            X11_TRACE_CLIENT,
+            "x11.keyboard.release_suppressed",
+            "keycode=%u reason=focus_release",
+            key->keycode);
+        return;
+    }
 
     if (x11_keyboard_prepare_release(app->pressed,
                                      sizeof(app->pressed) / sizeof(app->pressed[0]),

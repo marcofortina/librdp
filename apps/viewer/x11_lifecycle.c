@@ -1100,6 +1100,7 @@ int x11_viewer_run(int argc, char** argv)
                     if (app.ic)
                         XUnsetICFocus(app.ic);
                     x11_keyboard_release_all_remote_keys(&app);
+                    x11_input_release_all_remote_buttons(&app);
                     x11_keyboard_ungrab(&app, CurrentTime, 1);
                     x11_trace_event(X11_TRACE_CLIENT,
                                     "x11.window.focus.out",
@@ -1151,6 +1152,7 @@ int x11_viewer_run(int argc, char** argv)
     }
 
     x11_keyboard_release_all_remote_keys(&app);
+    x11_input_release_all_remote_buttons(&app);
     x11_keyboard_ungrab(&app, CurrentTime, 1);
     (void)client_runtime_disconnect(app.runtime);
     client_runtime_free(app.runtime);

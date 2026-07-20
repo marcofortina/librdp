@@ -33,6 +33,7 @@ typedef struct client_runtime client_runtime;
 typedef struct x11_pressed_key
 {
     int down;
+    int suppress_release;
     librdp_key_event event;
 } x11_pressed_key;
 
@@ -82,6 +83,9 @@ typedef struct x11_app
     int xrandr_event_base;
     int xrandr_error_base;
     int xrandr_available;
+    uint32_t pressed_mouse_buttons;
+    uint16_t mouse_x;
+    uint16_t mouse_y;
     Atom clipboard_selection;
     Atom clipboard_property;
     Atom atom_targets;

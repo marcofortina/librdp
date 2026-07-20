@@ -49,6 +49,10 @@ int x11_keyboard_prepare_release(x11_pressed_key* pressed,
                                  unsigned int* pressed_count,
                                  unsigned int keycode,
                                  librdp_key_event* event);
+int x11_keyboard_consume_suppressed_release(
+    x11_pressed_key* pressed,
+    size_t capacity,
+    unsigned int keycode);
 void x11_keyboard_allow_xwayland_grab(x11_app* app);
 void x11_keyboard_maybe_grab(x11_app* app, Time time);
 void x11_keyboard_ungrab(x11_app* app, Time time, int force);

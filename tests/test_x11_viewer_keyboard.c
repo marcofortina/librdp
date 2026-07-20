@@ -483,6 +483,30 @@ static int test_press_release_state(void)
     CHECK(released_event.state == LIBRDP_KEY_RELEASED);
     CHECK(released_event.scancode == pressed_event.scancode);
     CHECK(x11_keyboard_prepare_release(pressed, 256u, &count, 23u, &released_event) == 0);
+    pressed[23].suppress_release = 1;
+    CHECK(x11_keyboard_consume_suppressed_release(
+              pressed,
+              256u,
+              23u) == 1);
+    CHECK(pressed[23].suppress_release == 0);
+    CHECK(x11_keyboard_consume_suppressed_release(
+              pressed,
+              256u,
+              23u) == 0);
+    pressed[23].suppress_release = 1;
+    CHECK(x11_keyboard_record_press(
+              pressed,
+              256u,
+              &count,
+              23u,
+              &pressed_event) == 1);
+    CHECK(pressed[23].suppress_release == 0);
+    CHECK(x11_keyboard_prepare_release(
+              pressed,
+              256u,
+              &count,
+              23u,
+              &released_event) == 1);
     CHECK(x11_keyboard_record_press(pressed, 256u, &count, 300u, &pressed_event) == 1);
     CHECK(count == 0u);
     return 0;

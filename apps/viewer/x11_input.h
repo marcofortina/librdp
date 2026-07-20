@@ -24,5 +24,6 @@ void x11_input_restore_cursor_after_local_mouse(x11_app* app);
 void x11_input_handle_pointer_event(x11_app* app, const librdp_pointer_event* pointer);
 void x11_input_handle_button(x11_app* app, XButtonEvent* button, librdp_mouse_state state);
 void x11_input_handle_motion(x11_app* app, XMotionEvent* motion);
+void x11_input_release_all_remote_buttons(x11_app* app);
 
 #endif
