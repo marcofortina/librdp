@@ -123,49 +123,80 @@ int x11_keyboard_next_utf8_codepoint(const char** cursor, const char* end, uint3
             return 0;
         value = (value << 6) | (uint32_t)(s[i] & 0x3fu);
     }
+    if ((need == 2u && value < 0x80u) ||
+        (need == 3u && value < 0x800u) ||
+        (need == 4u && value < 0x10000u) ||
+        (value >= 0xd800u && value <= 0xdfffu) ||
+        value > 0x10ffffu)
+        return 0;
     *codepoint = value;
     *cursor += need;
     return 1;
 }
 
-static void send_unicode_unit(x11_app* app, uint16_t code)
+static void emit_unicode_unit(uint16_t code,
+                              x11_keyboard_event_sink sink,
+                              void* user_data)
 {
     librdp_key_event event;
 
-    if (!app || !app->session || code == 0)
+    if (!sink || code == 0u)
         return;
 
     memset(&event, 0, sizeof(event));
     event.flags = LIBRDP_KEY_FLAG_UNICODE;
     event.unicode = code;
     event.state = LIBRDP_KEY_PRESSED;
-    (void)librdp_session_send_key(app->session, &event);
+    sink(&event, user_data);
     event.state = LIBRDP_KEY_RELEASED;
-    (void)librdp_session_send_key(app->session, &event);
+    sink(&event, user_data);
 }
 
-static void send_unicode_codepoint(x11_app* app, uint32_t codepoint)
+static size_t emit_unicode_codepoint(uint32_t codepoint,
+                                     x11_keyboard_event_sink sink,
+                                     void* user_data)
 {
     if (codepoint < 0x20u || codepoint == 0x7fu || codepoint > 0x10ffffu)
-        return;
+        return 0u;
     if (codepoint <= 0xffffu)
-        send_unicode_unit(app, (uint16_t)codepoint);
+    {
+        emit_unicode_unit((uint16_t)codepoint, sink, user_data);
+        return 1u;
+    }
     else
     {
         uint32_t value = codepoint - 0x10000u;
-        send_unicode_unit(app, (uint16_t)(0xd800u | ((value >> 10) & 0x3ffu)));
-        send_unicode_unit(app, (uint16_t)(0xdc00u | (value & 0x3ffu)));
+        emit_unicode_unit((uint16_t)(0xd800u | ((value >> 10) & 0x3ffu)),
+                          sink,
+                          user_data);
+        emit_unicode_unit((uint16_t)(0xdc00u | (value & 0x3ffu)),
+                          sink,
+                          user_data);
+        return 2u;
     }
 }
 
-static void send_unicode_text(x11_app* app, const char* text, size_t length)
+/*
+ * Convert text supplied by XIM into UTF-16 input units. Invalid UTF-8 stops the
+ * sequence at the malformed byte so no replacement or guessed input reaches
+ * the remote session; supplementary code points are emitted as surrogate
+ * pairs with a press and release for each unit.
+ */
+size_t x11_keyboard_emit_utf8(const char* text,
+                              size_t length,
+                              x11_keyboard_event_sink sink,
+                              void* user_data)
 {
     const char* cursor = text;
     const char* end = text ? text + length : NULL;
     uint32_t codepoint = 0;
+    size_t units = 0u;
 
+    if (!text || !sink)
+        return 0u;
     while (cursor && cursor < end && x11_keyboard_next_utf8_codepoint(&cursor, end, &codepoint))
-        send_unicode_codepoint(app, codepoint);
+        units += emit_unicode_codepoint(codepoint, sink, user_data);
+    return units;
 }
 
 static size_t lookup_utf8_text(x11_app* app, XKeyEvent* key, char* buffer, size_t capacity)
@@ -281,6 +312,11 @@ static void send_remote_key(x11_app* app, const librdp_key_event* event)
     if (!app || !event)
         return;
     (void)librdp_session_send_key(app->session, event);
+}
+
+static void send_unicode_event(const librdp_key_event* event, void* user_data)
+{
+    send_remote_key((x11_app*)user_data, event);
 }
 
 void x11_keyboard_allow_xwayland_grab(x11_app* app)
@@ -419,7 +455,10 @@ void x11_keyboard_handle_key_press(x11_app* app, XKeyEvent* key)
     }
     else if (x11_keyboard_should_send_unicode_fallback(key->state, text_len, translated))
     {
-        send_unicode_text(app, text, text_len);
+        (void)x11_keyboard_emit_utf8(text,
+                                     text_len,
+                                     send_unicode_event,
+                                     app);
         x11_trace_event(X11_TRACE_CLIENT,
                         "x11.keyboard.unicode",
                         "keycode=%u bytes=%u",

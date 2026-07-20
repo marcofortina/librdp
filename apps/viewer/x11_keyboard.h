@@ -22,9 +22,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef void (*x11_keyboard_event_sink)(const librdp_key_event* event, void* user_data);
+
 int x11_keyboard_map_xkb_name(const char name[4], uint32_t* scancode, uint32_t* flags);
 int x11_keyboard_map_evdev(unsigned int evdev, uint32_t* scancode, uint32_t* flags);
 int x11_keyboard_next_utf8_codepoint(const char** cursor, const char* end, uint32_t* codepoint);
+size_t x11_keyboard_emit_utf8(const char* text,
+                              size_t length,
+                              x11_keyboard_event_sink sink,
+                              void* user_data);
 int x11_keyboard_should_send_unicode_fallback(unsigned int state, size_t text_len, int translated);
 int x11_keyboard_auto_repeat_release_match(int detectable_auto_repeat,
                                            int has_next_event,

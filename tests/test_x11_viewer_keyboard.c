@@ -104,6 +104,82 @@ static int test_unicode_fallback_policy(void)
     return 0;
 }
 
+typedef struct keyboard_event_capture
+{
+    librdp_key_event events[12];
+    size_t count;
+} keyboard_event_capture;
+
+static void capture_keyboard_event(const librdp_key_event* event,
+                                   void* user_data)
+{
+    keyboard_event_capture* capture =
+        (keyboard_event_capture*)user_data;
+
+    if (!capture || !event ||
+        capture->count >=
+            sizeof(capture->events) /
+                sizeof(capture->events[0]))
+        return;
+    capture->events[capture->count++] = *event;
+}
+
+/*
+ * XIM fallback text becomes exact UTF-16 press/release pairs. The fixture
+ * includes one BMP character, one supplementary character, a filtered control
+ * byte, and malformed UTF-8 to catch truncation, surrogate, and overread bugs.
+ */
+static int test_unicode_fallback_emission(void)
+{
+    static const char valid[] = "\xc3\xa9\xf0\x9f\x98\x80";
+    static const char malformed[] = "\xc0\xaf";
+    keyboard_event_capture capture;
+    size_t index = 0u;
+
+    memset(&capture, 0, sizeof(capture));
+    CHECK(x11_keyboard_emit_utf8(valid,
+                                 sizeof(valid) - 1u,
+                                 capture_keyboard_event,
+                                 &capture) == 3u);
+    CHECK(capture.count == 6u);
+    CHECK(capture.events[0].unicode == 0x00e9u);
+    CHECK(capture.events[1].unicode == 0x00e9u);
+    CHECK(capture.events[2].unicode == 0xd83du);
+    CHECK(capture.events[3].unicode == 0xd83du);
+    CHECK(capture.events[4].unicode == 0xde00u);
+    CHECK(capture.events[5].unicode == 0xde00u);
+    for (index = 0u; index < capture.count; index++)
+    {
+        CHECK(capture.events[index].flags ==
+              LIBRDP_KEY_FLAG_UNICODE);
+        CHECK(capture.events[index].state ==
+              ((index & 1u) == 0u
+                   ? LIBRDP_KEY_PRESSED
+                   : LIBRDP_KEY_RELEASED));
+    }
+
+    memset(&capture, 0, sizeof(capture));
+    CHECK(x11_keyboard_emit_utf8("\n",
+                                 1u,
+                                 capture_keyboard_event,
+                                 &capture) == 0u);
+    CHECK(capture.count == 0u);
+    CHECK(x11_keyboard_emit_utf8(malformed,
+                                 sizeof(malformed) - 1u,
+                                 capture_keyboard_event,
+                                 &capture) == 0u);
+    CHECK(capture.count == 0u);
+    CHECK(x11_keyboard_emit_utf8(NULL,
+                                 0u,
+                                 capture_keyboard_event,
+                                 &capture) == 0u);
+    CHECK(x11_keyboard_emit_utf8(valid,
+                                 sizeof(valid) - 1u,
+                                 NULL,
+                                 &capture) == 0u);
+    return 0;
+}
+
 /*
  * Non-detectable autorepeat appears as a release immediately followed by a
  * press with the same keycode and timestamp. The bridge suppresses only that
@@ -160,6 +236,8 @@ int main(void)
     if (test_evdev_fallback_mapping() != 0)
         return 1;
     if (test_unicode_fallback_policy() != 0)
+        return 1;
+    if (test_unicode_fallback_emission() != 0)
         return 1;
     if (test_autorepeat_release_match() != 0)
         return 1;

@@ -44,31 +44,48 @@ typedef struct pointer_server_expected_input
 {
     librdp_server_input_type type;
     uint16_t flags;
+    uint16_t param1;
 } pointer_server_expected_input;
 
 typedef struct pointer_server_input_context
 {
-    size_t received;
-    int armed;
+    size_t mouse_received;
+    size_t keyboard_received;
+    int mouse_armed;
+    int keyboard_armed;
     int failed;
 } pointer_server_input_context;
 
 static const pointer_server_expected_input pointer_server_mouse_sequence[] = {
-    { LIBRDP_SERVER_INPUT_MOUSE, 0x0800u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0x9000u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0x1000u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0xa000u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0x2000u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0xc000u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0x4000u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0x0278u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0x0388u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0x0588u },
-    { LIBRDP_SERVER_INPUT_MOUSE, 0x0478u },
-    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x8001u },
-    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x0001u },
-    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x8002u },
-    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x0002u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0800u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x9000u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x1000u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0xa000u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x2000u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0xc000u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x4000u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0278u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0388u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0588u, 0u },
+    { LIBRDP_SERVER_INPUT_MOUSE, 0x0478u, 0u },
+    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x8001u, 0u },
+    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x0001u, 0u },
+    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x8002u, 0u },
+    { LIBRDP_SERVER_INPUT_EXTENDED_MOUSE, 0x0002u, 0u },
+};
+
+static const pointer_server_expected_input
+    pointer_server_keyboard_sequence[] = {
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x0000u, 0x001eu },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x8000u, 0x001eu },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x0100u, 0x004du },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x8100u, 0x004du },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x0000u, 0x002au },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x0000u, 0x001eu },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x8000u, 0x001eu },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x8000u, 0x002au },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x0000u, 0x001eu },
+        { LIBRDP_SERVER_INPUT_SCANCODE_KEY, 0x8000u, 0x001eu },
 };
 
 static void pointer_server_input_callback(
@@ -81,37 +98,75 @@ static void pointer_server_input_callback(
     const pointer_server_expected_input* expected = NULL;
 
     (void)peer;
-    if (!context || !event || !context->armed ||
-        (event->type != LIBRDP_SERVER_INPUT_MOUSE &&
-         event->type != LIBRDP_SERVER_INPUT_EXTENDED_MOUSE))
+    if (!context || !event)
         return;
-    if (context->received >=
-        sizeof(pointer_server_mouse_sequence) /
-            sizeof(pointer_server_mouse_sequence[0]))
+    if (context->mouse_armed &&
+        (event->type == LIBRDP_SERVER_INPUT_MOUSE ||
+         event->type == LIBRDP_SERVER_INPUT_EXTENDED_MOUSE))
+    {
+        if (context->mouse_received >=
+            sizeof(pointer_server_mouse_sequence) /
+                sizeof(pointer_server_mouse_sequence[0]))
+        {
+            context->failed = 1;
+            return;
+        }
+        expected =
+            &pointer_server_mouse_sequence[
+                context->mouse_received];
+        if (event->type != expected->type ||
+            event->flags != expected->flags ||
+            event->x != TEST_VIEWER_POINTER_MOUSE_X ||
+            event->y != TEST_VIEWER_POINTER_MOUSE_Y)
+        {
+            fprintf(stderr,
+                    "mouse event mismatch index=%lu type=%u flags=0x%04x x=%u y=%u expected_type=%u expected_flags=0x%04x\n",
+                    (unsigned long)context->mouse_received,
+                    (unsigned int)event->type,
+                    event->flags,
+                    event->x,
+                    event->y,
+                    (unsigned int)expected->type,
+                    expected->flags);
+            context->failed = 1;
+            return;
+        }
+        context->mouse_received++;
+        return;
+    }
+    if (!context->keyboard_armed ||
+        (event->type != LIBRDP_SERVER_INPUT_SCANCODE_KEY &&
+         event->type != LIBRDP_SERVER_INPUT_UNICODE_KEY))
+        return;
+    if (context->keyboard_received >=
+        sizeof(pointer_server_keyboard_sequence) /
+            sizeof(pointer_server_keyboard_sequence[0]))
     {
         context->failed = 1;
         return;
     }
     expected =
-        &pointer_server_mouse_sequence[context->received];
+        &pointer_server_keyboard_sequence[
+            context->keyboard_received];
     if (event->type != expected->type ||
         event->flags != expected->flags ||
-        event->x != TEST_VIEWER_POINTER_MOUSE_X ||
-        event->y != TEST_VIEWER_POINTER_MOUSE_Y)
+        event->param1 != expected->param1 ||
+        event->param2 != 0u)
     {
         fprintf(stderr,
-                "mouse event mismatch index=%lu type=%u flags=0x%04x x=%u y=%u expected_type=%u expected_flags=0x%04x\n",
-                (unsigned long)context->received,
+                "keyboard event mismatch index=%lu type=%u flags=0x%04x param1=0x%04x param2=0x%04x expected_type=%u expected_flags=0x%04x expected_param1=0x%04x\n",
+                (unsigned long)context->keyboard_received,
                 (unsigned int)event->type,
                 event->flags,
-                event->x,
-                event->y,
+                event->param1,
+                event->param2,
                 (unsigned int)expected->type,
-                expected->flags);
+                expected->flags,
+                expected->param1);
         context->failed = 1;
         return;
     }
-    context->received++;
+    context->keyboard_received++;
 }
 
 static librdp_status pointer_server_accept_active(
@@ -492,7 +547,36 @@ static librdp_status pointer_server_wait_mouse(
 
         if (context->failed)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if (context->received == expected_count)
+        if (context->mouse_received == expected_count)
+            return LIBRDP_STATUS_OK;
+        status = librdp_server_peer_run_once(peer, 20);
+        if (status != LIBRDP_STATUS_OK &&
+            status != LIBRDP_STATUS_TIMEOUT)
+            return status;
+    }
+    return LIBRDP_STATUS_TIMEOUT;
+}
+
+static librdp_status pointer_server_wait_keyboard(
+    librdp_server_peer* peer,
+    pointer_server_input_context* context)
+{
+    unsigned int attempt = 0u;
+    const size_t expected_count =
+        sizeof(pointer_server_keyboard_sequence) /
+        sizeof(pointer_server_keyboard_sequence[0]);
+
+    if (!peer || !context)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (attempt = 0u;
+         attempt < POINTER_SERVER_WAIT_STEPS;
+         attempt++)
+    {
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (context->failed)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (context->keyboard_received == expected_count)
             return LIBRDP_STATUS_OK;
         status = librdp_server_peer_run_once(peer, 20);
         if (status != LIBRDP_STATUS_OK &&
@@ -695,7 +779,7 @@ int main(int argc, char** argv)
     }
     if (status == LIBRDP_STATUS_OK)
     {
-        input_context.armed = 1;
+        input_context.mouse_armed = 1;
         if (!test_process_state_write(
                 argv[1],
                 port,
@@ -708,11 +792,33 @@ int main(int argc, char** argv)
     }
     if (status == LIBRDP_STATUS_OK)
     {
-        input_context.armed = 0;
+        input_context.mouse_armed = 0;
         if (!test_process_state_write(
                 argv[1],
                 port,
                 TEST_VIEWER_POINTER_MOUSE_COMPLETE))
+            status = LIBRDP_STATUS_IO_ERROR;
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        input_context.keyboard_armed = 1;
+        if (!test_process_state_write(
+                argv[1],
+                port,
+                TEST_VIEWER_POINTER_KEYBOARD_READY))
+            status = LIBRDP_STATUS_IO_ERROR;
+        else
+            status = pointer_server_wait_keyboard(
+                peer,
+                &input_context);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        input_context.keyboard_armed = 0;
+        if (!test_process_state_write(
+                argv[1],
+                port,
+                TEST_VIEWER_POINTER_KEYBOARD_COMPLETE))
             status = LIBRDP_STATUS_IO_ERROR;
     }
     if (status == LIBRDP_STATUS_OK)

@@ -20,6 +20,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/keysym.h>
 #include <X11/extensions/Xfixes.h>
 #include <X11/extensions/XTest.h>
 
@@ -538,6 +539,57 @@ static int viewer_smoke_inject_mouse(Display* display,
                                       buttons[index]))
             return 0;
     }
+    return 1;
+}
+
+static int viewer_smoke_fake_key(Display* display,
+                                 KeyCode keycode,
+                                 Bool pressed)
+{
+    if (!display || keycode == 0u ||
+        !XTestFakeKeyEvent(display,
+                           keycode,
+                           pressed,
+                           CurrentTime))
+        return 0;
+    XSync(display, False);
+    viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    return 1;
+}
+
+static int viewer_smoke_inject_keyboard(Display* display,
+                                        Window window)
+{
+    KeyCode key_a = 0u;
+    KeyCode key_right = 0u;
+    KeyCode key_shift = 0u;
+
+    if (!display || window == None)
+        return 0;
+    key_a = XKeysymToKeycode(display, XK_a);
+    key_right = XKeysymToKeycode(display, XK_Right);
+    key_shift = XKeysymToKeycode(display, XK_Shift_L);
+    if (key_a == 0u || key_right == 0u || key_shift == 0u)
+        return 0;
+
+    XSetInputFocus(display,
+                   window,
+                   RevertToParent,
+                   CurrentTime);
+    XSync(display, False);
+    if (!viewer_smoke_fake_key(display, key_a, True) ||
+        !viewer_smoke_fake_key(display, key_a, False) ||
+        !viewer_smoke_fake_key(display, key_right, True) ||
+        !viewer_smoke_fake_key(display, key_right, False) ||
+        !viewer_smoke_fake_key(display, key_shift, True) ||
+        !viewer_smoke_fake_key(display, key_a, True) ||
+        !viewer_smoke_fake_key(display, key_a, False) ||
+        !viewer_smoke_fake_key(display, key_shift, False) ||
+        !viewer_smoke_fake_key(display, key_a, True))
+        return 0;
+    viewer_smoke_sleep_ms(700u);
+    if (!viewer_smoke_fake_key(display, key_a, False))
+        return 0;
     return 1;
 }
 
@@ -1512,6 +1564,20 @@ static int viewer_smoke_run_pointer(
     if (!viewer_smoke_wait_state(
             state_path,
             processes.server,
+            TEST_VIEWER_POINTER_KEYBOARD_READY,
+            &port) ||
+        !viewer_smoke_inject_keyboard(display, window) ||
+        !viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_KEYBOARD_COMPLETE,
+            &port))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_KEYBOARD_COMPLETE;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
             TEST_VIEWER_POINTER_COMPLETE,
             &port))
         goto cleanup;
@@ -1567,6 +1633,12 @@ static int viewer_smoke_run_pointer(
         !viewer_smoke_file_contains(
             viewer_log,
             "message=\"kind=mouse x=91 y=97") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.keyboard.key") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "message=\"kind=keyboard") ||
         viewer_smoke_file_contains(
             viewer_log,
             "status=protocol_error") ||
