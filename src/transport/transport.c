@@ -700,7 +700,7 @@ librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t le
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
 #ifdef RDP_HAVE_CURL
-    if (transport->curl_active)
+    if (transport->curl_active && !transport->tls_active)
     {
         rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                               RDP_TRACE_LEVEL_DEBUG,
@@ -799,7 +799,7 @@ librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t le
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
 #ifdef RDP_HAVE_CURL
-    if (transport->curl_active)
+    if (transport->curl_active && !transport->tls_active)
     {
         CURLcode code = CURLE_OK;
         size_t curl_read = 0;
@@ -900,7 +900,7 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
 #ifdef RDP_HAVE_CURL
-    if (transport->curl_active)
+    if (transport->curl_active && !transport->tls_active)
     {
         CURLcode code = CURLE_OK;
         size_t curl_written = 0;

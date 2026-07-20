@@ -235,6 +235,7 @@ if(LIBRDP_BUILD_TESTS)
 
     add_executable(test_server_client_smoke
         tests/test_server_client_smoke.c
+        tests/test_http_proxy.c
         tests/test_server_support.c
     )
     target_include_directories(test_server_client_smoke PRIVATE
@@ -383,6 +384,10 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke tls-wrong-pin)
     add_test(NAME server_client_smoke_tls_handshake
              COMMAND test_server_client_smoke tls-handshake)
+    if(LIBRDP_CURL_FOUND)
+        add_test(NAME server_client_smoke_gateway_http_connect
+                 COMMAND test_server_client_smoke gateway-http-connect)
+    endif()
     set_tests_properties(
         common
         transport
@@ -414,6 +419,12 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_tls_handshake
         PROPERTIES TIMEOUT 60
     )
+    if(TEST server_client_smoke_gateway_http_connect)
+        set_tests_properties(
+            server_client_smoke_gateway_http_connect
+            PROPERTIES TIMEOUT 60
+        )
+    endif()
     set_tests_properties(
         server
         server_security
