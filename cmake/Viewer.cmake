@@ -210,6 +210,34 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         librdp_apply_sanitizer_link_options(test_x11_viewer_audio)
         add_test(NAME x11_viewer_audio COMMAND test_x11_viewer_audio)
         set_tests_properties(x11_viewer_audio PROPERTIES TIMEOUT 30)
+        if(LIBRDP_PIPEWIRE_FOUND)
+            add_executable(test_x11_pipewire_live_smoke
+                tests/test_x11_pipewire_live_smoke.c
+                apps/viewer/x11_audio_pipewire.c
+                apps/viewer/x11_trace.c
+            )
+            target_include_directories(test_x11_pipewire_live_smoke PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+            )
+            target_compile_definitions(test_x11_pipewire_live_smoke PRIVATE
+                LIBRDP_HAVE_PIPEWIRE=1
+            )
+            target_link_libraries(test_x11_pipewire_live_smoke PRIVATE
+                PkgConfig::LIBRDP_PIPEWIRE
+                Threads::Threads
+            )
+            librdp_apply_system_definitions(test_x11_pipewire_live_smoke)
+            librdp_apply_warning_options(test_x11_pipewire_live_smoke)
+            librdp_apply_sanitizer_compile_options(test_x11_pipewire_live_smoke)
+            librdp_apply_sanitizer_link_options(test_x11_pipewire_live_smoke)
+            add_test(NAME x11_pipewire_live_smoke
+                     COMMAND test_x11_pipewire_live_smoke)
+            set_tests_properties(x11_pipewire_live_smoke PROPERTIES
+                SKIP_RETURN_CODE 77
+                TIMEOUT 30
+            )
+        endif()
         add_executable(test_x11_viewer_camera
             tests/test_x11_viewer_camera.c
             apps/viewer/x11_camera_v4l2.c
