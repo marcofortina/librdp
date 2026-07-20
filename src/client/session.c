@@ -3196,8 +3196,14 @@ librdp_status librdp_session_connect(librdp_session* session)
             credential_domain = redirected_credentials->domain;
     }
 
-    rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_CONNECTING);
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
+    rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_CONNECTING);
+    if (atomic_load_explicit(&session->cancel_requested,
+                             memory_order_acquire) != 0u)
+    {
+        status = LIBRDP_STATUS_CANCELLED;
+        goto fail;
+    }
     session->selected_protocol = RDP_X224_PROTOCOL_STANDARD;
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
@@ -3402,6 +3408,12 @@ librdp_status librdp_session_connect(librdp_session* session)
     }
 
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_NEGOTIATING);
+    if (atomic_load_explicit(&session->cancel_requested,
+                             memory_order_acquire) != 0u)
+    {
+        status = LIBRDP_STATUS_CANCELLED;
+        goto fail;
+    }
     protocols = rdp_security_protocol_mask(librdp_settings_security_mode(session->settings));
     rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.start", "protocols=%u", protocols);
     routing_data = rdp_session_redirection_routing_data(
@@ -3504,9 +3516,21 @@ librdp_status librdp_session_connect(librdp_session* session)
         tls_config.certificate_callback = tls_policy.certificate_callback;
         tls_config.certificate_callback_user_data = tls_policy.certificate_callback_user_data;
         rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_TLS_HANDSHAKE);
+        if (atomic_load_explicit(&session->cancel_requested,
+                                 memory_order_acquire) != 0u)
+        {
+            status = LIBRDP_STATUS_CANCELLED;
+            goto fail;
+        }
         status = rdp_transport_start_tls_with_config(&session->transport, &tls_config);
         if (status != LIBRDP_STATUS_OK)
         {
+            if (atomic_load_explicit(&session->cancel_requested,
+                                     memory_order_acquire) != 0u)
+            {
+                status = LIBRDP_STATUS_CANCELLED;
+                goto fail;
+            }
             rdp_session_set_last_error(session,
                                        status,
                                        status == LIBRDP_STATUS_IO_ERROR ? errno : 0,
@@ -3519,6 +3543,12 @@ librdp_status librdp_session_connect(librdp_session* session)
                                   selected_protocol == RDP_X224_PROTOCOL_NLA ?
                                       LIBRDP_LIFECYCLE_AUTHENTICATING :
                                       LIBRDP_LIFECYCLE_NEGOTIATING);
+        if (atomic_load_explicit(&session->cancel_requested,
+                                 memory_order_acquire) != 0u)
+        {
+            status = LIBRDP_STATUS_CANCELLED;
+            goto fail;
+        }
         rdp_trace_event(RDP_TRACE_PROTOCOL, "transport.tls.ready", "selected_protocol=%u", selected_protocol);
     }
     if (selected_protocol == RDP_X224_PROTOCOL_NLA)
@@ -3777,6 +3807,12 @@ librdp_status librdp_session_connect(librdp_session* session)
         OPENSSL_cleanse(client_nonce, sizeof(client_nonce));
         if (status != LIBRDP_STATUS_OK)
         {
+            if (atomic_load_explicit(&session->cancel_requested,
+                                     memory_order_acquire) != 0u)
+            {
+                status = LIBRDP_STATUS_CANCELLED;
+                goto fail;
+            }
             rdp_session_set_last_error(session,
                                        status,
                                        0,
@@ -4299,6 +4335,12 @@ librdp_status librdp_session_connect(librdp_session* session)
     }
 
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_ACTIVATING);
+    if (atomic_load_explicit(&session->cancel_requested,
+                             memory_order_acquire) != 0u)
+    {
+        status = LIBRDP_STATUS_CANCELLED;
+        goto fail;
+    }
     status = rdp_session_activation_deadline_start(session);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
@@ -4413,7 +4455,12 @@ fail:
     rdp_buffer_init(&session->remote_programs_fragment);
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
-    rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.failed", "status=%d", (int)status);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    status == LIBRDP_STATUS_CANCELLED
+                        ? "client.connect.cancelled"
+                        : "client.connect.failed",
+                    "status=%d",
+                    (int)status);
     rdp_buffer_free(&reply);
     rdp_buffer_free(&request);
     rdp_buffer_free(&server_certificate);

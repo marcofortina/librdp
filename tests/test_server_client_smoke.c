@@ -349,6 +349,9 @@ typedef struct smoke_trace_capture
     unsigned int records;
     unsigned int connect_starts;
     unsigned int connect_completions;
+    unsigned int client_connect_successes;
+    unsigned int client_connect_failures;
+    unsigned int client_connect_cancellations;
     unsigned int credssp_failures;
     unsigned int slowpath_integrity_failures;
     unsigned int fastpath_integrity_failures;
@@ -370,6 +373,9 @@ typedef struct smoke_trace_capture
     unsigned int refresh_requests;
     unsigned int output_suppressions;
     unsigned int output_resumptions;
+    unsigned int cancel_requests;
+    int cancel_phase;
+    librdp_status cancel_status;
     librdp_session_lifecycle lifecycle[SMOKE_LIFECYCLE_CAPACITY];
     size_t lifecycle_count;
     char recent[SMOKE_TRACE_RECENT_CAPACITY]
@@ -477,6 +483,15 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event, "transport.tcp.connect.done") == 0)
         capture->connect_completions++;
     else if (record->event &&
+             strcmp(record->event, "client.connect.done") == 0)
+        capture->client_connect_successes++;
+    else if (record->event &&
+             strcmp(record->event, "client.connect.failed") == 0)
+        capture->client_connect_failures++;
+    else if (record->event &&
+             strcmp(record->event, "client.connect.cancelled") == 0)
+        capture->client_connect_cancellations++;
+    else if (record->event &&
              strcmp(record->event, "credssp.nla.failed") == 0)
         capture->credssp_failures++;
     else if (record->event &&
@@ -581,6 +596,13 @@ static void smoke_trace_callback(librdp_session* session,
                 }
                 else
                     capture->lifecycle_overflow = 1;
+                if (capture->cancel_phase == (int)phase &&
+                    capture->cancel_requests == 0u)
+                {
+                    capture->cancel_requests++;
+                    capture->cancel_status =
+                        librdp_session_cancel(session);
+                }
             }
         }
     }
@@ -2168,7 +2190,8 @@ static int smoke_run_profile(librdp_security_mode security,
                              const char* bind_address,
                              const char* target,
                              const smoke_gateway_profile* gateway_profile,
-                             int exercise_output_control)
+                             int exercise_output_control,
+                             int cancel_phase)
 {
     char cert_path[128] = {0};
     char key_path[128] = {0};
@@ -2238,6 +2261,8 @@ static int smoke_run_profile(librdp_security_mode security,
     memset(&rdg_gateway, 0, sizeof(rdg_gateway));
     memset(&rdg_config, 0, sizeof(rdg_config));
     trace_capture.identity = identity;
+    trace_capture.cancel_phase = cancel_phase;
+    trace_capture.cancel_status = LIBRDP_STATUS_AGAIN;
     trace_capture.gateway_identity =
         gateway_mode != LIBRDP_GATEWAY_DISABLED
             ? (gateway_credentials ==
@@ -2545,6 +2570,55 @@ static int smoke_run_profile(librdp_security_mode security,
             rdg_started = 0;
             test_rdg_gateway_clear(&rdg_gateway);
         }
+        REQUIRE(server_host_cancel(host_fixture.host) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(pthread_join(host_fixture.thread, NULL) == 0);
+        thread_started = 0;
+        REQUIRE(host_fixture.status == LIBRDP_STATUS_OK);
+        result = 0;
+        goto cleanup;
+    }
+    if (cancel_phase >= 0)
+    {
+        terminal_status = connect_status;
+        if (terminal_status == LIBRDP_STATUS_OK)
+        {
+            for (cycle = 0u;
+                 cycle < 4u &&
+                 terminal_status == LIBRDP_STATUS_OK;
+                 cycle++)
+            {
+                terminal_status = smoke_client_pump(&runtime);
+            }
+        }
+        REQUIRE(terminal_status == LIBRDP_STATUS_CANCELLED);
+        REQUIRE(trace_capture.cancel_requests == 1u);
+        REQUIRE(trace_capture.cancel_status == LIBRDP_STATUS_OK);
+        REQUIRE(trace_capture.client_connect_successes == 0u);
+        REQUIRE(trace_capture.client_connect_failures == 0u);
+        REQUIRE(trace_capture.client_connect_cancellations == 1u);
+        REQUIRE(trace_capture.credssp_failures == 0u);
+        REQUIRE(trace_capture.tls_connect_failures == 0u);
+        REQUIRE(librdp_session_get_state(session) ==
+                LIBRDP_SESSION_CANCELLED);
+        REQUIRE(librdp_session_get_lifecycle(session) ==
+                LIBRDP_LIFECYCLE_DISCONNECTED);
+        REQUIRE(!events.active);
+        REQUIRE(events.error_events == 0u);
+        REQUIRE(trace_capture.leaked == 0);
+        REQUIRE(librdp_error_info_init(&error_info) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(librdp_error_copy_info(
+                    librdp_session_last_error(session),
+                    &error_info) == LIBRDP_STATUS_OK);
+        REQUIRE(error_info.status == LIBRDP_STATUS_CANCELLED);
+        REQUIRE(error_info.component ==
+                LIBRDP_ERROR_COMPONENT_CLIENT);
+        REQUIRE(error_info.phase != NULL);
+        REQUIRE(strcmp(error_info.phase, "client.cancel") == 0);
+        REQUIRE(error_info.trace_id != NULL);
+        REQUIRE(strcmp(error_info.trace_id,
+                       "server-client-smoke") == 0);
         REQUIRE(server_host_cancel(host_fixture.host) ==
                 LIBRDP_STATUS_OK);
         REQUIRE(pthread_join(host_fixture.thread, NULL) == 0);
@@ -3874,7 +3948,69 @@ int main(int argc, char** argv)
                                  "127.0.0.1",
                                  "127.0.0.1",
                                  NULL,
-                                 1);
+                                 1,
+                                 -1);
+    }
+    if (argc == 2 &&
+        strcmp(argv[1], "cancel-connecting") == 0)
+    {
+        return smoke_run_profile(LIBRDP_SECURITY_STANDARD,
+                                 LIBRDP_STATUS_OK,
+                                 NULL,
+                                 "127.0.0.1",
+                                 "127.0.0.1",
+                                 NULL,
+                                 0,
+                                 LIBRDP_LIFECYCLE_CONNECTING);
+    }
+    if (argc == 2 &&
+        strcmp(argv[1], "cancel-negotiating") == 0)
+    {
+        return smoke_run_profile(LIBRDP_SECURITY_STANDARD,
+                                 LIBRDP_STATUS_OK,
+                                 NULL,
+                                 "127.0.0.1",
+                                 "127.0.0.1",
+                                 NULL,
+                                 0,
+                                 LIBRDP_LIFECYCLE_NEGOTIATING);
+    }
+    if (argc == 2 &&
+        strcmp(argv[1], "cancel-tls") == 0)
+    {
+        return smoke_run_profile(LIBRDP_SECURITY_TLS,
+                                 LIBRDP_STATUS_OK,
+                                 NULL,
+                                 "127.0.0.1",
+                                 "127.0.0.1",
+                                 NULL,
+                                 0,
+                                 LIBRDP_LIFECYCLE_TLS_HANDSHAKE);
+    }
+    if (argc == 2 &&
+        strcmp(argv[1], "cancel-authenticating") == 0)
+    {
+        return smoke_run_profile(
+            LIBRDP_SECURITY_NLA,
+            LIBRDP_STATUS_OK,
+            &smoke_nla_default_identity,
+            "127.0.0.1",
+            "127.0.0.1",
+            NULL,
+            0,
+            LIBRDP_LIFECYCLE_AUTHENTICATING);
+    }
+    if (argc == 2 &&
+        strcmp(argv[1], "cancel-activating") == 0)
+    {
+        return smoke_run_profile(LIBRDP_SECURITY_STANDARD,
+                                 LIBRDP_STATUS_OK,
+                                 NULL,
+                                 "127.0.0.1",
+                                 "127.0.0.1",
+                                 NULL,
+                                 0,
+                                 LIBRDP_LIFECYCLE_ACTIVATING);
     }
     if (argc == 2)
         gateway_profile =
@@ -3889,7 +4025,8 @@ int main(int argc, char** argv)
             "127.0.0.1",
             "127.0.0.1",
             gateway_profile,
-            0);
+            0,
+            -1);
 #else
         return 77;
 #endif
@@ -3910,7 +4047,8 @@ int main(int argc, char** argv)
                 "timeout-credssp|standard-integrity|security-downgrade|"
                 "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake|"
                 "redirection-standard|redirection-tls|redirection-loop|"
-                "output-control|"
+                "output-control|cancel-connecting|cancel-negotiating|"
+                "cancel-tls|cancel-authenticating|cancel-activating|"
                 "gateway-http-connect|gateway-session-credentials|"
                 "gateway-no-session-credentials|gateway-auth-failure|"
                 "gateway-timeout|gateway-malformed|gateway-refused|"
@@ -3924,5 +4062,6 @@ int main(int argc, char** argv)
                              bind_address,
                              target,
                              NULL,
-                             0);
+                             0,
+                             -1);
 }

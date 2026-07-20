@@ -55,6 +55,7 @@
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
 #include "security/security.h"
+#include "security/tls_io.h"
 #include "transport/udp_transport.h"
 
 #include <errno.h>
@@ -415,7 +416,7 @@ static librdp_status rdp_server_tls_send_all(librdp_server_peer* peer, const uin
     while (offset < length)
     {
         int chunk = (length - offset) > (size_t)INT32_MAX ? INT32_MAX : (int)(length - offset);
-        int written = SSL_write(peer->tls, data + offset, chunk);
+        int written = rdp_tls_io_write(peer->tls, data + offset, chunk);
 
         if (written > 0)
         {
@@ -550,7 +551,7 @@ void rdp_server_close_peer(librdp_server_peer* peer, librdp_server_peer_state st
     if (peer->tls)
     {
         SSL_set_quiet_shutdown(peer->tls, 1);
-        (void)SSL_shutdown(peer->tls);
+        (void)rdp_tls_io_shutdown(peer->tls);
         SSL_free(peer->tls);
         peer->tls = NULL;
     }
@@ -786,7 +787,7 @@ librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
     }
     if (peer->tls_active)
     {
-        int tls_read = SSL_read(peer->tls, chunk, (int)sizeof(chunk));
+        int tls_read = rdp_tls_io_read(peer->tls, chunk, (int)sizeof(chunk));
 
         if (tls_read <= 0)
         {
@@ -871,7 +872,7 @@ librdp_status rdp_server_start_tls(librdp_server_peer* peer,
         if (SSL_set_fd(peer->tls, peer->fd) != 1)
             return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
     }
-    rc = SSL_accept(peer->tls);
+    rc = rdp_tls_io_accept(peer->tls);
     if (rc != 1)
     {
         short wait_events = 0;
@@ -1065,7 +1066,7 @@ static librdp_status rdp_server_read_credssp_ts_request(librdp_server_peer* peer
             return errno == EINTR ? LIBRDP_STATUS_TIMEOUT : LIBRDP_STATUS_IO_ERROR;
         if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
             return LIBRDP_STATUS_IO_ERROR;
-        tls_read = SSL_read(peer->tls, chunk, (int)sizeof(chunk));
+        tls_read = rdp_tls_io_read(peer->tls, chunk, (int)sizeof(chunk));
         if (tls_read <= 0)
         {
             short wait_events = 0;

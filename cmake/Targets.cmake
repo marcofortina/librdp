@@ -104,6 +104,7 @@ set(LIBRDP_SECURITY_SOURCES
     src/nla/credssp.c
     src/security/certificate.c
     src/security/security.c
+    src/security/tls_io.c
 )
 
 set(LIBRDP_PROTOCOL_SOURCES

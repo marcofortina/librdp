@@ -387,6 +387,7 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME protocol_transport COMMAND test_protocol transport)
     add_test(NAME transport COMMAND test_transport)
     add_test(NAME transport_timeout_boundaries COMMAND test_transport timeouts)
+    add_test(NAME transport_tls_sigpipe COMMAND test_transport tls-sigpipe)
     add_test(NAME server COMMAND test_server)
     add_test(NAME server_config COMMAND test_server config)
     add_test(NAME server_feature_status COMMAND test_server features)
@@ -517,6 +518,16 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke redirection-loop)
     add_test(NAME server_client_smoke_output_control
              COMMAND test_server_client_smoke output-control)
+    add_test(NAME server_client_smoke_cancel_connecting
+             COMMAND test_server_client_smoke cancel-connecting)
+    add_test(NAME server_client_smoke_cancel_negotiating
+             COMMAND test_server_client_smoke cancel-negotiating)
+    add_test(NAME server_client_smoke_cancel_tls
+             COMMAND test_server_client_smoke cancel-tls)
+    add_test(NAME server_client_smoke_cancel_authenticating
+             COMMAND test_server_client_smoke cancel-authenticating)
+    add_test(NAME server_client_smoke_cancel_activating
+             COMMAND test_server_client_smoke cancel-activating)
     if(LIBRDP_CURL_FOUND)
         add_test(NAME server_client_smoke_gateway_http_connect
                  COMMAND test_server_client_smoke gateway-http-connect)

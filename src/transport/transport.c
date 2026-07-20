@@ -21,6 +21,7 @@
 #include "common/trace.h"
 #include "platform/socket.h"
 #include "protocol/tpkt.h"
+#include "security/tls_io.h"
 #include "transport/tcp.h"
 
 #include <openssl/err.h>
@@ -678,7 +679,7 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
     {
         int tls_error = SSL_ERROR_NONE;
 
-        rc = SSL_connect(tls);
+        rc = rdp_tls_io_connect(tls);
         if (rc == 1)
             break;
         tls_error = SSL_get_error(tls, rc);
@@ -997,7 +998,7 @@ static librdp_status rdp_transport_read_raw(rdp_transport* transport,
                               "transport.tls.read.start",
                               "length=%llu",
                               (unsigned long long)length);
-        tls_rc = SSL_read(transport->tls, data, (int)length);
+        tls_rc = rdp_tls_io_read(transport->tls, data, (int)length);
         if (tls_rc <= 0)
             return rdp_transport_tls_status(transport->tls, tls_rc);
         if (read_len)
@@ -1142,7 +1143,7 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
                               "transport.tls.write.start",
                               "length=%llu",
                               (unsigned long long)length);
-        tls_rc = SSL_write(transport->tls, data, (int)length);
+        tls_rc = rdp_tls_io_write(transport->tls, data, (int)length);
         if (tls_rc <= 0)
             return rdp_transport_tls_status(transport->tls, tls_rc);
         if (written_len)
@@ -1494,7 +1495,7 @@ void rdp_transport_close(rdp_transport* transport)
     if (transport->tls)
     {
         SSL_set_quiet_shutdown(transport->tls, 1);
-        (void)SSL_shutdown(transport->tls);
+        (void)rdp_tls_io_shutdown(transport->tls);
         SSL_free(transport->tls);
     }
     if (transport->tls_context)

@@ -58,6 +58,7 @@
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
 #include "security/security.h"
+#include "security/tls_io.h"
 #include "transport/udp_transport.h"
 
 #include <errno.h>
@@ -660,7 +661,7 @@ void librdp_server_peer_free(librdp_server_peer* peer)
     if (peer->tls)
     {
         SSL_set_quiet_shutdown(peer->tls, 1);
-        (void)SSL_shutdown(peer->tls);
+        (void)rdp_tls_io_shutdown(peer->tls);
         SSL_free(peer->tls);
     }
     if (peer->tls_context)

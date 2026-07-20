@@ -19,6 +19,7 @@
 #include "gateway/rdg_http.h"
 #include "platform/socket.h"
 #include "protocol/tpkt.h"
+#include "security/tls_io.h"
 #include "transport/tcp.h"
 #include "transport/multitransport.h"
 #include "transport/transport.h"
@@ -33,6 +34,7 @@
 #include <limits.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1006,7 +1008,6 @@ static int run_tls_server(int fd, EVP_PKEY* key, X509* cert, int expect_success)
     int ok = 0;
     int do_shutdown = 0;
 
-    (void)signal(SIGPIPE, SIG_IGN);
     context = SSL_CTX_new(TLS_server_method());
     if (!context)
         goto out;
@@ -1017,7 +1018,7 @@ static int run_tls_server(int fd, EVP_PKEY* key, X509* cert, int expect_success)
         goto out;
     if (SSL_set_fd(tls, fd) != 1)
         goto out;
-    if (SSL_accept(tls) != 1)
+    if (rdp_tls_io_accept(tls) != 1)
     {
         ok = expect_success ? 0 : 1;
         goto out;
@@ -1027,11 +1028,12 @@ static int run_tls_server(int fd, EVP_PKEY* key, X509* cert, int expect_success)
         ok = 1;
         goto out;
     }
-    if (SSL_read(tls, input, sizeof(input)) != (int)sizeof(input))
+    if (rdp_tls_io_read(tls, input, (int)sizeof(input)) !=
+        (int)sizeof(input))
         goto out;
     if (memcmp(input, "ping", 4) != 0)
         goto out;
-    if (SSL_write(tls, "pong", 4) != 4)
+    if (rdp_tls_io_write(tls, "pong", 4) != 4)
         goto out;
     do_shutdown = 1;
     ok = 1;
@@ -1042,7 +1044,7 @@ out:
         if (do_shutdown)
         {
             SSL_set_quiet_shutdown(tls, 1);
-            (void)SSL_shutdown(tls);
+            (void)rdp_tls_io_shutdown(tls);
         }
         SSL_free(tls);
     }
@@ -1077,6 +1079,92 @@ static int test_tls_handshake_timeout(void)
     TCHECK(nonblocking == 0);
     rdp_transport_close(&transport);
     close(pair[1]);
+    return 0;
+}
+
+/*
+ * Run OpenSSL against a disconnected socket with the process-default SIGPIPE
+ * disposition. The pending variant also verifies that the adapter neither
+ * consumes a caller-owned signal nor changes the caller's thread mask.
+ */
+static void run_tls_sigpipe_child(int preserve_pending)
+{
+    struct sigaction action;
+    struct sigaction current_action;
+    sigset_t signals;
+    sigset_t current_mask;
+    sigset_t pending;
+    SSL_CTX* context = NULL;
+    SSL* tls = NULL;
+    int pair[2] = {-1, -1};
+    int signal_number = 0;
+    int result = 0;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = SIG_DFL;
+    if (sigemptyset(&action.sa_mask) != 0 ||
+        sigaction(SIGPIPE, &action, NULL) != 0 ||
+        sigemptyset(&signals) != 0 ||
+        sigaddset(&signals, SIGPIPE) != 0)
+        _exit(1);
+    if (pthread_sigmask(preserve_pending ? SIG_BLOCK : SIG_UNBLOCK,
+                        &signals,
+                        NULL) != 0)
+        _exit(1);
+    if (preserve_pending && raise(SIGPIPE) != 0)
+        _exit(1);
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, pair) != 0)
+        _exit(1);
+    close(pair[1]);
+    pair[1] = -1;
+    context = SSL_CTX_new(TLS_client_method());
+    if (!context)
+        _exit(1);
+    tls = SSL_new(context);
+    if (!tls || SSL_set_fd(tls, pair[0]) != 1)
+        _exit(1);
+
+    result = rdp_tls_io_connect(tls);
+    if (result > 0 ||
+        sigaction(SIGPIPE, NULL, &current_action) != 0 ||
+        current_action.sa_handler != SIG_DFL ||
+        pthread_sigmask(SIG_SETMASK, NULL, &current_mask) != 0 ||
+        sigismember(&current_mask, SIGPIPE) != preserve_pending ||
+        sigpending(&pending) != 0 ||
+        sigismember(&pending, SIGPIPE) != preserve_pending)
+        _exit(1);
+
+    if (preserve_pending)
+    {
+        if (sigwait(&signals, &signal_number) != 0 ||
+            signal_number != SIGPIPE ||
+            pthread_sigmask(SIG_UNBLOCK, &signals, NULL) != 0)
+            _exit(1);
+    }
+    SSL_free(tls);
+    SSL_CTX_free(context);
+    close(pair[0]);
+    _exit(0);
+}
+
+static int test_tls_sigpipe_containment(void)
+{
+    int preserve_pending = 0;
+
+    for (preserve_pending = 0;
+         preserve_pending <= 1;
+         preserve_pending++)
+    {
+        int status = 0;
+        pid_t child = fork();
+
+        TCHECK(child >= 0);
+        if (child == 0)
+            run_tls_sigpipe_child(preserve_pending);
+        TCHECK(waitpid(child, &status, 0) == child);
+        TCHECK(WIFEXITED(status));
+        TCHECK(WEXITSTATUS(status) == 0);
+    }
     return 0;
 }
 
@@ -1966,6 +2054,7 @@ int test_transport(void)
 
     rdp_transport_init(&transport);
     TCHECK(test_transport_timeout_boundaries() == 0);
+    TCHECK(test_tls_sigpipe_containment() == 0);
     TCHECK(make_test_ca_certificate(&ca_key, &ca_cert));
     TCHECK(make_test_server_certificate(&server_key,
                                         &server_cert,
@@ -2232,6 +2321,8 @@ int main(int argc, char** argv)
     {
         if (strcmp(argv[1], "timeouts") == 0)
             return test_transport_timeout_boundaries();
+        if (strcmp(argv[1], "tls-sigpipe") == 0)
+            return test_tls_sigpipe_containment();
         if (strcmp(argv[1], "smoke-gateway") != 0)
             return 2;
 #ifdef RDP_HAVE_CURL
