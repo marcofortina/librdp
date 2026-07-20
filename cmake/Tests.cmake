@@ -557,6 +557,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_input_smoke touch)
     add_test(NAME server_client_smoke_input_touch_fallback
              COMMAND test_server_client_input_smoke touch-fallback)
+    add_test(NAME server_client_smoke_input_pen
+             COMMAND test_server_client_input_smoke pen)
     if(TARGET test_workspace_launch_smoke)
         add_test(NAME workspace_desktop_launch_smoke
             COMMAND test_workspace_launch_smoke
@@ -743,6 +745,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_nla
         server_client_smoke_input_touch
         server_client_smoke_input_touch_fallback
+        server_client_smoke_input_pen
         server_client_smoke_nla_invalid
         server_client_smoke_nla_expired
         server_client_smoke_nla_locked
