@@ -207,6 +207,7 @@ int test_server_loopback_standard_activation_sequence(void)
     uint16_t graphics_cap_count = 0;
     uint32_t graphics_cap_version = 0;
     uint32_t graphics_cap_flags = 0;
+    uint64_t repaint_area = 0u;
     uint64_t limits_before_dvc_limit = 0;
     librdp_server_extension_family provider_families[4] = {
         LIBRDP_SERVER_EXTENSION_PRINTER,
@@ -3649,7 +3650,10 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(bitmap_update.count == 1 &&
            bitmap_update.rects[0].width == 800 &&
            bitmap_update.rects[0].height == 1);
-    SCHECK(librdp_server_peer_surface_resize(peer, 4, 4) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_surface_resize(
+               peer,
+               LIBRDP_DESKTOP_MIN_DIMENSION,
+               LIBRDP_DESKTOP_MIN_DIMENSION) == LIBRDP_STATUS_OK);
     demand_plaintext.length = 0;
     SCHECK(test_server_read_encrypted_mcs_payload(client_fd,
                                                   response,
@@ -3727,13 +3731,34 @@ int test_server_loopback_standard_activation_sequence(void)
                                                         &slowpath_plaintext,
                                                         &data_pdu));
     SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_MAP);
-    SCHECK(test_server_read_encrypted_slowpath_data_pdu(client_fd,
-                                                        response,
-                                                        sizeof(response),
-                                                        &client_security,
-                                                        &slowpath_plaintext,
-                                                        &data_pdu));
-    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
+    do
+    {
+        SCHECK(test_server_read_encrypted_slowpath_data_pdu(
+            client_fd,
+            response,
+            sizeof(response),
+            &client_security,
+            &slowpath_plaintext,
+            &data_pdu));
+        SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
+        SCHECK(rdp_bitmap_parse_update(
+                   data_pdu.payload,
+                   data_pdu.payload_len,
+                   &bitmap_update) == LIBRDP_STATUS_OK);
+        for (uint16_t rect_index = 0;
+             rect_index < bitmap_update.count;
+             rect_index++)
+        {
+            repaint_area +=
+                (uint64_t)bitmap_update.rects[rect_index].width *
+                bitmap_update.rects[rect_index].height;
+        }
+    } while (repaint_area <
+             (uint64_t)LIBRDP_DESKTOP_MIN_DIMENSION *
+                 LIBRDP_DESKTOP_MIN_DIMENSION);
+    SCHECK(repaint_area ==
+           (uint64_t)LIBRDP_DESKTOP_MIN_DIMENSION *
+               LIBRDP_DESKTOP_MIN_DIMENSION);
     SCHECK(runtime_context.surface_event_count == 4);
 
     SCHECK(test_server_send_keyboard_input(

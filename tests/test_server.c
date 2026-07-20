@@ -61,6 +61,8 @@ static int run_named(const char* name)
         return test_server_lifecycle_focused();
     if (strcmp(name, "protocol-order") == 0)
         return test_server_protocol_order_focused();
+    if (strcmp(name, "desktop-limits") == 0)
+        return test_server_desktop_limits_focused();
     if (strcmp(name, "channels") == 0)
         return test_server_channels_focused();
     if (strcmp(name, "drive-metadata") == 0)
@@ -89,6 +91,7 @@ int main(int argc, char** argv)
         return 1;
     if (test_server_lifecycle_focused() != 0 ||
         test_server_protocol_order_focused() != 0 ||
+        test_server_desktop_limits_focused() != 0 ||
         test_server_channels_focused() != 0 ||
         test_server_drive_metadata_focused() != 0 ||
         test_server_graphics_focused() != 0)

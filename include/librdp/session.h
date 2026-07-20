@@ -1024,11 +1024,14 @@ LIBRDP_API librdp_status librdp_session_disconnect(librdp_session* session);
  * the server accepts and sends the corresponding updates.
  *
  * @param[in,out] session Session to update; must not be NULL.
- * @param[in] width Requested desktop width in pixels; must be 1..8192.
- * @param[in] height Requested desktop height in pixels; must be 1..8192.
+ * @param[in] width Requested desktop width in pixels; must be within
+ * LIBRDP_DESKTOP_MIN_DIMENSION and LIBRDP_DESKTOP_MAX_DIMENSION.
+ * @param[in] height Requested desktop height in pixels; must use the same
+ * inclusive range as width.
  *
  * @return LIBRDP_STATUS_OK when the request is stored and, when possible, sent;
  * LIBRDP_STATUS_INVALID_ARGUMENT for NULL session or invalid dimensions;
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when the session surface policy is lower;
  * transport or allocation errors propagated from the display-control send path.
  *
  * @note Thread-safety: call from one serialized session-driving context.

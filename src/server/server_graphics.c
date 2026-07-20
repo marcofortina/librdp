@@ -137,7 +137,9 @@ librdp_status rdp_server_surface_set_dimensions(librdp_server_peer* peer,
     size_t stride = 0;
     size_t total = 0;
 
-    if (!peer || width == 0 || height == 0 ||
+    if (!peer ||
+        width < RDP_SERVER_MIN_DESKTOP_SIZE ||
+        height < RDP_SERVER_MIN_DESKTOP_SIZE ||
         width > RDP_SERVER_MAX_DESKTOP_SIZE ||
         height > RDP_SERVER_MAX_DESKTOP_SIZE)
         return LIBRDP_STATUS_INVALID_ARGUMENT;

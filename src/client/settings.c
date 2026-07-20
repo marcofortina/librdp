@@ -142,7 +142,7 @@ struct librdp_settings
 #define RDP_SETTINGS_LIMIT_DYNAMIC_MESSAGE_BYTES (64u * 1024u * 1024u)
 #define RDP_SETTINGS_LIMIT_FASTPATH_FRAGMENT_BYTES (16u * 1024u * 1024u)
 #define RDP_SETTINGS_LIMIT_GRAPHICS_SURFACES 64u
-#define RDP_SETTINGS_LIMIT_SURFACE_DIMENSION 8192u
+#define RDP_SETTINGS_LIMIT_SURFACE_DIMENSION LIBRDP_DESKTOP_MAX_DIMENSION
 #define RDP_SETTINGS_LIMIT_CLIPBOARD_FORMATS 64u
 #define RDP_SETTINGS_LIMIT_CLIPBOARD_FILES 64u
 #define RDP_SETTINGS_LIMIT_CLIPBOARD_FILE_RANGE_BYTES (4u * 1024u * 1024u)
@@ -1217,7 +1217,11 @@ librdp_status librdp_settings_set_port(librdp_settings* settings, uint16_t port)
 
 librdp_status librdp_settings_set_desktop_size(librdp_settings* settings, uint32_t width, uint32_t height)
 {
-    if (!settings || width == 0 || height == 0 || width > 8192 || height > 8192)
+    if (!settings ||
+        width < LIBRDP_DESKTOP_MIN_DIMENSION ||
+        height < LIBRDP_DESKTOP_MIN_DIMENSION ||
+        width > LIBRDP_DESKTOP_MAX_DIMENSION ||
+        height > LIBRDP_DESKTOP_MAX_DIMENSION)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (width > settings->limits.surface_max_dimension || height > settings->limits.surface_max_dimension)
         return LIBRDP_STATUS_LIMIT_EXCEEDED;

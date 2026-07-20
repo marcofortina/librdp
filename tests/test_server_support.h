@@ -207,6 +207,10 @@ void test_server_event_callback(librdp_server_peer* peer,
                                        void* user_data);
 
 int test_server_build_client_mcs_connect_initial(rdp_buffer* tpkt);
+int test_server_build_client_mcs_connect_initial_sized(
+    rdp_buffer* tpkt,
+    uint16_t width,
+    uint16_t height);
 
 int test_server_send_client_mcs_connect_initial(int fd);
 

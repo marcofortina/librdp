@@ -98,9 +98,14 @@ static int rdp_server_config_valid(const librdp_server_config* config)
         return 0;
     if (config->backlog > RDP_SERVER_MAX_BACKLOG || config->max_peers > RDP_SERVER_MAX_PEERS)
         return 0;
-    if (config->width > RDP_SERVER_MAX_DESKTOP_SIZE || config->height > RDP_SERVER_MAX_DESKTOP_SIZE)
+    if (config->width > RDP_SERVER_MAX_DESKTOP_SIZE ||
+        config->height > RDP_SERVER_MAX_DESKTOP_SIZE)
         return 0;
     if ((config->width == 0) != (config->height == 0))
+        return 0;
+    if (config->width != 0u &&
+        (config->width < RDP_SERVER_MIN_DESKTOP_SIZE ||
+         config->height < RDP_SERVER_MIN_DESKTOP_SIZE))
         return 0;
     if (config->security_mode != LIBRDP_SECURITY_AUTO &&
         config->security_mode != LIBRDP_SECURITY_STANDARD &&

@@ -32,6 +32,8 @@ extern "C" {
 #define LIBRDP_SETTINGS_MAX_PNP_DEVICES 32u   /**< Maximum configured redirected PNP devices. */
 #define LIBRDP_SETTINGS_MAX_STATIC_CHANNELS 16u /**< Maximum configured application static channels. */
 #define LIBRDP_SETTINGS_MAX_WEBAUTHN_RP_IDS 16u /**< Maximum configured WebAuthn RP ID allowlist entries. */
+#define LIBRDP_DESKTOP_MIN_DIMENSION 200u /**< Minimum negotiated desktop width or height in pixels. */
+#define LIBRDP_DESKTOP_MAX_DIMENSION 8192u /**< Maximum negotiated desktop width or height in pixels. */
 
 #define LIBRDP_PNP_DEVICE_CAP_LOCK_SUPPORTED 0x00000001u     /**< PNP device supports lock requests. */
 #define LIBRDP_PNP_DEVICE_CAP_EJECT_SUPPORTED 0x00000002u    /**< PNP device supports eject requests. */
@@ -731,14 +733,16 @@ LIBRDP_API librdp_status librdp_settings_set_port(librdp_settings* settings, uin
 /**
  * @brief Set the requested initial desktop size.
  *
- * Width and height must be non-zero and no larger than 8192 pixels.
+ * Width and height must be within LIBRDP_DESKTOP_MIN_DIMENSION and
+ * LIBRDP_DESKTOP_MAX_DIMENSION, inclusive.
  *
  * @param[in,out] settings Settings object to update; must not be NULL.
  * @param[in] width Requested desktop width in pixels.
  * @param[in] height Requested desktop height in pixels.
  *
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
- * settings or invalid dimensions.
+ * settings or dimensions outside the protocol range;
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when the configured surface policy is lower.
  *
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0

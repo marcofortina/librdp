@@ -124,7 +124,14 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
         uint32_t desktop_height =
             client_data.desktop_height ? client_data.desktop_height : peer->height;
 
-        if (desktop_width != peer->width || desktop_height != peer->height)
+        if (desktop_width < RDP_SERVER_MIN_DESKTOP_SIZE ||
+            desktop_height < RDP_SERVER_MIN_DESKTOP_SIZE)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else if (desktop_width > RDP_SERVER_MAX_DESKTOP_SIZE ||
+                 desktop_height > RDP_SERVER_MAX_DESKTOP_SIZE)
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+        else if (desktop_width != peer->width ||
+                 desktop_height != peer->height)
         {
             if (peer->framebuffer)
             {

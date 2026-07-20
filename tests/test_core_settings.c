@@ -289,6 +289,34 @@ int test_settings_surface_input_session(void)
 
     settings = librdp_settings_new();
     CHECK(settings != NULL);
+    CHECK(librdp_settings_set_desktop_size(
+              settings,
+              LIBRDP_DESKTOP_MIN_DIMENSION,
+              LIBRDP_DESKTOP_MIN_DIMENSION) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_width(settings) ==
+          LIBRDP_DESKTOP_MIN_DIMENSION);
+    CHECK(librdp_settings_height(settings) ==
+          LIBRDP_DESKTOP_MIN_DIMENSION);
+    CHECK(librdp_settings_set_desktop_size(
+              settings,
+              LIBRDP_DESKTOP_MAX_DIMENSION,
+              LIBRDP_DESKTOP_MAX_DIMENSION) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_width(settings) ==
+          LIBRDP_DESKTOP_MAX_DIMENSION);
+    CHECK(librdp_settings_height(settings) ==
+          LIBRDP_DESKTOP_MAX_DIMENSION);
+    CHECK(librdp_settings_set_desktop_size(
+              settings,
+              LIBRDP_DESKTOP_MIN_DIMENSION - 1u,
+              LIBRDP_DESKTOP_MIN_DIMENSION) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_set_desktop_size(
+              settings,
+              LIBRDP_DESKTOP_MAX_DIMENSION + 1u,
+              LIBRDP_DESKTOP_MAX_DIMENSION) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_set_desktop_size(settings, 1024u, 768u) ==
+          LIBRDP_STATUS_OK);
     CHECK(librdp_limits_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_limits_init(&limits) == LIBRDP_STATUS_OK);
     CHECK(limits.version == LIBRDP_LIMITS_VERSION);
@@ -297,7 +325,8 @@ int test_settings_surface_input_session(void)
     CHECK(librdp_settings_get_limits(NULL, &limits_out) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_get_limits(settings, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_get_limits(settings, &limits_out) == LIBRDP_STATUS_OK);
-    CHECK(limits_out.surface_max_dimension == 8192u);
+    CHECK(limits_out.surface_max_dimension ==
+          LIBRDP_DESKTOP_MAX_DIMENSION);
     limits_out.surface_max_dimension = 512u;
     CHECK(librdp_settings_set_limits(settings, &limits_out) == LIBRDP_STATUS_INVALID_ARGUMENT);
     limits_out.surface_max_dimension = 1024u;
@@ -460,7 +489,7 @@ int test_settings_surface_input_session(void)
     CHECK(librdp_settings_set_password(settings, settings_password_a) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_domain(settings, settings_domain) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_port(settings, 3390) == LIBRDP_STATUS_OK);
-    CHECK(librdp_settings_set_desktop_size(settings, 64, 48) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_desktop_size(settings, 640, 480) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_TLS) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_drive_count(settings) == 0);
     CHECK(librdp_settings_add_drive(settings, "C:", "/tmp") == LIBRDP_STATUS_OK);
@@ -778,7 +807,7 @@ int test_settings_surface_input_session(void)
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(strcmp(librdp_settings_echo_payload(settings), "probe") == 0);
     CHECK(librdp_settings_set_port(settings, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
-    CHECK(librdp_settings_set_desktop_size(settings, 0, 48) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_set_desktop_size(settings, 0, 480) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_security_mode(settings, (librdp_security_mode)99) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_drive(settings, "", "/tmp") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_drive(settings, "BAD/NAME", "/tmp") == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -1393,7 +1422,7 @@ int test_settings_surface_input_session(void)
     CHECK(error_info.phase != NULL && strcmp(error_info.phase, "client.refresh.owner") == 0);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
-    CHECK(librdp_surface_width(session_surface) == 64);
+    CHECK(librdp_surface_width(session_surface) == 640);
     CHECK(librdp_session_get_pollfds(NULL, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_get_pollfds(session, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_OK);
     CHECK(session_pfd_count == 2);
@@ -1582,13 +1611,13 @@ int test_settings_surface_input_session(void)
     CHECK(trace.last_sequence == trace.count);
     CHECK(counter.keys == 1);
     CHECK(counter.mouse == 1);
-    CHECK(librdp_session_resize(session, 80, 60) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_resize(session, 800, 600) == LIBRDP_STATUS_OK);
     CHECK(counter.surfaces == 8);
     CHECK(counter.pointer >= 1);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
-    CHECK(librdp_surface_width(session_surface) == 64);
-    CHECK(librdp_surface_height(session_surface) == 48);
+    CHECK(librdp_surface_width(session_surface) == 640);
+    CHECK(librdp_surface_height(session_surface) == 480);
     trace_fd = mkstemp(trace_file_path);
     CHECK(trace_fd >= 0);
     CHECK(close(trace_fd) == 0);

@@ -687,7 +687,10 @@ void test_server_event_callback(librdp_server_peer* peer,
     }
 }
 
-int test_server_build_client_mcs_connect_initial(rdp_buffer* tpkt)
+int test_server_build_client_mcs_connect_initial_sized(
+    rdp_buffer* tpkt,
+    uint16_t width,
+    uint16_t height)
 {
     static const rdp_gcc_channel_definition extra_channels[8] = {
         {{'t', 'e', 's', 't', 'v', 'c', 0, 0}, 0xc0800000u},
@@ -713,8 +716,8 @@ int test_server_build_client_mcs_connect_initial(rdp_buffer* tpkt)
     rdp_buffer_init(&mcs_initial);
     rdp_buffer_init(&x224_data);
     memset(&config, 0, sizeof(config));
-    config.desktop_width = 800;
-    config.desktop_height = 600;
+    config.desktop_width = width;
+    config.desktop_height = height;
     config.requested_protocols = RDP_X224_PROTOCOL_STANDARD;
     config.client_name = "server-test";
     config.enable_dynamic_channels = 1;
@@ -737,6 +740,14 @@ int test_server_build_client_mcs_connect_initial(rdp_buffer* tpkt)
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
     return ok;
+}
+
+int test_server_build_client_mcs_connect_initial(rdp_buffer* tpkt)
+{
+    return test_server_build_client_mcs_connect_initial_sized(
+        tpkt,
+        800u,
+        600u);
 }
 
 int test_server_send_client_mcs_connect_initial(int fd)

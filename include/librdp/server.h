@@ -1063,8 +1063,8 @@ typedef struct librdp_server_config
     uint16_t port;         /**< TCP listen port, or zero for an ephemeral port. */
     uint32_t backlog;      /**< Listen backlog; zero uses a safe default. */
     uint32_t max_peers;    /**< Maximum peers accepted during one listen lifetime; zero uses a safe default. */
-    uint32_t width;        /**< Default desktop width used during activation; zero uses default. */
-    uint32_t height;       /**< Default desktop height used during activation; zero uses default. */
+    uint32_t width;        /**< Default desktop width; zero uses default, otherwise the public desktop range. */
+    uint32_t height;       /**< Default desktop height; zero uses default, otherwise the public desktop range. */
     const char* server_name; /**< Optional diagnostic server name copied on creation. */
     librdp_security_mode security_mode; /**< Server security policy; STANDARD is the default. */
     const char* tls_certificate_path; /**< PEM certificate path for TLS/NLA modes; copied on creation. */
@@ -2208,8 +2208,9 @@ LIBRDP_API uint32_t librdp_server_peer_desktop_height(const librdp_server_peer* 
  * returns to ACTIVE.
  *
  * @param[in,out] peer Peer to resize; must not be NULL.
- * @param[in] width New desktop width in pixels; must be non-zero.
- * @param[in] height New desktop height in pixels; must be non-zero.
+ * @param[in] width New desktop width in pixels; must use the public desktop
+ * dimension range.
+ * @param[in] height New desktop height in pixels; must use the same range.
  *
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
  * NULL peer or invalid dimensions; LIBRDP_STATUS_NO_MEMORY on allocation

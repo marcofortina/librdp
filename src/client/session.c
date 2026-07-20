@@ -346,7 +346,11 @@ static librdp_status rdp_session_request_display_control_layout(librdp_session* 
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!session || width == 0 || height == 0 || width > 8192u || height > 8192u)
+    if (!session ||
+        width < LIBRDP_DESKTOP_MIN_DIMENSION ||
+        height < LIBRDP_DESKTOP_MIN_DIMENSION ||
+        width > LIBRDP_DESKTOP_MAX_DIMENSION ||
+        height > LIBRDP_DESKTOP_MAX_DIMENSION)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (width > session->limits.surface_max_dimension ||
         height > session->limits.surface_max_dimension)

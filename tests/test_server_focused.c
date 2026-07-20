@@ -499,6 +499,100 @@ int test_server_protocol_order_focused(void)
 }
 
 /*
+ * Negotiate one client desktop geometry through the full MCS/GCC server phase.
+ * Rejected dimensions must leave the peer geometry unchanged and retain the
+ * MCS/GCC phase in the public server status.
+ */
+static int test_server_negotiate_desktop_dimensions(
+    uint16_t width,
+    uint16_t height,
+    librdp_status expected_status)
+{
+    test_server_peer_fixture fixture;
+    librdp_server_status server_status;
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int valid = 0;
+
+    rdp_buffer_init(&packet);
+    if (test_server_build_client_mcs_connect_initial_sized(
+            &packet,
+            width,
+            height) &&
+        test_server_peer_fixture_open(&fixture))
+    {
+        fixture.peer->state = LIBRDP_SERVER_PEER_X224_CONFIRMED;
+        if (test_server_send_all(
+                fixture.client_fd,
+                packet.data,
+                packet.length))
+        {
+            status = librdp_server_peer_run_once(fixture.peer, 1000);
+            if (expected_status == LIBRDP_STATUS_OK)
+            {
+                valid = status == LIBRDP_STATUS_OK &&
+                        librdp_server_peer_get_state(fixture.peer) ==
+                            LIBRDP_SERVER_PEER_MCS_CONNECTED &&
+                        librdp_server_peer_desktop_width(fixture.peer) ==
+                            width &&
+                        librdp_server_peer_desktop_height(fixture.peer) ==
+                            height;
+            }
+            else if (librdp_server_status_init(&server_status) ==
+                         LIBRDP_STATUS_OK &&
+                     librdp_server_peer_get_last_status(
+                         fixture.peer,
+                         &server_status) == LIBRDP_STATUS_OK)
+            {
+                valid = status == expected_status &&
+                        server_status.status == expected_status &&
+                        strcmp(
+                            server_status.phase,
+                            "server.mcs-gcc.connect") == 0 &&
+                        librdp_server_peer_get_state(fixture.peer) ==
+                            LIBRDP_SERVER_PEER_FAILED &&
+                        librdp_server_peer_desktop_width(fixture.peer) ==
+                            1024u &&
+                        librdp_server_peer_desktop_height(fixture.peer) ==
+                            768u;
+            }
+        }
+        test_server_peer_fixture_close(&fixture);
+    }
+    rdp_buffer_free(&packet);
+    return valid;
+}
+
+int test_server_desktop_limits_focused(void)
+{
+    SCHECK(test_server_negotiate_desktop_dimensions(
+        LIBRDP_DESKTOP_MIN_DIMENSION,
+        LIBRDP_DESKTOP_MIN_DIMENSION,
+        LIBRDP_STATUS_OK));
+    SCHECK(test_server_negotiate_desktop_dimensions(
+        LIBRDP_DESKTOP_MAX_DIMENSION,
+        LIBRDP_DESKTOP_MAX_DIMENSION,
+        LIBRDP_STATUS_OK));
+    SCHECK(test_server_negotiate_desktop_dimensions(
+        LIBRDP_DESKTOP_MIN_DIMENSION - 1u,
+        LIBRDP_DESKTOP_MIN_DIMENSION,
+        LIBRDP_STATUS_PROTOCOL_ERROR));
+    SCHECK(test_server_negotiate_desktop_dimensions(
+        LIBRDP_DESKTOP_MIN_DIMENSION,
+        LIBRDP_DESKTOP_MIN_DIMENSION - 1u,
+        LIBRDP_STATUS_PROTOCOL_ERROR));
+    SCHECK(test_server_negotiate_desktop_dimensions(
+        LIBRDP_DESKTOP_MAX_DIMENSION + 1u,
+        LIBRDP_DESKTOP_MAX_DIMENSION,
+        LIBRDP_STATUS_LIMIT_EXCEEDED));
+    SCHECK(test_server_negotiate_desktop_dimensions(
+        LIBRDP_DESKTOP_MAX_DIMENSION,
+        LIBRDP_DESKTOP_MAX_DIMENSION + 1u,
+        LIBRDP_STATUS_LIMIT_EXCEEDED));
+    return 0;
+}
+
+/*
  * Exercises the public drive metadata boundary with complete synthetic
  * information records, malformed lengths, unsupported classes, status
  * normalization, UTF-16 conversion, and size-query behavior.
@@ -1510,13 +1604,29 @@ int test_server_graphics_focused(void)
     SCHECK(test_server_peer_fixture_open(&fixture));
     SCHECK(librdp_server_peer_desktop_width(fixture.peer) == 1024);
     SCHECK(librdp_server_peer_desktop_height(fixture.peer) == 768);
-    SCHECK(librdp_server_peer_surface_resize(fixture.peer, 8, 6) == LIBRDP_STATUS_OK);
-    SCHECK(librdp_server_peer_desktop_width(fixture.peer) == 8);
-    SCHECK(librdp_server_peer_desktop_height(fixture.peer) == 6);
+    SCHECK(librdp_server_peer_surface_resize(
+               fixture.peer,
+               LIBRDP_DESKTOP_MIN_DIMENSION,
+               LIBRDP_DESKTOP_MIN_DIMENSION) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_desktop_width(fixture.peer) ==
+           LIBRDP_DESKTOP_MIN_DIMENSION);
+    SCHECK(librdp_server_peer_desktop_height(fixture.peer) ==
+           LIBRDP_DESKTOP_MIN_DIMENSION);
+    SCHECK(librdp_server_peer_surface_resize(
+               fixture.peer,
+               LIBRDP_DESKTOP_MIN_DIMENSION - 1u,
+               LIBRDP_DESKTOP_MIN_DIMENSION) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_surface_blit_bgra32(
                fixture.peer, 2, 1, 2, 2, 8, pixels) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_surface_blit_bgra32(
-               fixture.peer, 7, 5, 2, 2, 8, pixels) == LIBRDP_STATUS_INVALID_ARGUMENT);
+               fixture.peer,
+               LIBRDP_DESKTOP_MIN_DIMENSION - 1u,
+               LIBRDP_DESKTOP_MIN_DIMENSION - 1u,
+               2,
+               2,
+               8,
+               pixels) == LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_surface_present(fixture.peer, 2, 1, 2, 2) ==
            LIBRDP_STATUS_STATE);
     SCHECK(librdp_server_peer_set_graphics_frame_queue_limit(fixture.peer, 0) ==

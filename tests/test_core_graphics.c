@@ -1319,7 +1319,6 @@ int test_gdi_bitmap_cache_limits(void)
         (uint16_t)(1u | (6u << 3u) | (RDP_GDI_CBR3_IGNORABLE_FLAG << 7u));
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
-    librdp_limits limits;
     librdp_metrics metrics;
     rdp_buffer payload;
     rdp_session_gdi_bitmap_cache_entry* entry = NULL;
@@ -1330,12 +1329,13 @@ int test_gdi_bitmap_cache_limits(void)
 
     settings = librdp_settings_new();
     CHECK(settings != NULL);
-    CHECK(librdp_settings_set_desktop_size(settings, 1u, 1u) == LIBRDP_STATUS_OK);
-    CHECK(librdp_limits_init(&limits) == LIBRDP_STATUS_OK);
-    limits.surface_max_dimension = 1u;
-    CHECK(librdp_settings_set_limits(settings, &limits) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_desktop_size(
+              settings,
+              LIBRDP_DESKTOP_MIN_DIMENSION,
+              LIBRDP_DESKTOP_MIN_DIMENSION) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
+    session->limits.surface_max_dimension = 1u;
 
     rdp_buffer_init(&payload);
     CHECK(append_cache_bitmap_v1_payload(&payload,
