@@ -276,6 +276,30 @@ if(LIBRDP_BUILD_TESTS)
         librdp_configure_test_executable(test_workspace_launch_smoke)
     endif()
 
+    if(TARGET librdp-admin AND
+       LIBRDP_CURL_FOUND AND
+       LIBRDP_LIBXML2_FOUND)
+        add_executable(test_admin_cli_smoke
+            tests/test_admin_cli_smoke.c
+        )
+        add_dependencies(test_admin_cli_smoke librdp-admin)
+        librdp_configure_test_executable(test_admin_cli_smoke)
+    endif()
+
+    if(TARGET librdp-admin AND
+       TARGET librdp-workspace AND
+       LIBRDP_CURL_FOUND AND
+       LIBRDP_LIBXML2_FOUND)
+        add_executable(test_enterprise_cli_failures
+            tests/test_enterprise_cli_failures.c
+        )
+        add_dependencies(test_enterprise_cli_failures
+            librdp-admin
+            librdp-workspace
+        )
+        librdp_configure_test_executable(test_enterprise_cli_failures)
+    endif()
+
     add_executable(test_abi_probe tests/abi_probe.c)
     target_include_directories(test_abi_probe PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -301,6 +325,12 @@ if(LIBRDP_BUILD_TESTS)
     )
     if(TARGET test_workspace_launch_smoke)
         add_dependencies(librdp_tests test_workspace_launch_smoke)
+    endif()
+    if(TARGET test_admin_cli_smoke)
+        add_dependencies(librdp_tests test_admin_cli_smoke)
+    endif()
+    if(TARGET test_enterprise_cli_failures)
+        add_dependencies(librdp_tests test_enterprise_cli_failures)
     endif()
     foreach(LIBRDP_NATIVE_TEST_TARGET IN ITEMS
         test_x11_viewer_render
@@ -400,6 +430,49 @@ if(LIBRDP_BUILD_TESTS)
             workspace_remoteapp_launch_smoke
             PROPERTIES TIMEOUT 30
         )
+    endif()
+    if(TARGET test_admin_cli_smoke)
+        add_test(NAME admin_inventory_cli_smoke
+            COMMAND test_admin_cli_smoke
+                inventory
+                $<TARGET_FILE:librdp-admin>
+        )
+        add_test(NAME admin_actions_cli_smoke
+            COMMAND test_admin_cli_smoke
+                actions
+                $<TARGET_FILE:librdp-admin>
+        )
+        set_tests_properties(
+            admin_inventory_cli_smoke
+            admin_actions_cli_smoke
+            PROPERTIES TIMEOUT 30
+        )
+    endif()
+    if(TARGET test_enterprise_cli_failures)
+        foreach(LIBRDP_ENTERPRISE_FAILURE_CASE IN ITEMS
+                workspace-tls
+                admin-tls
+                workspace-auth
+                admin-auth
+                workspace-malformed
+                admin-malformed
+                workspace-empty
+                workspace-duplicate
+                admin-action-timeout)
+            string(REPLACE "-" "_" LIBRDP_ENTERPRISE_FAILURE_TEST
+                "${LIBRDP_ENTERPRISE_FAILURE_CASE}")
+            add_test(
+                NAME enterprise_${LIBRDP_ENTERPRISE_FAILURE_TEST}_smoke
+                COMMAND test_enterprise_cli_failures
+                    ${LIBRDP_ENTERPRISE_FAILURE_CASE}
+                    $<TARGET_FILE:librdp-workspace>
+                    $<TARGET_FILE:librdp-admin>
+            )
+            set_tests_properties(
+                enterprise_${LIBRDP_ENTERPRISE_FAILURE_TEST}_smoke
+                PROPERTIES TIMEOUT 30
+            )
+        endforeach()
     endif()
     add_test(NAME server_client_smoke_nla_invalid
              COMMAND test_server_client_smoke nla-invalid)

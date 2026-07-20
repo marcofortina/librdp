@@ -414,6 +414,8 @@ int workspace_select_resource(const librdp_workspace* workspace,
 {
     size_t count = 0;
     size_t index = 0;
+    size_t match = 0;
+    int found = 0;
 
     if (!workspace || !selected_index)
         return 0;
@@ -446,9 +448,21 @@ int workspace_select_resource(const librdp_workspace* workspace,
             (resource.alias && strcmp(resource.alias, selector) == 0) ||
             (resource.title && strcmp(resource.title, selector) == 0))
         {
-            *selected_index = index;
-            return 1;
+            if (found)
+            {
+                workspace_options_error(error_stream,
+                                        "selected resource is ambiguous\n",
+                                        NULL);
+                return 0;
+            }
+            match = index;
+            found = 1;
         }
+    }
+    if (found)
+    {
+        *selected_index = match;
+        return 1;
     }
     workspace_options_error(error_stream, "selected resource was not found\n", NULL);
     return 0;

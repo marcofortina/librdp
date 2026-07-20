@@ -263,6 +263,15 @@ static int test_workspace_selection(void)
       "<Alias>tool</Alias><RemoteAppProgram>||tool</RemoteAppProgram>"
       "</RemoteApp>"
       "</Resources></Workspace>";
+    static const char duplicate_feed[] =
+      "<Workspace><Resources>"
+      "<Resource><ID>shared-resource</ID><Title>First Desktop</Title>"
+      "<Type>Desktop</Type><TerminalServer>first.example.test</TerminalServer>"
+      "</Resource>"
+      "<Resource><ID>shared-resource</ID><Title>Second Desktop</Title>"
+      "<Type>Desktop</Type><TerminalServer>second.example.test</TerminalServer>"
+      "</Resource>"
+      "</Resources></Workspace>";
     librdp_workspace_config config;
     librdp_workspace* workspace = NULL;
 #ifdef RDP_HAVE_LIBXML2
@@ -290,6 +299,16 @@ static int test_workspace_selection(void)
     CHECK(workspace_select_resource(workspace, "Published Tool", &selected, errors) == 1);
     CHECK(selected == 1u);
     CHECK(workspace_select_resource(workspace, "missing", &selected, errors) == 0);
+    CHECK(librdp_workspace_load_xml(workspace,
+                                    duplicate_feed,
+                                    sizeof(duplicate_feed) - 1u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(workspace_select_resource(workspace,
+                                    "shared-resource",
+                                    &selected,
+                                    errors) == 0);
+    CHECK(workspace_select_resource(workspace, "1", &selected, errors) == 1);
+    CHECK(selected == 1u);
 #else
     CHECK(librdp_workspace_load_xml(workspace,
                                     feed,
