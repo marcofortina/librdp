@@ -2911,6 +2911,148 @@ static int read_client_dynamic_close_fd(int fd,
     return 0;
 }
 
+/*
+ * Decode an application-initiated DVC create request so the loopback peer
+ * verifies the public API's wire name, priority and allocated channel ID.
+ */
+static int read_client_dynamic_create_request_fd(int fd,
+                                                 uint8_t* input,
+                                                 size_t capacity,
+                                                 uint16_t expected_static_channel_id,
+                                                 const char* expected_name,
+                                                 uint8_t expected_priority,
+                                                 uint32_t* dynamic_channel_id)
+{
+    size_t expected_name_len = 0;
+
+    if (!expected_name || !dynamic_channel_id)
+        return 0;
+    expected_name_len = strlen(expected_name);
+    for (size_t attempt = 0; attempt < 8u; attempt++)
+    {
+        size_t input_len = 0;
+        rdp_virtual_channel_packet packet;
+        rdp_dynamic_channel_create_request request;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (!parse_client_dynamic_channel_payload(input,
+                                                  input_len,
+                                                  expected_static_channel_id,
+                                                  &packet))
+            continue;
+        if (rdp_dynamic_channel_parse_create_request(packet.payload,
+                                                     packet.payload_len,
+                                                     &request) != LIBRDP_STATUS_OK ||
+            request.priority != expected_priority ||
+            request.name_len != expected_name_len ||
+            memcmp(request.name, expected_name, expected_name_len) != 0)
+        {
+            return 0;
+        }
+        *dynamic_channel_id = request.channel_id;
+        return request.channel_id != 0;
+    }
+    return 0;
+}
+
+/*
+ * Decode one unfragmented application DVC payload and check that the send
+ * options' priority reaches the protocol header without translation.
+ */
+static int read_client_dynamic_data_fd(int fd,
+                                       uint8_t* input,
+                                       size_t capacity,
+                                       uint16_t expected_static_channel_id,
+                                       uint32_t expected_dynamic_channel_id,
+                                       uint8_t expected_priority,
+                                       const uint8_t* expected_data,
+                                       size_t expected_data_len)
+{
+    if (!expected_data && expected_data_len > 0)
+        return 0;
+    for (size_t attempt = 0; attempt < 8u; attempt++)
+    {
+        size_t input_len = 0;
+        rdp_virtual_channel_packet packet;
+        rdp_dynamic_channel_header header;
+        rdp_dynamic_channel_data_pdu data_pdu;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (!parse_client_dynamic_channel_payload(input,
+                                                  input_len,
+                                                  expected_static_channel_id,
+                                                  &packet))
+            continue;
+        if (rdp_dynamic_channel_parse_header(packet.payload,
+                                             packet.payload_len,
+                                             &header) != LIBRDP_STATUS_OK ||
+            header.command != RDP_DYNAMIC_CHANNEL_CMD_DATA ||
+            header.priority != expected_priority ||
+            rdp_dynamic_channel_parse_data(packet.payload,
+                                           packet.payload_len,
+                                           &data_pdu) != LIBRDP_STATUS_OK ||
+            data_pdu.channel_id != expected_dynamic_channel_id ||
+            data_pdu.data_len != expected_data_len ||
+            (expected_data_len > 0 &&
+             memcmp(data_pdu.data, expected_data, expected_data_len) != 0))
+        {
+            return 0;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/*
+ * Complete four client-owned DVC lifecycles while checking each protocol
+ * priority independently. Every response uses the ID allocated by the client.
+ */
+static int run_client_open_priorities_server_scenario(int fd,
+                                                      uint8_t* input,
+                                                      size_t capacity)
+{
+    static const char* const channel_names[] = {
+        "prio.low",
+        "prio.medium",
+        "prio.high",
+        "prio.realtime"
+    };
+
+    for (uint8_t priority = 0; priority < 4u; priority++)
+    {
+        const uint8_t payload[] = {0xa5u, 0x5au, priority, 0xc3u};
+        uint32_t channel_id = 0;
+        rdp_buffer response;
+        int ok = 0;
+
+        rdp_buffer_init(&response);
+        ok = read_client_dynamic_create_request_fd(fd,
+                                                   input,
+                                                   capacity,
+                                                   1004u,
+                                                   channel_names[priority],
+                                                   priority,
+                                                   &channel_id) &&
+             build_dynamic_channel_create_response_packet(&response, channel_id) &&
+             write_exact_fd(fd, response.data, response.length) &&
+             read_client_dynamic_data_fd(fd,
+                                         input,
+                                         capacity,
+                                         1004u,
+                                         channel_id,
+                                         priority,
+                                         payload,
+                                         sizeof(payload)) &&
+             read_client_dynamic_close_fd(fd, input, capacity, 1004u, channel_id);
+        rdp_buffer_free(&response);
+        if (!ok)
+            return 0;
+    }
+    return 1;
+}
+
 static int read_client_dynamic_create_response_status_fd(int fd,
                                                          uint8_t* input,
                                                          size_t capacity,
@@ -4428,6 +4570,12 @@ int start_handshake_server_full(uint16_t* port,
                     if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_UNAVAILABLE)
                     {
                         if (!wait_for_client_eof_fd(client, input, sizeof(input)))
+                            _exit(5);
+                        goto done_connection;
+                    }
+                    if (dynamic_channel_scenario == DVC_SCENARIO_CLIENT_OPEN_PRIORITIES)
+                    {
+                        if (!run_client_open_priorities_server_scenario(client, input, sizeof(input)))
                             _exit(5);
                         goto done_connection;
                     }

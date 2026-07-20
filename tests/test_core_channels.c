@@ -1531,6 +1531,112 @@ int test_dynamic_channel_public_fragment_send(void)
 }
 
 /*
+ * Coverage: opens an application-owned DVC at every public priority, checks
+ * provisional and active handle state, sends a wire-verified payload, closes
+ * the handle and confirms immediate stale-handle invalidation.
+ */
+int test_dynamic_channel_public_open_priorities(void)
+{
+    static const char* const channel_names[] = {
+        "prio.low",
+        "prio.medium",
+        "prio.high",
+        "prio.realtime"
+    };
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    event_counter counter;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+
+    memset(&counter, 0, sizeof(counter));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_CLIENT_OPEN_PRIORITIES,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (size_t attempt = 0;
+         attempt < 8u && librdp_session_get_state(session) != LIBRDP_SESSION_ACTIVE;
+         attempt++)
+    {
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    }
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
+
+    for (librdp_channel_priority priority = LIBRDP_CHANNEL_PRIORITY_LOW;
+         priority <= LIBRDP_CHANNEL_PRIORITY_REALTIME;
+         priority = (librdp_channel_priority)(priority + 1))
+    {
+        const uint8_t payload[] = {0xa5u, 0x5au, (uint8_t)priority, 0xc3u};
+        librdp_channel_handle handle = 0;
+        librdp_channel_info info;
+        librdp_channel_send_options options;
+        size_t channel_count = 0;
+        int expected_open_count = counter.channel_open + 1;
+
+        CHECK(librdp_session_channel_open(session,
+                                          channel_names[priority],
+                                          priority,
+                                          &handle) == LIBRDP_STATUS_OK);
+        CHECK(handle != 0);
+        CHECK(librdp_channel_info_init(&info) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_channel_get_info(session, handle, &info) == LIBRDP_STATUS_OK);
+        CHECK(!info.active);
+        CHECK(info.application_owned);
+        CHECK(info.priority == priority);
+        CHECK(info.name_len == strlen(channel_names[priority]));
+        CHECK(strcmp(info.name, channel_names[priority]) == 0);
+
+        for (size_t attempt = 0; attempt < 8u && counter.channel_open < expected_open_count; attempt++)
+            CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+        CHECK(counter.channel_open == expected_open_count);
+        CHECK(librdp_channel_info_init(&info) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_channel_get_info(session, handle, &info) == LIBRDP_STATUS_OK);
+        CHECK(info.active);
+        CHECK(info.application_owned);
+        CHECK(info.priority == priority);
+        CHECK(info.name_len == strlen(channel_names[priority]));
+        CHECK(strcmp(info.name, channel_names[priority]) == 0);
+        CHECK(librdp_session_channel_list(session, NULL, 0, &channel_count) == LIBRDP_STATUS_OK);
+        CHECK(channel_count == 1u);
+
+        CHECK(librdp_channel_send_options_init(&options) == LIBRDP_STATUS_OK);
+        options.handle = handle;
+        options.priority = priority;
+        CHECK(librdp_session_channel_send_ex(session,
+                                             &options,
+                                             payload,
+                                             sizeof(payload)) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_channel_close_handle(session, handle) == LIBRDP_STATUS_OK);
+        CHECK(librdp_channel_info_init(&info) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_channel_get_info(session, handle, &info) == LIBRDP_STATUS_STATE);
+        CHECK(librdp_session_channel_list(session, NULL, 0, &channel_count) == LIBRDP_STATUS_OK);
+        CHECK(channel_count == 0u);
+    }
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: WebAuthn is an internal DVC and must drive the public feature
  * status from its own channel lifecycle, not from auth-redirection state or
  * public application-channel events.

@@ -49,6 +49,7 @@ int test_display_control_resize_frame_stability(void);
 int test_display_control_monitor_fields_and_unavailable(void);
 int test_dynamic_channel_data_before_create(void);
 int test_dynamic_channel_public_fragment_send(void);
+int test_dynamic_channel_public_open_priorities(void);
 int test_server_redirection_state(void);
 int test_webauthn_feature_status_channel_lifecycle(void);
 int test_webauthn_dvc_rejects_unrequested_feature(void);
