@@ -34,6 +34,10 @@
 #define RDP_DYNAMIC_CHANNEL_CMD_DATA_COMPRESSED 0x07u
 #define RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_REQUEST 0x08u
 #define RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_RESPONSE 0x09u
+#define RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_0 936u
+#define RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_1 3276u
+#define RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_2 9362u
+#define RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_3 21845u
 #define RDP_DYNAMIC_CHANNEL_STATUS_OK 0x00000000u
 #define RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED 0xc00000bbu
 #define RDP_DYNAMIC_CHANNEL_STATIC_NAME "drdynvc"
@@ -150,6 +154,10 @@ librdp_status rdp_dynamic_channel_parse_header(const void* data,
 librdp_status rdp_dynamic_channel_parse_capabilities(const void* data,
                                                      size_t length,
                                                      rdp_dynamic_channel_capabilities* capabilities);
+librdp_status rdp_dynamic_channel_write_capabilities_request(
+    rdp_buffer* buffer,
+    uint16_t version,
+    const uint16_t priority_charge[4]);
 librdp_status rdp_dynamic_channel_write_capabilities_response(rdp_buffer* buffer, uint16_t version);
 librdp_status rdp_dynamic_channel_parse_create_request(const void* data,
                                                        size_t length,

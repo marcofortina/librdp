@@ -904,7 +904,9 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
             if (status == LIBRDP_STATUS_OK)
             {
                 rdp_server_set_state(peer, LIBRDP_SERVER_PEER_ACTIVE);
-                status = rdp_server_surface_flush_repaint(peer);
+                status = rdp_server_dynamic_channels_start(peer);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_server_surface_flush_repaint(peer);
                 if (status == LIBRDP_STATUS_OK)
                     status = rdp_server_device_redirection_start(peer);
             }

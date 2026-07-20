@@ -20,7 +20,9 @@
 #include "test_rdg_gateway.h"
 #include "test_server_support.h"
 
+#include "channels/graphics_pipeline.h"
 #include "graphics/bitmap.h"
+#include "graphics/planar.h"
 #include "protocol/fastpath.h"
 #include "protocol/session_selection.h"
 #include "server/server_internal.h"
@@ -345,6 +347,18 @@ typedef struct smoke_fastpath_bitmap_peer
     librdp_status status;
 } smoke_fastpath_bitmap_peer;
 
+typedef struct smoke_graphics_peer
+{
+    librdp_server_config config;
+    pthread_t thread;
+    atomic_uint port;
+    atomic_uint caps_advertised;
+    atomic_uint frame_acknowledged;
+    atomic_uint frame_sent;
+    atomic_uint client_closed;
+    librdp_status status;
+} smoke_graphics_peer;
+
 typedef struct smoke_redirection_peer
 {
     librdp_server_config config;
@@ -420,6 +434,15 @@ typedef struct smoke_trace_capture
     unsigned int redirection_loops;
     unsigned int slowpath_bitmap_updates;
     unsigned int fastpath_bitmap_updates;
+    unsigned int graphics_caps_confirms;
+    unsigned int graphics_surface_creates;
+    unsigned int graphics_surface_maps;
+    unsigned int graphics_planar_updates;
+    unsigned int graphics_uncompressed_updates;
+    unsigned int graphics_frame_starts;
+    unsigned int graphics_frame_ends;
+    unsigned int graphics_frame_acks;
+    unsigned int graphics_surface_deletes;
     unsigned int refresh_requests;
     unsigned int output_suppressions;
     unsigned int output_resumptions;
@@ -647,6 +670,46 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event,
                     "rdp.fastpath.bitmap_update") == 0)
         capture->fastpath_bitmap_updates++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.caps_confirm") == 0)
+        capture->graphics_caps_confirms++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.surface.create") == 0)
+        capture->graphics_surface_creates++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.surface.map_output") == 0)
+        capture->graphics_surface_maps++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.wire_to_surface") == 0 &&
+             record->message &&
+             strstr(record->message, "codec_id=10 ") != NULL)
+        capture->graphics_planar_updates++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.wire_to_surface") == 0 &&
+             record->message &&
+             strstr(record->message, "codec_id=0 ") != NULL)
+        capture->graphics_uncompressed_updates++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.frame.start") == 0)
+        capture->graphics_frame_starts++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.frame.end") == 0)
+        capture->graphics_frame_ends++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.frame_ack") == 0)
+        capture->graphics_frame_acks++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.surface.delete") == 0)
+        capture->graphics_surface_deletes++;
     else if (record->event &&
              strcmp(record->event,
                     "client.active.refresh_rect") == 0)
@@ -1987,6 +2050,299 @@ static void* smoke_fastpath_bitmap_peer_main(void* user_data)
     fixture->status = LIBRDP_STATUS_OK;
 
 cleanup:
+    if (peer)
+    {
+        (void)librdp_server_peer_close(peer);
+        librdp_server_peer_free(peer);
+    }
+    if (server)
+    {
+        (void)librdp_server_close(server);
+        librdp_server_free(server);
+    }
+    return NULL;
+}
+
+static void smoke_graphics_channel_event(
+    librdp_server_peer* peer,
+    const librdp_server_channel_event* event,
+    void* user_data)
+{
+    smoke_graphics_peer* fixture =
+        (smoke_graphics_peer*)user_data;
+    rdp_graphics_header header;
+
+    (void)peer;
+    if (!fixture || !event ||
+        event->type != LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_DATA ||
+        event->dynamic_channel_id != 17u ||
+        !event->data)
+        return;
+    if (rdp_graphics_parse_header(event->data,
+                                  event->data_len,
+                                  &header) != LIBRDP_STATUS_OK ||
+        header.pdu_length != event->data_len)
+        return;
+    if (header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_ADVERTISE)
+    {
+        atomic_store_explicit(&fixture->caps_advertised,
+                              1u,
+                              memory_order_release);
+    }
+    else if (header.cmd_id ==
+             RDP_GRAPHICS_CMDID_FRAME_ACKNOWLEDGE)
+    {
+        atomic_store_explicit(&fixture->frame_acknowledged,
+                              1u,
+                              memory_order_release);
+    }
+}
+
+static librdp_status smoke_graphics_send_command(
+    librdp_server_peer* peer,
+    uint32_t channel_id,
+    const rdp_buffer* command)
+{
+    rdp_buffer segmented;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !command)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&segmented);
+    status = rdp_graphics_write_segmented_uncompressed(
+        &segmented,
+        command->data,
+        command->length);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = librdp_server_peer_send_dynamic_channel_data(
+            peer,
+            channel_id,
+            segmented.data,
+            segmented.length);
+    }
+    rdp_buffer_free(&segmented);
+    return status;
+}
+
+/*
+ * Exercise the complete public client/server RDPGFX path with deterministic
+ * Planar and uncompressed updates. The callback confirms that the client
+ * advertises capabilities and acknowledges the rendered frame.
+ */
+static void* smoke_graphics_peer_main(void* user_data)
+{
+    static const uint8_t planar_no_alpha[] = {
+        RDP_PLANAR_FORMAT_NO_ALPHA,
+        0x10u, 0x20u,
+        0x30u, 0x40u,
+        0x50u, 0x60u
+    };
+    static const uint8_t uncompressed_pixels[] = {
+        0x70u, 0x80u, 0x90u, 0x01u,
+        0xa0u, 0xb0u, 0xc0u, 0x02u
+    };
+    const rdp_graphics_rect16 planar_rect = {
+        0u, 0u, 2u, 1u
+    };
+    smoke_graphics_peer* fixture =
+        (smoke_graphics_peer*)user_data;
+    librdp_server* server = NULL;
+    librdp_server_peer* peer = NULL;
+    rdp_buffer command;
+    uint32_t frame_id = 0u;
+    uint32_t pending_frames = 0u;
+    uint32_t last_ack_frame_id = 0u;
+    unsigned int attempt = 0u;
+
+    if (!fixture)
+        return NULL;
+    fixture->status = LIBRDP_STATUS_TIMEOUT;
+    rdp_buffer_init(&command);
+    server = librdp_server_new(&fixture->config);
+    if (!server)
+    {
+        fixture->status = LIBRDP_STATUS_NO_MEMORY;
+        return NULL;
+    }
+    fixture->status = librdp_server_listen(server);
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    atomic_store_explicit(&fixture->port,
+                          librdp_server_local_port(server),
+                          memory_order_release);
+    fixture->status = smoke_server_accept_active(server, &peer);
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    fixture->status = librdp_server_peer_set_channel_callback(
+        peer,
+        smoke_graphics_channel_event,
+        fixture);
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    for (attempt = 0u; attempt < SMOKE_PUMP_LIMIT; attempt++)
+    {
+        fixture->status = librdp_server_peer_open_dynamic_channel(
+            peer,
+            17u,
+            0u,
+            RDP_GRAPHICS_PIPELINE_CHANNEL_NAME);
+        if (fixture->status == LIBRDP_STATUS_OK)
+            break;
+        if (fixture->status != LIBRDP_STATUS_STATE)
+            goto cleanup;
+        fixture->status = librdp_server_peer_run_once(peer, 20);
+        if (fixture->status != LIBRDP_STATUS_OK &&
+            fixture->status != LIBRDP_STATUS_TIMEOUT)
+            goto cleanup;
+    }
+    if (attempt == SMOKE_PUMP_LIMIT)
+    {
+        fixture->status = LIBRDP_STATUS_TIMEOUT;
+        goto cleanup;
+    }
+    for (attempt = 0u;
+         attempt < SMOKE_PUMP_LIMIT &&
+         atomic_load_explicit(&fixture->caps_advertised,
+                              memory_order_acquire) == 0u;
+         attempt++)
+    {
+        fixture->status = librdp_server_peer_run_once(peer, 20);
+        if (fixture->status != LIBRDP_STATUS_OK &&
+            fixture->status != LIBRDP_STATUS_TIMEOUT)
+            goto cleanup;
+    }
+    if (atomic_load_explicit(&fixture->caps_advertised,
+                             memory_order_acquire) == 0u)
+    {
+        fixture->status = LIBRDP_STATUS_TIMEOUT;
+        goto cleanup;
+    }
+    fixture->status =
+        librdp_server_peer_send_graphics_default_caps(peer, 17u);
+    if (fixture->status == LIBRDP_STATUS_OK)
+    {
+        fixture->status = librdp_server_peer_send_graphics_reset(
+            peer,
+            17u,
+            SMOKE_WIDTH + 1u,
+            SMOKE_HEIGHT + 1u);
+    }
+    if (fixture->status == LIBRDP_STATUS_OK)
+    {
+        fixture->status =
+            librdp_server_peer_send_graphics_create_surface(
+                peer,
+                17u,
+                1u,
+                4u,
+                2u,
+                RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888);
+    }
+    if (fixture->status == LIBRDP_STATUS_OK)
+    {
+        fixture->status = rdp_graphics_write_map_surface_to_output(
+            &command,
+            1u,
+            0u,
+            0u);
+    }
+    if (fixture->status == LIBRDP_STATUS_OK)
+        fixture->status = smoke_graphics_send_command(peer, 17u, &command);
+    command.length = 0u;
+    if (fixture->status == LIBRDP_STATUS_OK)
+    {
+        fixture->status =
+            librdp_server_peer_send_graphics_start_frame(
+                peer,
+                17u,
+                1000u,
+                &frame_id);
+    }
+    if (fixture->status == LIBRDP_STATUS_OK)
+    {
+        fixture->status = rdp_graphics_write_wire_to_surface_1(
+            &command,
+            1u,
+            RDP_GRAPHICS_CODECID_PLANAR,
+            RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888,
+            &planar_rect,
+            planar_no_alpha,
+            (uint32_t)sizeof(planar_no_alpha));
+    }
+    if (fixture->status == LIBRDP_STATUS_OK)
+        fixture->status = smoke_graphics_send_command(peer, 17u, &command);
+    command.length = 0u;
+    if (fixture->status == LIBRDP_STATUS_OK)
+    {
+        fixture->status =
+            librdp_server_peer_send_graphics_bitmap_bgra32(
+                peer,
+                17u,
+                1u,
+                2u,
+                0u,
+                2u,
+                1u,
+                8u,
+                uncompressed_pixels);
+    }
+    if (fixture->status == LIBRDP_STATUS_OK)
+    {
+        fixture->status = librdp_server_peer_send_graphics_end_frame(
+            peer,
+            17u,
+            frame_id);
+    }
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    for (attempt = 0u; attempt < SMOKE_PUMP_LIMIT; attempt++)
+    {
+        fixture->status = librdp_server_peer_run_once(peer, 20);
+        if (fixture->status != LIBRDP_STATUS_OK &&
+            fixture->status != LIBRDP_STATUS_TIMEOUT)
+            goto cleanup;
+        fixture->status =
+            librdp_server_peer_get_graphics_frame_state(
+                peer,
+                &pending_frames,
+                NULL,
+                &last_ack_frame_id);
+        if (fixture->status != LIBRDP_STATUS_OK)
+            goto cleanup;
+        if (pending_frames == 0u &&
+            last_ack_frame_id == frame_id &&
+            atomic_load_explicit(&fixture->frame_acknowledged,
+                                 memory_order_acquire) != 0u)
+            break;
+    }
+    if (attempt == SMOKE_PUMP_LIMIT)
+    {
+        fixture->status = LIBRDP_STATUS_TIMEOUT;
+        goto cleanup;
+    }
+    fixture->status =
+        librdp_server_peer_send_graphics_delete_surface(
+            peer,
+            17u,
+            1u);
+    if (fixture->status != LIBRDP_STATUS_OK)
+        goto cleanup;
+    atomic_store_explicit(&fixture->frame_sent,
+                          1u,
+                          memory_order_release);
+    if (!smoke_integrity_wait_for_client_close(peer->fd))
+    {
+        fixture->status = LIBRDP_STATUS_TIMEOUT;
+        goto cleanup;
+    }
+    atomic_store_explicit(&fixture->client_closed,
+                          1u,
+                          memory_order_release);
+    fixture->status = LIBRDP_STATUS_OK;
+
+cleanup:
+    rdp_buffer_free(&command);
     if (peer)
     {
         (void)librdp_server_peer_close(peer);
@@ -4378,6 +4734,144 @@ cleanup:
     return result;
 }
 
+static int smoke_run_graphics_planar(void)
+{
+    static const uint8_t expected_row[] = {
+        0x50u, 0x30u, 0x10u, 0xffu,
+        0x60u, 0x40u, 0x20u, 0xffu,
+        0x70u, 0x80u, 0x90u, 0xffu,
+        0xa0u, 0xb0u, 0xc0u, 0xffu
+    };
+    smoke_graphics_peer fixture;
+    smoke_client_events events;
+    smoke_trace_capture trace_capture;
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    const librdp_surface* surface = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t* expected = NULL;
+    const uint8_t* pixels = NULL;
+    size_t surface_bytes = 0u;
+    uint16_t port = 0u;
+    unsigned int cycle = 0u;
+    int thread_started = 0;
+    int result = 1;
+
+    memset(&fixture, 0, sizeof(fixture));
+    memset(&events, 0, sizeof(events));
+    memset(&trace_capture, 0, sizeof(trace_capture));
+    atomic_init(&fixture.port, 0u);
+    atomic_init(&fixture.caps_advertised, 0u);
+    atomic_init(&fixture.frame_acknowledged, 0u);
+    atomic_init(&fixture.frame_sent, 0u);
+    atomic_init(&fixture.client_closed, 0u);
+    fixture.status = LIBRDP_STATUS_AGAIN;
+    REQUIRE(librdp_server_config_init(&fixture.config) ==
+            LIBRDP_STATUS_OK);
+    fixture.config.bind_address = "127.0.0.1";
+    fixture.config.security_mode = LIBRDP_SECURITY_STANDARD;
+    fixture.config.width = SMOKE_WIDTH;
+    fixture.config.height = SMOKE_HEIGHT;
+    REQUIRE(pthread_create(&fixture.thread,
+                           NULL,
+                           smoke_graphics_peer_main,
+                           &fixture) == 0);
+    thread_started = 1;
+    REQUIRE(smoke_wait_for_port(&fixture.port, &port));
+
+    settings = librdp_settings_new();
+    REQUIRE(settings != NULL);
+    REQUIRE(librdp_settings_set_target(settings, "127.0.0.1") ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_port(settings, port) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_security_mode(
+                settings,
+                LIBRDP_SECURITY_STANDARD) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_desktop_size(settings,
+                                             SMOKE_WIDTH,
+                                             SMOKE_HEIGHT) ==
+            LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    REQUIRE(session != NULL);
+    librdp_session_set_event_callback(session,
+                                      smoke_client_event,
+                                      &events);
+    REQUIRE(librdp_trace_policy_init(&trace_policy) ==
+            LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = smoke_trace_callback;
+    trace_policy.callback_user_data = &trace_capture;
+    trace_policy.trace_id = "graphics-planar";
+    trace_capture.target = "127.0.0.1";
+    trace_capture.port = port;
+    REQUIRE(librdp_session_set_trace_policy(session,
+                                            &trace_policy) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (cycle = 0u; cycle < SMOKE_PUMP_LIMIT; cycle++)
+    {
+        status = librdp_session_run_once(session, 50);
+        REQUIRE(status == LIBRDP_STATUS_OK);
+        if (events.active_seen &&
+            trace_capture.graphics_caps_confirms != 0u &&
+            trace_capture.graphics_surface_creates != 0u &&
+            trace_capture.graphics_surface_maps != 0u &&
+            trace_capture.graphics_planar_updates != 0u &&
+            trace_capture.graphics_uncompressed_updates != 0u &&
+            trace_capture.graphics_frame_starts != 0u &&
+            trace_capture.graphics_frame_ends != 0u &&
+            trace_capture.graphics_frame_acks != 0u &&
+            trace_capture.graphics_surface_deletes != 0u)
+            break;
+    }
+    REQUIRE(cycle < SMOKE_PUMP_LIMIT);
+    REQUIRE(events.active);
+    REQUIRE(events.error_events == 0u);
+    REQUIRE(events.surface_events >= 2u);
+    surface = librdp_session_get_surface(session);
+    REQUIRE(surface != NULL);
+    REQUIRE(librdp_surface_width(surface) == SMOKE_WIDTH + 1u);
+    REQUIRE(librdp_surface_height(surface) == SMOKE_HEIGHT + 1u);
+    REQUIRE(librdp_surface_stride(surface) ==
+            (size_t)(SMOKE_WIDTH + 1u) * 4u);
+    surface_bytes = librdp_surface_stride(surface) *
+                    librdp_surface_height(surface);
+    expected = (uint8_t*)calloc(1u, surface_bytes);
+    REQUIRE(expected != NULL);
+    memcpy(expected, expected_row, sizeof(expected_row));
+    pixels = librdp_surface_pixels(surface);
+    REQUIRE(pixels != NULL);
+    REQUIRE(CRYPTO_memcmp(pixels, expected, surface_bytes) == 0);
+    REQUIRE(librdp_session_disconnect(session) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(pthread_join(fixture.thread, NULL) == 0);
+    thread_started = 0;
+    REQUIRE(fixture.status == LIBRDP_STATUS_OK);
+    REQUIRE(atomic_load_explicit(&fixture.caps_advertised,
+                                 memory_order_acquire) == 1u);
+    REQUIRE(atomic_load_explicit(&fixture.frame_acknowledged,
+                                 memory_order_acquire) == 1u);
+    REQUIRE(atomic_load_explicit(&fixture.frame_sent,
+                                 memory_order_acquire) == 1u);
+    REQUIRE(atomic_load_explicit(&fixture.client_closed,
+                                 memory_order_acquire) == 1u);
+    result = 0;
+
+cleanup:
+    free(expected);
+    librdp_session_free(session);
+    session = NULL;
+    if (thread_started)
+        (void)pthread_join(fixture.thread, NULL);
+    librdp_settings_free(settings);
+    return result;
+}
+
 static int smoke_parse_security(const char* value,
                                 librdp_security_mode* security,
                                 librdp_status* expected_status,
@@ -4494,6 +4988,8 @@ int main(int argc, char** argv)
         return smoke_run_standard_integrity();
     if (argc == 2 && strcmp(argv[1], "fastpath-bitmap") == 0)
         return smoke_run_fastpath_bitmap();
+    if (argc == 2 && strcmp(argv[1], "graphics-planar") == 0)
+        return smoke_run_graphics_planar();
     if (argc == 2 && strcmp(argv[1], "security-downgrade") == 0)
         return smoke_run_security_error(
             SMOKE_SECURITY_PEER_DOWNGRADE,

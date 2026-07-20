@@ -643,6 +643,8 @@ int test_protocol_graphics_pipeline_vectors(void)
     rdp_clearcodec_subcodec clear_subcodec;
     rdp_clearcodec_context clear_context;
     rdp_buffer graphics_decoded;
+    rdp_buffer graphics_encoded;
+    rdp_buffer graphics_large;
     rdp_buffer graphics_reset_pdu;
     rdp_buffer clear_pixels;
     rdp_buffer dyn_response;
@@ -655,6 +657,8 @@ int test_protocol_graphics_pipeline_vectors(void)
     rdp_graphics_decompressor_reset(&graphics_decompressor);
     rdp_clearcodec_context_reset(&clear_context);
     rdp_buffer_init(&graphics_decoded);
+    rdp_buffer_init(&graphics_encoded);
+    rdp_buffer_init(&graphics_large);
     rdp_buffer_init(&graphics_reset_pdu);
     rdp_buffer_init(&clear_pixels);
     rdp_buffer_init(&dyn_response);
@@ -855,6 +859,14 @@ int test_protocol_graphics_pipeline_vectors(void)
            LIBRDP_STATUS_OK);
     PCHECK(graphics_caps_confirm.selected.version == RDP_GRAPHICS_CAPVERSION_8);
     PCHECK((graphics_caps_confirm.selected.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0);
+    graphics_encoded.length = 0;
+    PCHECK(rdp_graphics_write_caps_confirm(&graphics_encoded,
+                                           &graphics_caps_confirm.selected) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(graphics_encoded.length == sizeof(graphics_confirm) &&
+           memcmp(graphics_encoded.data,
+                  graphics_confirm,
+                  sizeof(graphics_confirm)) == 0);
     {
         rdp_graphics_caps_confirm valid_confirm = graphics_caps_confirm;
 
@@ -869,6 +881,41 @@ int test_protocol_graphics_pipeline_vectors(void)
                                               &graphics_decoded) == LIBRDP_STATUS_OK);
     PCHECK(graphics_decoded.length == sizeof(graphics_confirm));
     PCHECK(memcmp(graphics_decoded.data, graphics_confirm, sizeof(graphics_confirm)) == 0);
+    graphics_encoded.length = 0;
+    PCHECK(rdp_graphics_write_segmented_uncompressed(
+               &graphics_encoded,
+               graphics_confirm,
+               sizeof(graphics_confirm)) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_encoded.length == sizeof(graphics_segment_single) &&
+           memcmp(graphics_encoded.data,
+                  graphics_segment_single,
+                  sizeof(graphics_segment_single)) == 0);
+    PCHECK(rdp_buffer_reserve(&graphics_large,
+                              RDP_GRAPHICS_BULK_SEGMENT_MAX + 1u) ==
+           LIBRDP_STATUS_OK);
+    graphics_large.length = RDP_GRAPHICS_BULK_SEGMENT_MAX + 1u;
+    for (size_t graphics_large_index = 0;
+         graphics_large_index < graphics_large.length;
+         graphics_large_index++)
+        graphics_large.data[graphics_large_index] =
+            (uint8_t)(graphics_large_index & 0xffu);
+    graphics_encoded.length = 0;
+    PCHECK(rdp_graphics_write_segmented_uncompressed(
+               &graphics_encoded,
+               graphics_large.data,
+               graphics_large.length) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_encoded.data[0] == RDP_GRAPHICS_SEGMENT_MULTIPART);
+    graphics_decoded.length = 0;
+    rdp_graphics_decompressor_reset(&graphics_decompressor);
+    PCHECK(rdp_graphics_decode_segmented_data(
+               &graphics_decompressor,
+               graphics_encoded.data,
+               graphics_encoded.length,
+               &graphics_decoded) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_decoded.length == graphics_large.length &&
+           memcmp(graphics_decoded.data,
+                  graphics_large.data,
+                  graphics_large.length) == 0);
     graphics_decoded.length = 0;
     PCHECK(rdp_graphics_decode_segmented_data(&graphics_decompressor,
                                               graphics_segment_multipart,
@@ -2714,6 +2761,8 @@ int test_protocol_graphics_pipeline_vectors(void)
     rdp_clearcodec_context_free(&clear_context);
     rdp_graphics_decompressor_free(&graphics_decompressor);
     rdp_buffer_free(&graphics_reset_pdu);
+    rdp_buffer_free(&graphics_large);
+    rdp_buffer_free(&graphics_encoded);
     rdp_buffer_free(&graphics_decoded);
     rdp_buffer_free(&clear_pixels);
     return 0;

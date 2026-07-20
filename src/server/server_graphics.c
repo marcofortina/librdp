@@ -96,6 +96,33 @@ void rdp_server_graphics_frame_state_reset(librdp_server_peer* peer)
         peer->graphics_frame_queue_limit = RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_DEFAULT;
 }
 
+/*
+ * Apply the server-to-client RDPGFX segmented transport wrapper before the
+ * ordinary DVC layer fragments the message to the negotiated channel size.
+ */
+static librdp_status rdp_server_send_graphics_buffer(librdp_server_peer* peer,
+                                                     uint32_t dynamic_channel_id,
+                                                     const rdp_buffer* command)
+{
+    rdp_buffer segmented;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!command)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&segmented);
+    status = rdp_graphics_write_segmented_uncompressed(&segmented,
+                                                       command->data,
+                                                       command->length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(
+            peer,
+            dynamic_channel_id,
+            RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
+            &segmented);
+    rdp_buffer_free(&segmented);
+    return status;
+}
+
 static void rdp_server_emit_surface_event(librdp_server_peer* peer,
                                           uint32_t x,
                                           uint32_t y,
@@ -628,16 +655,19 @@ librdp_status librdp_server_peer_send_display_single_monitor_layout(librdp_serve
 librdp_status librdp_server_peer_send_graphics_default_caps(librdp_server_peer* peer,
                                                             uint32_t dynamic_channel_id)
 {
+    const rdp_graphics_capset selected = {
+        RDP_GRAPHICS_CAPVERSION_8,
+        RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE
+    };
     rdp_buffer payload;
     librdp_status status = LIBRDP_STATUS_OK;
 
     rdp_buffer_init(&payload);
-    status = rdp_graphics_write_default_caps_advertise_for_avc(&payload, 0);
+    status = rdp_graphics_write_caps_confirm(&payload, &selected);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_dynamic_named_buffer(peer,
-                                                      dynamic_channel_id,
-                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
-                                                      &payload);
+        status = rdp_server_send_graphics_buffer(peer,
+                                                 dynamic_channel_id,
+                                                 &payload);
     rdp_buffer_free(&payload);
     return status;
 }
@@ -688,10 +718,9 @@ librdp_status librdp_server_peer_send_graphics_bitmap_bgra32(librdp_server_peer*
                                                       bitmap.data,
                                                       (uint32_t)bitmap.length);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_dynamic_named_buffer(peer,
-                                                      dynamic_channel_id,
-                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
-                                                      &payload);
+        status = rdp_server_send_graphics_buffer(peer,
+                                                 dynamic_channel_id,
+                                                 &payload);
     rdp_buffer_free(&payload);
     rdp_buffer_free(&bitmap);
     return status;
@@ -710,10 +739,9 @@ librdp_status librdp_server_peer_send_graphics_create_surface(librdp_server_peer
     rdp_buffer_init(&payload);
     status = rdp_graphics_write_create_surface(&payload, surface_id, width, height, pixel_format);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_dynamic_named_buffer(peer,
-                                                      dynamic_channel_id,
-                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
-                                                      &payload);
+        status = rdp_server_send_graphics_buffer(peer,
+                                                 dynamic_channel_id,
+                                                 &payload);
     rdp_buffer_free(&payload);
     return status;
 }
@@ -728,10 +756,9 @@ librdp_status librdp_server_peer_send_graphics_delete_surface(librdp_server_peer
     rdp_buffer_init(&payload);
     status = rdp_graphics_write_delete_surface(&payload, surface_id);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_dynamic_named_buffer(peer,
-                                                      dynamic_channel_id,
-                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
-                                                      &payload);
+        status = rdp_server_send_graphics_buffer(peer,
+                                                 dynamic_channel_id,
+                                                 &payload);
     rdp_buffer_free(&payload);
     return status;
 }
@@ -747,10 +774,9 @@ librdp_status librdp_server_peer_send_graphics_reset(librdp_server_peer* peer,
     rdp_buffer_init(&payload);
     status = rdp_graphics_write_reset(&payload, width, height);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_dynamic_named_buffer(peer,
-                                                      dynamic_channel_id,
-                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
-                                                      &payload);
+        status = rdp_server_send_graphics_buffer(peer,
+                                                 dynamic_channel_id,
+                                                 &payload);
     rdp_buffer_free(&payload);
     return status;
 }
@@ -811,10 +837,9 @@ librdp_status librdp_server_peer_send_graphics_start_frame(librdp_server_peer* p
     rdp_buffer_init(&payload);
     status = rdp_graphics_write_start_frame(&payload, timestamp, next_frame_id);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_dynamic_named_buffer(peer,
-                                                      dynamic_channel_id,
-                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
-                                                      &payload);
+        status = rdp_server_send_graphics_buffer(peer,
+                                                 dynamic_channel_id,
+                                                 &payload);
     if (status == LIBRDP_STATUS_OK)
     {
         peer->graphics_open_frame_id = next_frame_id;
@@ -847,10 +872,9 @@ librdp_status librdp_server_peer_send_graphics_end_frame(librdp_server_peer* pee
     rdp_buffer_init(&payload);
     status = rdp_graphics_write_end_frame(&payload, frame_id);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_dynamic_named_buffer(peer,
-                                                      dynamic_channel_id,
-                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
-                                                      &payload);
+        status = rdp_server_send_graphics_buffer(peer,
+                                                 dynamic_channel_id,
+                                                 &payload);
     if (status == LIBRDP_STATUS_OK)
     {
         peer->graphics_frame_open = 0;

@@ -13,6 +13,26 @@
 #include "test_server_suites.h"
 
 /*
+ * Server GFX commands use one uncompressed bulk segment in these bounded API
+ * checks. Validate and remove that transport wrapper before parsing the
+ * command body.
+ */
+static int server_runtime_graphics_command(
+    const rdp_dynamic_channel_data_pdu* packet,
+    const uint8_t** command,
+    size_t* command_len)
+{
+    if (!packet || !command || !command_len ||
+        packet->data_len < 2u ||
+        packet->data[0] != RDP_GRAPHICS_SEGMENT_SINGLE ||
+        packet->data[1] != RDP_GRAPHICS_BULK_COMPRESSION_TYPE)
+        return 0;
+    *command = packet->data + 2u;
+    *command_len = packet->data_len - 2u;
+    return 1;
+}
+
+/*
  * Drives one in-process client/server pair through the server activation path.
  * The sequence catches truncated or misordered X.224/MCS/GCC wrapping,
  * channel-join accounting, Demand Active framing, and Confirm Active state
@@ -56,7 +76,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_display_control_monitor display_monitors[1];
     uint32_t display_monitor_count = 0;
     uint32_t clipboard_format_count = 0;
-    rdp_graphics_header graphics_header;
+    rdp_graphics_caps_confirm graphics_confirm;
     rdp_graphics_create_surface graphics_create;
     rdp_graphics_delete_surface graphics_delete;
     rdp_graphics_reset graphics_reset;
@@ -207,9 +227,8 @@ int test_server_loopback_standard_activation_sequence(void)
     uint32_t graphics_pending_frames = 0;
     uint32_t graphics_frame_limit = 0;
     uint32_t graphics_last_ack_frame_id = 0;
-    uint16_t graphics_cap_count = 0;
-    uint32_t graphics_cap_version = 0;
-    uint32_t graphics_cap_flags = 0;
+    const uint8_t* graphics_command = NULL;
+    size_t graphics_command_len = 0;
     uint64_t repaint_area = 0u;
     uint64_t limits_before_dvc_limit = 0;
     librdp_server_extension_family provider_families[4] = {
@@ -948,6 +967,42 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(test_server_read_encrypted_slowpath_data_pdu(client_fd, response, sizeof(response), &client_security, &slowpath_plaintext, &data_pdu));
     SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_MAP &&
            data_pdu.payload_len == 8);
+    SCHECK(librdp_server_peer_open_dynamic_channel(peer, 8, 0, RDP_ECHO_CHANNEL_NAME) ==
+           LIBRDP_STATUS_STATE);
+    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
+                                                          response,
+                                                          sizeof(response),
+                                                          &client_security,
+                                                          &channel_plaintext,
+                                                          &response_channel_id,
+                                                          &dvc_payload,
+                                                          &dvc_payload_len));
+    SCHECK(response_channel_id == dynamic_static_channel_id);
+    SCHECK(rdp_dynamic_channel_parse_capabilities(
+               dvc_payload,
+               dvc_payload_len,
+               &dvc_caps) == LIBRDP_STATUS_OK);
+    SCHECK(dvc_caps.version == 3u &&
+           dvc_caps.has_priority_charges &&
+           dvc_caps.priority_charge[0] ==
+               RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_0 &&
+           dvc_caps.priority_charge[1] ==
+               RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_1 &&
+           dvc_caps.priority_charge[2] ==
+               RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_2 &&
+           dvc_caps.priority_charge[3] ==
+               RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_3);
+    dvc_packet.length = 0;
+    SCHECK(rdp_dynamic_channel_write_capabilities_response(&dvc_packet, 3) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_encrypted_channel_payload(
+        client_fd,
+        attach_confirm.user_id,
+        dynamic_static_channel_id,
+        &client_security,
+        &dvc_packet));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
     SCHECK(test_server_read_encrypted_static_channel_data(
         client_fd,
         response,
@@ -1366,30 +1421,6 @@ int test_server_loopback_standard_activation_sequence(void)
                                                       &extension_state) == LIBRDP_STATUS_OK);
         SCHECK(!extension_state.open && !extension_state.active && extension_state.close_count == 1);
     }
-    SCHECK(librdp_server_peer_open_dynamic_channel(peer, 8, 0, RDP_ECHO_CHANNEL_NAME) ==
-           LIBRDP_STATUS_STATE);
-
-    dvc_packet.length = 0;
-    SCHECK(rdp_dynamic_channel_write_capabilities_response(&dvc_packet, 3) == LIBRDP_STATUS_OK);
-    SCHECK(test_server_send_encrypted_channel_payload(
-        client_fd,
-        attach_confirm.user_id,
-        dynamic_static_channel_id,
-        &client_security,
-        &dvc_packet));
-    status = librdp_server_peer_run_once(peer, 1000);
-    SCHECK(status == LIBRDP_STATUS_OK);
-    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
-                                                          response,
-                                                          sizeof(response),
-                                                          &client_security,
-                                                          &channel_plaintext,
-                                                          &response_channel_id,
-                                                          &dvc_payload,
-                                                          &dvc_payload_len));
-    SCHECK(response_channel_id == dynamic_static_channel_id);
-    SCHECK(rdp_dynamic_channel_parse_capabilities(dvc_payload, dvc_payload_len, &dvc_caps) == LIBRDP_STATUS_OK);
-    SCHECK(dvc_caps.version == 3);
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_ECHO,
                                                  &feature_status) == LIBRDP_STATUS_OK);
@@ -2130,24 +2161,17 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                     9,
                                                     &dvc_data_response));
-    SCHECK(rdp_graphics_parse_header(dvc_data_response.data,
-                                     dvc_data_response.data_len,
-                                     &graphics_header) == LIBRDP_STATUS_OK);
-    SCHECK(graphics_header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_ADVERTISE);
-    SCHECK(graphics_header.pdu_length == 34);
-    graphics_cap_count = (uint16_t)((uint32_t)dvc_data_response.data[8] |
-                                    ((uint32_t)dvc_data_response.data[9] << 8u));
-    graphics_cap_version = (uint32_t)dvc_data_response.data[22] |
-                           ((uint32_t)dvc_data_response.data[23] << 8) |
-                           ((uint32_t)dvc_data_response.data[24] << 16) |
-                           ((uint32_t)dvc_data_response.data[25] << 24);
-    graphics_cap_flags = (uint32_t)dvc_data_response.data[30] |
-                         ((uint32_t)dvc_data_response.data[31] << 8) |
-                         ((uint32_t)dvc_data_response.data[32] << 16) |
-                         ((uint32_t)dvc_data_response.data[33] << 24);
-    SCHECK(graphics_cap_count == 2 &&
-           graphics_cap_version == RDP_GRAPHICS_CAPVERSION_10 &&
-           (graphics_cap_flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0);
+    SCHECK(server_runtime_graphics_command(&dvc_data_response,
+                                           &graphics_command,
+                                           &graphics_command_len));
+    SCHECK(rdp_graphics_parse_caps_confirm(graphics_command,
+                                           graphics_command_len,
+                                           &graphics_confirm) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(graphics_confirm.selected.version ==
+               RDP_GRAPHICS_CAPVERSION_8 &&
+           graphics_confirm.selected.flags ==
+               RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE);
     SCHECK(librdp_server_peer_send_graphics_create_surface(peer,
                                                            9,
                                                            1,
@@ -2162,8 +2186,11 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                     9,
                                                     &dvc_data_response));
-    SCHECK(rdp_graphics_parse_create_surface(dvc_data_response.data,
-                                             dvc_data_response.data_len,
+    SCHECK(server_runtime_graphics_command(&dvc_data_response,
+                                           &graphics_command,
+                                           &graphics_command_len));
+    SCHECK(rdp_graphics_parse_create_surface(graphics_command,
+                                             graphics_command_len,
                                              &graphics_create) == LIBRDP_STATUS_OK);
     SCHECK(graphics_create.surface_id == 1 &&
            graphics_create.width == 64 &&
@@ -2185,8 +2212,11 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                     9,
                                                     &dvc_data_response));
-    SCHECK(rdp_graphics_parse_wire_to_surface_1(dvc_data_response.data,
-                                                dvc_data_response.data_len,
+    SCHECK(server_runtime_graphics_command(&dvc_data_response,
+                                           &graphics_command,
+                                           &graphics_command_len));
+    SCHECK(rdp_graphics_parse_wire_to_surface_1(graphics_command,
+                                                graphics_command_len,
                                                 &graphics_wire) == LIBRDP_STATUS_OK);
     SCHECK(graphics_wire.surface_id == 1 &&
            graphics_wire.codec_id == RDP_GRAPHICS_CODECID_UNCOMPRESSED &&
@@ -2218,8 +2248,11 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                     9,
                                                     &dvc_data_response));
-    SCHECK(rdp_graphics_parse_delete_surface(dvc_data_response.data,
-                                             dvc_data_response.data_len,
+    SCHECK(server_runtime_graphics_command(&dvc_data_response,
+                                           &graphics_command,
+                                           &graphics_command_len));
+    SCHECK(rdp_graphics_parse_delete_surface(graphics_command,
+                                             graphics_command_len,
                                              &graphics_delete) == LIBRDP_STATUS_OK);
     SCHECK(graphics_delete.surface_id == 1);
     SCHECK(librdp_server_peer_send_graphics_reset(peer, 9, 800, 600) == LIBRDP_STATUS_OK);
@@ -2231,8 +2264,11 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                     9,
                                                     &dvc_data_response));
-    SCHECK(rdp_graphics_parse_reset(dvc_data_response.data,
-                                    dvc_data_response.data_len,
+    SCHECK(server_runtime_graphics_command(&dvc_data_response,
+                                           &graphics_command,
+                                           &graphics_command_len));
+    SCHECK(rdp_graphics_parse_reset(graphics_command,
+                                    graphics_command_len,
                                     &graphics_reset) == LIBRDP_STATUS_OK);
     SCHECK(graphics_reset.width == 800 && graphics_reset.height == 600);
     SCHECK(librdp_server_peer_set_graphics_frame_queue_limit(peer, 1) == LIBRDP_STATUS_OK);
@@ -2252,8 +2288,11 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                     9,
                                                     &dvc_data_response));
-    SCHECK(rdp_graphics_parse_start_frame(dvc_data_response.data,
-                                          dvc_data_response.data_len,
+    SCHECK(server_runtime_graphics_command(&dvc_data_response,
+                                           &graphics_command,
+                                           &graphics_command_len));
+    SCHECK(rdp_graphics_parse_start_frame(graphics_command,
+                                          graphics_command_len,
                                           &graphics_start) == LIBRDP_STATUS_OK);
     SCHECK(graphics_start.timestamp == 1234 && graphics_start.frame_id == graphics_frame_id);
     SCHECK(librdp_server_peer_send_graphics_end_frame(peer, 9, graphics_frame_id) == LIBRDP_STATUS_OK);
@@ -2265,8 +2304,11 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                     9,
                                                     &dvc_data_response));
-    SCHECK(rdp_graphics_parse_end_frame(dvc_data_response.data,
-                                        dvc_data_response.data_len,
+    SCHECK(server_runtime_graphics_command(&dvc_data_response,
+                                           &graphics_command,
+                                           &graphics_command_len));
+    SCHECK(rdp_graphics_parse_end_frame(graphics_command,
+                                        graphics_command_len,
                                         &graphics_end) == LIBRDP_STATUS_OK);
     SCHECK(graphics_end.frame_id == graphics_frame_id);
     SCHECK(librdp_server_peer_get_graphics_frame_state(peer,
@@ -2309,8 +2351,11 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                     9,
                                                     &dvc_data_response));
-    SCHECK(rdp_graphics_parse_start_frame(dvc_data_response.data,
-                                          dvc_data_response.data_len,
+    SCHECK(server_runtime_graphics_command(&dvc_data_response,
+                                           &graphics_command,
+                                           &graphics_command_len));
+    SCHECK(rdp_graphics_parse_start_frame(graphics_command,
+                                          graphics_command_len,
                                           &graphics_start) == LIBRDP_STATUS_OK);
     SCHECK(graphics_start.timestamp == 2234 && graphics_start.frame_id == graphics_frame_id);
     SCHECK(librdp_server_peer_send_graphics_end_frame(peer, 9, graphics_frame_id) == LIBRDP_STATUS_OK);
@@ -2322,8 +2367,11 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                     9,
                                                     &dvc_data_response));
-    SCHECK(rdp_graphics_parse_end_frame(dvc_data_response.data,
-                                        dvc_data_response.data_len,
+    SCHECK(server_runtime_graphics_command(&dvc_data_response,
+                                           &graphics_command,
+                                           &graphics_command_len));
+    SCHECK(rdp_graphics_parse_end_frame(graphics_command,
+                                        graphics_command_len,
                                         &graphics_end) == LIBRDP_STATUS_OK);
     SCHECK(graphics_end.frame_id == graphics_frame_id);
 

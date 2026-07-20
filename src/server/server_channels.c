@@ -327,6 +327,8 @@ void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_
     peer->dynamic_channel_count = 0;
     peer->dynamic_channel_static_index = UINT16_MAX;
     peer->dynamic_channels_ready = 0;
+    peer->dynamic_channel_capabilities_sent = 0;
+    peer->dynamic_channel_version = 0u;
     rdp_server_graphics_frame_state_reset(peer);
 }
 
@@ -2204,6 +2206,48 @@ static librdp_status rdp_server_send_dynamic_packet(librdp_server_peer* peer, co
     return librdp_server_peer_send_channel_data(peer, static_channel_id, packet->data, packet->length);
 }
 
+librdp_status rdp_server_dynamic_channels_start(librdp_server_peer* peer)
+{
+    static const uint16_t priority_charge[4] = {
+        RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_0,
+        RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_1,
+        RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_2,
+        RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_3
+    };
+    rdp_buffer request;
+    uint16_t static_channel_id = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    static_channel_id = rdp_server_dynamic_static_channel_id(peer);
+    if (static_channel_id == 0u)
+        return LIBRDP_STATUS_OK;
+    if (peer->state != LIBRDP_SERVER_PEER_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    if (peer->dynamic_channel_capabilities_sent ||
+        peer->dynamic_channels_ready ||
+        peer->dynamic_channel_version != 0u)
+        return LIBRDP_STATUS_OK;
+    rdp_buffer_init(&request);
+    status = rdp_dynamic_channel_write_capabilities_request(
+        &request,
+        3u,
+        priority_charge);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_packet(peer, &request);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        peer->dynamic_channel_capabilities_sent = 1;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.drdynvc.capabilities.request",
+                        "channel_id=%u version=3",
+                        static_channel_id);
+    }
+    rdp_buffer_free(&request);
+    return status;
+}
+
 librdp_status librdp_server_peer_open_dynamic_channel(librdp_server_peer* peer,
                                                       uint32_t dynamic_channel_id,
                                                       uint8_t priority,
@@ -3594,14 +3638,21 @@ librdp_status rdp_server_handle_dynamic_channel_message(librdp_server_peer* peer
         rdp_dynamic_channel_capabilities caps;
 
         status = rdp_dynamic_channel_parse_capabilities(data, data_len, &caps);
+        if (status == LIBRDP_STATUS_OK &&
+            (!peer->dynamic_channel_capabilities_sent ||
+             caps.has_priority_charges ||
+             data_len != 4u ||
+             caps.version > 3u))
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_dynamic_channel_write_capabilities_response(
-                &response,
-                rdp_dynamic_channel_select_version(caps.version));
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_server_send_dynamic_packet(peer, &response);
-        if (status == LIBRDP_STATUS_OK)
+        {
+            peer->dynamic_channel_version = caps.version;
             peer->dynamic_channels_ready = 1;
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "server.drdynvc.capabilities.response",
+                            "version=%u",
+                            caps.version);
+        }
     }
     else if (!peer->dynamic_channels_ready)
         status = LIBRDP_STATUS_PROTOCOL_ERROR;

@@ -83,6 +83,8 @@
 #define RDP_GRAPHICS_SEGMENT_SINGLE 0xe0u
 #define RDP_GRAPHICS_SEGMENT_MULTIPART 0xe1u
 #define RDP_GRAPHICS_BULK_PACKET_COMPRESSED 0x20u
+#define RDP_GRAPHICS_BULK_COMPRESSION_TYPE 0x04u
+#define RDP_GRAPHICS_BULK_SEGMENT_MAX 65535u
 #define RDP_GRAPHICS_BULK_MAX_DECODED (64u * 1024u * 1024u)
 #define RDP_GRAPHICS_BULK_HISTORY_SIZE 2500000u
 #define RDP_GRAPHICS_PROGRESSIVE_BLOCK_SYNC 0xccc0u
@@ -442,9 +444,14 @@ librdp_status rdp_graphics_write_caps_advertise(rdp_buffer* buffer,
                                                 const rdp_graphics_capset* capsets,
                                                 uint16_t capset_count);
 librdp_status rdp_graphics_write_default_caps_advertise(rdp_buffer* buffer);
+librdp_status rdp_graphics_write_caps_confirm(rdp_buffer* buffer,
+                                              const rdp_graphics_capset* selected);
 librdp_status rdp_graphics_parse_caps_confirm(const void* data,
                                               size_t length,
                                               rdp_graphics_caps_confirm* confirm);
+librdp_status rdp_graphics_write_segmented_uncompressed(rdp_buffer* buffer,
+                                                        const void* data,
+                                                        size_t data_len);
 librdp_status rdp_graphics_parse_create_surface(const void* data,
                                                 size_t length,
                                                 rdp_graphics_create_surface* create_surface);

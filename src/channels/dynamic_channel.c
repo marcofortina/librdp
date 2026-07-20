@@ -290,6 +290,38 @@ librdp_status rdp_dynamic_channel_parse_capabilities(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_dynamic_channel_write_capabilities_request(
+    rdp_buffer* buffer,
+    uint16_t version,
+    const uint16_t priority_charge[4])
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0u;
+    uint8_t index = 0u;
+
+    if (!buffer || version == 0u || version > 3u ||
+        (version >= 2u && !priority_charge))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
+    status = rdp_buffer_append_u8(
+        buffer,
+        (uint8_t)(RDP_DYNAMIC_CHANNEL_CMD_CAPABILITIES << 4));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, version);
+    for (index = 0u;
+         status == LIBRDP_STATUS_OK && version >= 2u && index < 4u;
+         index++)
+    {
+        status = rdp_buffer_append_u16_le(buffer,
+                                          priority_charge[index]);
+    }
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
+    return status;
+}
+
 librdp_status rdp_dynamic_channel_write_capabilities_response(rdp_buffer* buffer, uint16_t version)
 {
     librdp_status status = LIBRDP_STATUS_OK;

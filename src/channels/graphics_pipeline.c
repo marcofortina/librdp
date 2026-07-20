@@ -749,6 +749,25 @@ librdp_status rdp_graphics_write_default_caps_advertise_for_avc(rdp_buffer* buff
     return rdp_graphics_write_caps_advertise(buffer, capsets, count);
 }
 
+librdp_status rdp_graphics_write_caps_confirm(rdp_buffer* buffer,
+                                              const rdp_graphics_capset* selected)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !selected || !rdp_graphics_capset_valid(selected))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_write_header(buffer,
+                                       RDP_GRAPHICS_CMDID_CAPS_CONFIRM,
+                                       20u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, selected->version);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 4u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, selected->flags);
+    return status;
+}
+
 librdp_status rdp_graphics_parse_caps_confirm(const void* data,
                                               size_t length,
                                               rdp_graphics_caps_confirm* confirm)
@@ -771,6 +790,80 @@ librdp_status rdp_graphics_parse_caps_confirm(const void* data,
         return status;
     *confirm = parsed;
     return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Encode command bytes in the uncompressed RDPGFX bulk framing used for
+ * server-to-client DVC traffic. Large command streams are split without
+ * carrying decompressor history across segment boundaries.
+ */
+librdp_status rdp_graphics_write_segmented_uncompressed(rdp_buffer* buffer,
+                                                        const void* data,
+                                                        size_t data_len)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+    rdp_buffer encoded;
+    size_t offset = 0;
+    size_t segment_count = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (data_len > RDP_GRAPHICS_BULK_MAX_DECODED)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+
+    rdp_buffer_init(&encoded);
+    if (data_len <= RDP_GRAPHICS_BULK_SEGMENT_MAX)
+    {
+        status = rdp_buffer_append_u8(&encoded,
+                                      RDP_GRAPHICS_SEGMENT_SINGLE);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(&encoded,
+                                          RDP_GRAPHICS_BULK_COMPRESSION_TYPE);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append(&encoded, data, data_len);
+    }
+    else
+    {
+        segment_count =
+            (data_len + RDP_GRAPHICS_BULK_SEGMENT_MAX - 1u) /
+            RDP_GRAPHICS_BULK_SEGMENT_MAX;
+        if (segment_count > UINT16_MAX)
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(&encoded,
+                                          RDP_GRAPHICS_SEGMENT_MULTIPART);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u16_le(&encoded,
+                                              (uint16_t)segment_count);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(&encoded,
+                                              (uint32_t)data_len);
+        while (status == LIBRDP_STATUS_OK && offset < data_len)
+        {
+            size_t chunk = data_len - offset;
+
+            if (chunk > RDP_GRAPHICS_BULK_SEGMENT_MAX)
+                chunk = RDP_GRAPHICS_BULK_SEGMENT_MAX;
+            status = rdp_buffer_append_u32_le(&encoded,
+                                              (uint32_t)chunk + 1u);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u8(
+                    &encoded,
+                    RDP_GRAPHICS_BULK_COMPRESSION_TYPE);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append(&encoded,
+                                           bytes + offset,
+                                           chunk);
+            offset += chunk;
+        }
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer,
+                                   encoded.data,
+                                   encoded.length);
+    rdp_buffer_free(&encoded);
+    return status;
 }
 
 static librdp_status rdp_graphics_parse_fixed_header(const void* data,
@@ -1711,7 +1804,7 @@ static librdp_status rdp_graphics_append_bulk_data(rdp_graphics_decompressor* de
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (length - 1u > RDP_GRAPHICS_BULK_MAX_DECODED - decoded->length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (length - 1u > 65535u)
+    if (length - 1u > RDP_GRAPHICS_BULK_SEGMENT_MAX)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     for (i = 1u; i < length; i++)
     {

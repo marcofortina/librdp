@@ -194,6 +194,12 @@ int test_protocol_interaction_vectors(void)
         0x0a, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x02, 0x00
     };
+    const uint16_t dyn_priority_charge[4] = {
+        RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_0,
+        RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_1,
+        RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_2,
+        RDP_DYNAMIC_CHANNEL_PRIORITY_CHARGE_3
+    };
     rdp_pointer_update pointer_update;
     rdp_virtual_channel_packet vc;
     rdp_dynamic_channel_header dyn_header;
@@ -318,6 +324,32 @@ int test_protocol_interaction_vectors(void)
            rdp_dynamic_channel_data_first_pdu_header_size(1, 0x100u) == 4 &&
            rdp_dynamic_channel_data_first_pdu_header_size(1, 0x10000u) == 6);
     dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_capabilities_request(
+               &dyn_response,
+               3u,
+               dyn_priority_charge) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 12u &&
+           dyn_response.data[0] == 0x50u);
+    PCHECK(rdp_dynamic_channel_parse_capabilities(
+               dyn_response.data,
+               dyn_response.length,
+               &dyn_parsed_caps) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_parsed_caps.version == 3u &&
+           dyn_parsed_caps.has_priority_charges &&
+           memcmp(dyn_parsed_caps.priority_charge,
+                  dyn_priority_charge,
+                  sizeof(dyn_priority_charge)) == 0);
+    dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_capabilities_request(
+               &dyn_response,
+               1u,
+               NULL) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 4u);
+    dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_capabilities_request(
+               &dyn_response,
+               2u,
+               NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_dynamic_channel_write_capabilities_response(&dyn_response, 1) == LIBRDP_STATUS_OK);
     PCHECK(dyn_response.length == 4 && dyn_response.data[0] == 0x50 && dyn_response.data[2] == 1);
     dyn_response.length = 0;

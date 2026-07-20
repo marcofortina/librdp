@@ -167,6 +167,8 @@ struct librdp_server_peer
     uint8_t advertised_channel_joined[RDP_GCC_MAX_SERVER_CHANNELS];
     rdp_server_static_channel static_channels[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t dynamic_channels_ready;
+    uint8_t dynamic_channel_capabilities_sent;
+    uint16_t dynamic_channel_version;
     uint8_t multitransport_negotiated;
     uint8_t multitransport_udp_active;
     uint8_t multitransport_udp2_active;
