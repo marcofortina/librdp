@@ -493,12 +493,16 @@ librdp_status librdp_server_peer_surface_resize(librdp_server_peer* peer, uint32
     rdp_server_emit_surface_event(peer, 0, 0, width, height);
     if (was_active)
     {
-        peer->confirm_active_seen = 0;
-        peer->synchronize_seen = 0;
-        peer->control_cooperate_seen = 0;
-        peer->control_seen = 0;
-        peer->font_list_seen = 0;
-        status = rdp_server_send_demand_active(peer);
+        status = rdp_server_send_deactivate_all(peer);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            peer->confirm_active_seen = 0;
+            peer->synchronize_seen = 0;
+            peer->control_cooperate_seen = 0;
+            peer->control_seen = 0;
+            peer->font_list_seen = 0;
+            status = rdp_server_send_demand_active(peer);
+        }
         if (status != LIBRDP_STATUS_OK)
             rdp_server_record_status(peer,
                                      status,

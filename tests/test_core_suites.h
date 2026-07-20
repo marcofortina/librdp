@@ -65,6 +65,7 @@ int test_gdiplus_clip_limits_visual_output(void);
 int test_gdi_bitmap_cache_limits(void);
 int test_gdi_altsec_runtime_orders(void);
 int test_graphics_update_before_activation(void);
+int test_activation_epoch_reset(void);
 int test_licensing_new_before_activation(void);
 int test_licensing_valid_client_alert_before_activation(void);
 int test_licensing_request_before_activation(void);

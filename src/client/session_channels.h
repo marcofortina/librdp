@@ -49,6 +49,7 @@ void rdp_session_emit_channel_data(librdp_session* session,
 void rdp_session_emit_channel_close(librdp_session* session, const struct rdp_session_dynamic_channel* entry);
 void rdp_session_dynamic_channels_clear(librdp_session* session);
 void rdp_session_static_channels_clear(librdp_session* session);
+void rdp_session_channels_reset_activation_fragments(librdp_session* session);
 struct rdp_session_static_channel* rdp_session_static_channel_find_by_id(librdp_session* session, uint16_t channel_id);
 librdp_status rdp_session_static_channel_configure(librdp_session* session,
                                                    uint32_t index,

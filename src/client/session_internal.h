@@ -875,6 +875,7 @@ struct librdp_session
     rdp_session_static_channel static_channels[LIBRDP_SETTINGS_MAX_STATIC_CHANNELS];
     rdp_standard_security_context standard_security;
     uint32_t share_id;
+    uint8_t reactivating;
     librdp_session_state state;
     librdp_session_lifecycle lifecycle;
     uint64_t activation_deadline_ns;

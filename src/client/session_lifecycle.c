@@ -356,6 +356,7 @@ librdp_status rdp_session_disconnect_inner(librdp_session* session)
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_DISCONNECTING);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSING);
     rdp_session_graphics_dirty_reset(session);
+    session->reactivating = 0u;
     rdp_session_transport_close(session);
     rdp_session_audio_output_udp_close(session);
     rdp_security_standard_clear(&session->standard_security);

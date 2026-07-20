@@ -73,6 +73,10 @@ if(LIBRDP_BUILD_TESTS)
             target_compile_definitions(${target} PRIVATE RDP_HAVE_LIBUSB=1)
             target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_LIBUSB)
         endif()
+        if(LIBRDP_PCSC_FOUND)
+            target_compile_definitions(${target} PRIVATE RDP_HAVE_PCSC=1)
+            target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_PCSC)
+        endif()
         if(LIBRDP_CURL_FOUND)
             target_compile_definitions(${target} PRIVATE RDP_HAVE_CURL=1)
         endif()
@@ -364,6 +368,7 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME core_channels COMMAND test_core channels)
     add_test(NAME core_storage_devices COMMAND test_core storage)
     add_test(NAME core_graphics COMMAND test_core graphics)
+    add_test(NAME core_reactivation COMMAND test_core reactivation)
     add_test(NAME core_licensing COMMAND test_core licensing)
     add_test(NAME core_workspace_admin COMMAND test_core enterprise)
     add_test(NAME protocol COMMAND test_protocol)
@@ -605,6 +610,7 @@ if(LIBRDP_BUILD_TESTS)
         core_channels
         core_storage_devices
         core_graphics
+        core_reactivation
         core_licensing
         core_workspace_admin
         PROPERTIES TIMEOUT 60

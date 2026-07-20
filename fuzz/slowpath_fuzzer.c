@@ -28,6 +28,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
     rdp_slowpath_share_control_header header;
     rdp_slowpath_demand_active demand;
+    rdp_slowpath_deactivate_all deactivate;
     rdp_slowpath_data_pdu data_pdu;
     rdp_slowpath_font_map font_map;
     rdp_slowpath_save_session_info save_info;
@@ -51,6 +52,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
                                                0);
     output.length = 0;
     (void)rdp_slowpath_parse_demand_active(data, size, &demand);
+    (void)rdp_slowpath_parse_deactivate_all(data, size, &deactivate);
     if (rdp_slowpath_parse_data_pdu(data, size, &data_pdu) == LIBRDP_STATUS_OK)
     {
         if (data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_MAP)

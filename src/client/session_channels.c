@@ -629,6 +629,39 @@ void rdp_session_static_channels_clear(librdp_session* session)
     session->static_channel_count = 0;
 }
 
+/*
+ * Discard incomplete channel payloads at an activation boundary while
+ * preserving negotiated channel identities, generations and open handles.
+ */
+void rdp_session_channels_reset_activation_fragments(librdp_session* session)
+{
+    size_t i = 0;
+
+    if (!session)
+        return;
+    for (i = 0; i < RDP_SESSION_MAX_DYNAMIC_CHANNELS; i++)
+    {
+        rdp_session_dynamic_channel* entry = &session->dynamic_channels[i];
+
+        if (!entry->active && !entry->opening)
+            continue;
+        entry->fragmenting = 0u;
+        entry->fragment_expected = 0u;
+        entry->fragment.length = 0u;
+        rdp_graphics_decompressor_reset(&entry->decompressor);
+    }
+    for (i = 0; i < session->static_channel_count; i++)
+    {
+        rdp_session_static_channel* entry = &session->static_channels[i];
+
+        if (!entry->active)
+            continue;
+        entry->fragmenting = 0u;
+        entry->fragment_expected = 0u;
+        entry->fragment.length = 0u;
+    }
+}
+
 rdp_session_static_channel* rdp_session_static_channel_find_by_id(librdp_session* session,
                                                                          uint16_t channel_id)
 {

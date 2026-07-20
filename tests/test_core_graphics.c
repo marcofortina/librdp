@@ -1538,3 +1538,163 @@ int test_graphics_update_before_activation(void)
     CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     return 0;
 }
+
+/*
+ * Coverage: drives an in-process Deactivate All/Demand Active epoch change.
+ * It verifies graphics and pointer invalidation, fragment cleanup, channel
+ * identity preservation and negotiated desktop resizing without transport
+ * loss.
+ */
+int test_activation_epoch_reset(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    event_counter events;
+    graphics_update_capture graphics;
+    rdp_buffer deactivate;
+    rdp_buffer demand;
+    rdp_dynamic_channel_create_request dynamic_request;
+    uint8_t* pixels = NULL;
+    int sockets[2] = {-1, -1};
+    size_t i = 0u;
+
+    memset(&events, 0, sizeof(events));
+    memset(&graphics, 0, sizeof(graphics));
+    memset(&dynamic_request, 0, sizeof(dynamic_request));
+    rdp_buffer_init(&deactivate);
+    rdp_buffer_init(&demand);
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_desktop_size(settings, 640u, 480u) ==
+          LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    rdp_transport_attach_fd(&session->transport, sockets[0], 1);
+    sockets[0] = -1;
+    session->mcs_user_id = 1004u;
+    session->share_id = 0x12345678u;
+    session->state = LIBRDP_SESSION_ACTIVE;
+    session->lifecycle = LIBRDP_LIFECYCLE_ACTIVE;
+    librdp_session_set_event_callback(session, on_event, &events);
+    librdp_session_set_graphics_update_callback(session,
+                                                on_graphics_update,
+                                                &graphics);
+
+    pixels = librdp_surface_pixels_mut(session->surface);
+    CHECK(pixels != NULL);
+    memset(pixels,
+           0x5au,
+           librdp_surface_stride(session->surface) *
+               librdp_surface_height(session->surface));
+    session->pointer_cache[2].active = 1u;
+    CHECK(rdp_buffer_append_u8(&session->pointer_cache[2].pixels, 0xa5u) ==
+          LIBRDP_STATUS_OK);
+    session->graphics_surfaces[0].active = 1u;
+    session->graphics_surfaces[0].surface_id = 7u;
+    CHECK(rdp_buffer_append_u8(&session->graphics_surfaces[0].pixels, 0x5au) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_session_static_channel_configure(session,
+                                               0u,
+                                               "test",
+                                               0u,
+                                               1005u) ==
+          LIBRDP_STATUS_OK);
+    session->static_channels[0].joined = 1u;
+    session->static_channels[0].fragmenting = 1u;
+    session->static_channels[0].fragment_expected = 4u;
+    CHECK(rdp_buffer_append_u8(&session->static_channels[0].fragment, 1u) ==
+          LIBRDP_STATUS_OK);
+    dynamic_request.channel_id = 9u;
+    dynamic_request.channel_id_bytes = 1u;
+    dynamic_request.priority = 1u;
+    dynamic_request.name = "test.dvc";
+    dynamic_request.name_len = strlen(dynamic_request.name);
+    CHECK(rdp_session_dynamic_channel_add(session, &dynamic_request) ==
+          LIBRDP_STATUS_OK);
+    session->dynamic_channels[0].fragmenting = 1u;
+    session->dynamic_channels[0].fragment_expected = 4u;
+    CHECK(rdp_buffer_append_u8(&session->dynamic_channels[0].fragment, 2u) ==
+          LIBRDP_STATUS_OK);
+
+    CHECK(rdp_slowpath_write_deactivate_all(&deactivate,
+                                            session->share_id + 1u,
+                                            RDP_MCS_GLOBAL_CHANNEL_ID) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_deactivate_all(session,
+                                            deactivate.data,
+                                            deactivate.length) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(session->state == LIBRDP_SESSION_ACTIVE);
+    CHECK(session->pointer_cache[2].active == 1u);
+    deactivate.length = 0u;
+    CHECK(rdp_slowpath_write_deactivate_all(&deactivate,
+                                            session->share_id,
+                                            RDP_MCS_GLOBAL_CHANNEL_ID) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_deactivate_all(session,
+                                            deactivate.data,
+                                            deactivate.length) ==
+          LIBRDP_STATUS_OK);
+    CHECK(session->state == LIBRDP_SESSION_CONNECTED);
+    CHECK(session->lifecycle == LIBRDP_LIFECYCLE_ACTIVATING);
+    CHECK(session->reactivating == 1u);
+    CHECK(events.pointer == 1);
+    CHECK(session->pointer_cache[2].active == 0u);
+    CHECK(session->graphics_surfaces[0].active == 0u);
+    CHECK(session->static_channels[0].active == 1u);
+    CHECK(session->static_channels[0].channel_id == 1005u);
+    CHECK(session->static_channels[0].fragmenting == 0u);
+    CHECK(session->static_channels[0].fragment.length == 0u);
+    CHECK(session->dynamic_channels[0].active == 1u);
+    CHECK(session->dynamic_channels[0].channel_id == 9u);
+    CHECK(session->dynamic_channels[0].fragmenting == 0u);
+    CHECK(session->dynamic_channels[0].fragment.length == 0u);
+    pixels = librdp_surface_pixels_mut(session->surface);
+    CHECK(pixels != NULL);
+    for (i = 0u;
+         i < librdp_surface_stride(session->surface) *
+                 librdp_surface_height(session->surface);
+         i++)
+        CHECK(pixels[i] == 0u);
+    CHECK(rdp_session_handle_deactivate_all(session,
+                                            deactivate.data,
+                                            deactivate.length) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(session->state == LIBRDP_SESSION_CONNECTED);
+
+    CHECK(rdp_slowpath_write_demand_active(&demand,
+                                           session->share_id,
+                                           RDP_MCS_GLOBAL_CHANNEL_ID,
+                                           800u,
+                                           600u,
+                                           "server") ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_demand_active(session,
+                                          demand.data,
+                                          demand.length) ==
+          LIBRDP_STATUS_OK);
+    CHECK(session->state == LIBRDP_SESSION_ACTIVE);
+    CHECK(session->lifecycle == LIBRDP_LIFECYCLE_ACTIVE);
+    CHECK(session->reactivating == 0u);
+    CHECK(librdp_surface_width(session->surface) == 800u);
+    CHECK(librdp_surface_height(session->surface) == 600u);
+    CHECK(graphics.desktop_resize == 1);
+    CHECK(events.pointer == 2);
+    pixels = librdp_surface_pixels_mut(session->surface);
+    CHECK(pixels != NULL);
+    for (i = 0u;
+         i < librdp_surface_stride(session->surface) *
+                 librdp_surface_height(session->surface);
+         i++)
+        CHECK(pixels[i] == 0u);
+    CHECK(session->static_channels[0].active == 1u);
+    CHECK(session->dynamic_channels[0].active == 1u);
+
+    rdp_buffer_free(&demand);
+    rdp_buffer_free(&deactivate);
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    close(sockets[1]);
+    return 0;
+}

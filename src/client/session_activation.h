@@ -23,6 +23,9 @@
 #include <stdint.h>
 
 librdp_status rdp_session_trace_slowpath_data_pdu(librdp_session* session, const rdp_slowpath_data_pdu* data_pdu);
+librdp_status rdp_session_handle_deactivate_all(librdp_session* session,
+                                                const uint8_t* payload,
+                                                size_t payload_len);
 librdp_status rdp_session_handle_demand_active(librdp_session* session, const uint8_t* payload, size_t payload_len);
 
 #endif

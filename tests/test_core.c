@@ -5,8 +5,8 @@
 /*
  * Module: focused client core test runner.
  * Coverage: preserves aggregate ordering and dispatches independently named
- * common, settings, feature, channel, storage, graphics, licensing, and
- * enterprise suites.
+ * common, settings, feature, channel, storage, graphics, reactivation,
+ * licensing, and enterprise suites.
  * Bug classes: group selection and aggregate coverage omissions.
  * Determinism: all delegated suites are self-contained or loopback-only.
  */
@@ -179,6 +179,8 @@ int test_client_core_named(const char* name)
         return run_storage();
     if (strcmp(name, "graphics") == 0)
         return run_graphics();
+    if (strcmp(name, "reactivation") == 0)
+        return test_activation_epoch_reset();
     if (strcmp(name, "licensing") == 0)
         return run_licensing();
     if (strcmp(name, "enterprise") == 0)
@@ -226,7 +228,8 @@ int test_client_core(void)
     if (test_filesystem_information_class_coverage() != 0 ||
         test_printer_file_backend_job_lifecycle() != 0)
         return 1;
-    if (run_graphics() != 0 || run_licensing() != 0 || run_enterprise() != 0)
+    if (run_graphics() != 0 || test_activation_epoch_reset() != 0 ||
+        run_licensing() != 0 || run_enterprise() != 0)
         return 1;
     return test_settings_surface_input_session();
 }

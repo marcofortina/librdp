@@ -3190,6 +3190,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_auth_redirection_channel_reset(session);
     rdp_session_webauthn_channel_reset(session);
     session->share_id = 0;
+    session->reactivating = 0u;
     session->dynamic_channel_id = 0;
     session->clipboard_channel_id = 0;
     rdp_session_clipboard_clear(session);
@@ -5672,6 +5673,21 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             (slow_header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE)
         {
             status = rdp_session_handle_demand_active(session, indication_payload, indication_payload_len);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&security_payload);
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
+            }
+        }
+        else if (have_slow_header && status == LIBRDP_STATUS_OK &&
+                 (slow_header.pdu_type & 0x000fu) ==
+                     RDP_SLOWPATH_PDU_TYPE_DEACTIVATE_ALL)
+        {
+            status = rdp_session_handle_deactivate_all(
+                session,
+                indication_payload,
+                indication_payload_len);
             if (status != LIBRDP_STATUS_OK)
             {
                 rdp_buffer_free(&security_payload);

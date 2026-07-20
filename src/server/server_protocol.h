@@ -22,6 +22,7 @@ librdp_status rdp_server_handle_erect_domain(librdp_server_peer* peer, const rdp
 librdp_status rdp_server_handle_attach_user(librdp_server_peer* peer, const rdp_tpkt* packet);
 
 librdp_status rdp_server_send_demand_active(librdp_server_peer* peer);
+librdp_status rdp_server_send_deactivate_all(librdp_server_peer* peer);
 
 size_t rdp_server_channel_name_len(const char name[8]);
 

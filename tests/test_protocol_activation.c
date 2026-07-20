@@ -70,6 +70,7 @@ int test_protocol_activation_vectors(void)
     rdp_buffer client_mouse_input;
     rdp_buffer client_refresh_rect;
     rdp_buffer client_suppress_output;
+    rdp_buffer deactivate_all;
     rdp_capability_list confirm_caps;
     const rdp_capability_set* confirm_bitmap_set = NULL;
     const rdp_capability_set* confirm_set = NULL;
@@ -92,6 +93,7 @@ int test_protocol_activation_vectors(void)
     rdp_capability_bitmap_codecs confirm_bitmap_codecs;
     rdp_nscodec_capability confirm_nscodec;
     rdp_slowpath_confirm_active parsed_confirm;
+    rdp_slowpath_deactivate_all parsed_deactivate;
     rdp_capability_set virtual_channel_minimal_set;
     uint32_t error_info = 0;
     size_t i = 0;
@@ -135,6 +137,7 @@ int test_protocol_activation_vectors(void)
     rdp_buffer_init(&client_mouse_input);
     rdp_buffer_init(&client_refresh_rect);
     rdp_buffer_init(&client_suppress_output);
+    rdp_buffer_init(&deactivate_all);
 
     PCHECK(rdp_slowpath_parse_data_pdu(bitmap_data_pdu, sizeof(bitmap_data_pdu), &data_pdu) == LIBRDP_STATUS_OK);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
@@ -178,6 +181,43 @@ int test_protocol_activation_vectors(void)
                                   &confirm_caps) == LIBRDP_STATUS_OK);
     PCHECK(confirm_caps.count == sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]));
     PCHECK(confirm_caps_len == 455);
+    PCHECK(rdp_slowpath_write_deactivate_all(&deactivate_all,
+                                             0x12345678u,
+                                             1004u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_deactivate_all(deactivate_all.data,
+                                             deactivate_all.length,
+                                             &parsed_deactivate) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(parsed_deactivate.has_share_id == 1u);
+    PCHECK(parsed_deactivate.share_id == 0x12345678u);
+    PCHECK(parsed_deactivate.source_descriptor_len == 1u);
+    PCHECK(parsed_deactivate.source_descriptor[0] == 0u);
+    {
+        static const uint8_t legacy_deactivate[] = {
+            0x06, 0x00, 0x16, 0x00, 0xec, 0x03
+        };
+        const rdp_slowpath_deactivate_all complete = parsed_deactivate;
+
+        PCHECK(rdp_slowpath_parse_deactivate_all(
+                   legacy_deactivate,
+                   sizeof(legacy_deactivate),
+                   &parsed_deactivate) == LIBRDP_STATUS_OK);
+        PCHECK(parsed_deactivate.has_share_id == 0u);
+        parsed_deactivate = complete;
+        PCHECK(rdp_slowpath_parse_deactivate_all(
+                   deactivate_all.data,
+                   deactivate_all.length - 1u,
+                   &parsed_deactivate) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(parsed_deactivate.share_id == complete.share_id);
+        deactivate_all.data[10] = 2u;
+        PCHECK(rdp_slowpath_parse_deactivate_all(
+                   deactivate_all.data,
+                   deactivate_all.length,
+                   &parsed_deactivate) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(parsed_deactivate.share_id == complete.share_id);
+        deactivate_all.data[10] = 1u;
+    }
     for (i = 0; i < sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]); i++)
     {
         PCHECK(confirm_caps.sets[i].type == expected_confirm_types[i]);
@@ -608,6 +648,7 @@ int test_protocol_activation_vectors(void)
 
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_free(&client_suppress_output);
+    rdp_buffer_free(&deactivate_all);
     rdp_buffer_free(&client_mouse_input);
     rdp_buffer_free(&client_keyboard_input);
     rdp_buffer_free(&client_font_list);

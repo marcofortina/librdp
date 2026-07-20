@@ -296,6 +296,29 @@ librdp_status rdp_server_send_demand_active(librdp_server_peer* peer)
     return status;
 }
 
+librdp_status rdp_server_send_deactivate_all(librdp_server_peer* peer)
+{
+    rdp_buffer deactivate;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || peer->share_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&deactivate);
+    status = rdp_slowpath_write_deactivate_all(
+        &deactivate,
+        peer->share_id,
+        (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_slowpath(peer, &deactivate);
+    rdp_buffer_free(&deactivate);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.activation.deactivate_all",
+                        "share_id=%u",
+                        peer->share_id);
+    return status;
+}
+
 /*
  * Complete the permissive server-side licensing path used by the current
  * Standard RDP server runtime. The alert is sent before Demand Active so real

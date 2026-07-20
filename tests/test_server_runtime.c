@@ -150,6 +150,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer udp2_unwrapped;
     rdp_buffer pointer_pixels;
     rdp_slowpath_demand_active demand;
+    rdp_slowpath_deactivate_all deactivate;
     rdp_slowpath_data_pdu data_pdu;
     rdp_bitmap_update bitmap_update;
     librdp_server_static_channel_info static_info;
@@ -200,6 +201,8 @@ int test_server_loopback_standard_activation_sequence(void)
     uint32_t error_count_before_surface = 0;
     uint32_t dynamic_close_count_before_peer_close = 0;
     uint32_t dynamic_count_before_peer_close = 0;
+    uint32_t dynamic_count_before_reactivation = 0;
+    uint32_t static_count_before_reactivation = 0;
     uint32_t graphics_frame_id = 0;
     uint32_t graphics_pending_frames = 0;
     uint32_t graphics_frame_limit = 0;
@@ -3650,10 +3653,30 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(bitmap_update.count == 1 &&
            bitmap_update.rects[0].width == 800 &&
            bitmap_update.rects[0].height == 1);
+    static_count_before_reactivation =
+        librdp_server_peer_static_channel_count(peer);
+    dynamic_count_before_reactivation =
+        librdp_server_peer_dynamic_channel_count(peer);
     SCHECK(librdp_server_peer_surface_resize(
                peer,
                LIBRDP_DESKTOP_MIN_DIMENSION,
                LIBRDP_DESKTOP_MIN_DIMENSION) == LIBRDP_STATUS_OK);
+    demand_plaintext.length = 0;
+    SCHECK(test_server_read_encrypted_mcs_payload(client_fd,
+                                                  response,
+                                                  sizeof(response),
+                                                  &client_security,
+                                                  &demand_plaintext));
+    SCHECK(rdp_slowpath_parse_deactivate_all(demand_plaintext.data,
+                                             demand_plaintext.length,
+                                             &deactivate) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(deactivate.has_share_id &&
+           deactivate.share_id == 0x00010001u);
+    SCHECK(librdp_server_peer_static_channel_count(peer) ==
+           static_count_before_reactivation);
+    SCHECK(librdp_server_peer_dynamic_channel_count(peer) ==
+           dynamic_count_before_reactivation);
     demand_plaintext.length = 0;
     SCHECK(test_server_read_encrypted_mcs_payload(client_fd,
                                                   response,

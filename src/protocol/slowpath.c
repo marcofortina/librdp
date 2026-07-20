@@ -57,6 +57,7 @@ static int rdp_slowpath_valid_share_control_type(uint16_t pdu_type)
 
     return type == RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE ||
            type == RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE ||
+           type == RDP_SLOWPATH_PDU_TYPE_DEACTIVATE_ALL ||
            type == RDP_SLOWPATH_PDU_TYPE_DATA;
 }
 
@@ -236,6 +237,81 @@ librdp_status rdp_slowpath_parse_confirm_active(
         return status;
     *confirm = parsed;
     return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Decode the complete Deactivate All form and the six-byte legacy form
+ * without exposing partially parsed fields. The source descriptor remains a
+ * borrowed view into the input packet.
+ */
+librdp_status rdp_slowpath_parse_deactivate_all(
+    const void* data,
+    size_t length,
+    rdp_slowpath_deactivate_all* deactivate)
+{
+    rdp_stream stream;
+    rdp_slowpath_deactivate_all parsed;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !deactivate)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&parsed, 0, sizeof(parsed));
+    status = rdp_slowpath_parse_share_control_header(data, length, &parsed.header);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (rdp_slowpath_base_type(parsed.header.pdu_type) !=
+        RDP_SLOWPATH_PDU_TYPE_DEACTIVATE_ALL)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (length == 6u)
+    {
+        *deactivate = parsed;
+        return LIBRDP_STATUS_OK;
+    }
+    if (length < 12u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 6u) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.share_id) !=
+            LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.source_descriptor_len) !=
+            LIBRDP_STATUS_OK ||
+        parsed.share_id == 0u ||
+        rdp_stream_remaining(&stream) != parsed.source_descriptor_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (parsed.source_descriptor_len > 0u &&
+        rdp_stream_read_bytes(&stream,
+                              &parsed.source_descriptor,
+                              parsed.source_descriptor_len) !=
+            LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    parsed.has_share_id = 1u;
+    *deactivate = parsed;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_slowpath_write_deactivate_all(rdp_buffer* buffer,
+                                                uint32_t share_id,
+                                                uint16_t channel_id)
+{
+    const uint16_t total_length = 13u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || share_id == 0u || channel_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_share_control_header(
+        buffer,
+        total_length,
+        (uint16_t)(RDP_SLOWPATH_PDU_VERSION |
+                   RDP_SLOWPATH_PDU_TYPE_DEACTIVATE_ALL),
+        channel_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, share_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0u);
+    return status;
 }
 
 static librdp_status rdp_slowpath_write_general_capability(rdp_buffer* buffer)
