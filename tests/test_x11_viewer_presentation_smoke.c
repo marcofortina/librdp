@@ -19,6 +19,7 @@
 #endif
 
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <X11/extensions/Xfixes.h>
@@ -652,6 +653,122 @@ static void viewer_smoke_release_focus_inputs(
         *held_button = 0;
     }
     XSync(display, False);
+}
+
+static int viewer_smoke_xwayland_grab_allowed(
+    Display* display,
+    Window window)
+{
+    Atom property = None;
+    Atom actual_type = None;
+    int actual_format = 0;
+    unsigned long item_count = 0u;
+    unsigned long bytes_after = 0u;
+    unsigned char* value = NULL;
+    int status = 0;
+    int allowed = 0;
+
+    if (!display || window == None)
+        return 0;
+    property = XInternAtom(
+        display,
+        "_XWAYLAND_MAY_GRAB_KEYBOARD",
+        False);
+    if (property == None)
+        return 0;
+    status = XGetWindowProperty(
+        display,
+        window,
+        property,
+        0,
+        1,
+        False,
+        XA_CARDINAL,
+        &actual_type,
+        &actual_format,
+        &item_count,
+        &bytes_after,
+        &value);
+    if (status == Success &&
+        actual_type == XA_CARDINAL &&
+        actual_format == 32 &&
+        item_count == 1u &&
+        value)
+        allowed = (*(const unsigned long*)value) == 1u;
+    if (value)
+        XFree(value);
+    return allowed;
+}
+
+static int viewer_smoke_send_crossing(
+    Display* display,
+    Window window,
+    int type)
+{
+    XEvent event;
+
+    if (!display || window == None ||
+        (type != EnterNotify && type != LeaveNotify))
+        return 0;
+    memset(&event, 0, sizeof(event));
+    event.xcrossing.type = type;
+    event.xcrossing.display = display;
+    event.xcrossing.window = window;
+    event.xcrossing.root =
+        DefaultRootWindow(display);
+    event.xcrossing.subwindow = None;
+    event.xcrossing.mode = NotifyNormal;
+    event.xcrossing.detail = NotifyNonlinear;
+    event.xcrossing.same_screen = True;
+    event.xcrossing.focus = True;
+    if (!XSendEvent(display,
+                    window,
+                    False,
+                    type == EnterNotify
+                        ? EnterWindowMask
+                        : LeaveWindowMask,
+                    &event))
+        return 0;
+    XSync(display, False);
+    viewer_smoke_sleep_ms(VIEWER_SMOKE_STEP_MS);
+    return 1;
+}
+
+static int viewer_smoke_inject_alt_tab(
+    Display* display,
+    Window window,
+    KeyCode* held_key)
+{
+    KeyCode key_alt = 0u;
+    KeyCode key_tab = 0u;
+
+    if (!display || window == None || !held_key)
+        return 0;
+    key_alt = XKeysymToKeycode(display, XK_Alt_L);
+    key_tab = XKeysymToKeycode(display, XK_Tab);
+    if (key_alt == 0u || key_tab == 0u ||
+        !viewer_smoke_fake_key(display,
+                               key_alt,
+                               True))
+        return 0;
+    *held_key = key_alt;
+    if (!viewer_smoke_send_crossing(display,
+                                    window,
+                                    LeaveNotify) ||
+        !viewer_smoke_fake_key(display,
+                               key_tab,
+                               True) ||
+        !viewer_smoke_fake_key(display,
+                               key_tab,
+                               False) ||
+        !viewer_smoke_fake_key(display,
+                               key_alt,
+                               False))
+        return 0;
+    *held_key = 0u;
+    return viewer_smoke_send_crossing(display,
+                                      window,
+                                      EnterNotify);
 }
 
 static uint8_t viewer_smoke_channel(unsigned long pixel,
@@ -1678,6 +1795,30 @@ static int viewer_smoke_run_pointer(
     if (!viewer_smoke_wait_state(
             state_path,
             processes.server,
+            TEST_VIEWER_POINTER_ALT_TAB_READY,
+            &port) ||
+        !viewer_smoke_wait_input_focus(
+            display,
+            window,
+            processes.viewer) ||
+        !viewer_smoke_xwayland_grab_allowed(
+            display,
+            window) ||
+        !viewer_smoke_inject_alt_tab(
+            display,
+            window,
+            &held_key) ||
+        !viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_ALT_TAB_COMPLETE,
+            &port))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_ALT_TAB_COMPLETE;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
             TEST_VIEWER_POINTER_COMPLETE,
             &port))
         goto cleanup;
@@ -1742,6 +1883,9 @@ static int viewer_smoke_run_pointer(
         !viewer_smoke_file_contains(
             viewer_log,
             "event=x11.mouse.release_all") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "event=x11.keyboard.ungrab.deferred") ||
         viewer_smoke_file_contains(
             viewer_log,
             "status=protocol_error") ||

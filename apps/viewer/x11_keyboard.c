@@ -415,6 +415,11 @@ void x11_keyboard_ungrab(x11_app* app, Time time, int force)
     if (!force && app->pressed_count > 0)
     {
         app->pending_ungrab = 1;
+        x11_trace_event(
+            X11_TRACE_CLIENT,
+            "x11.keyboard.ungrab.deferred",
+            "pressed=%u",
+            app->pressed_count);
         return;
     }
 
