@@ -710,12 +710,19 @@ void test_http_proxy_cancel(test_http_proxy* proxy)
 
 int test_http_proxy_join(test_http_proxy* proxy)
 {
+    return test_http_proxy_join_status(proxy,
+                                       LIBRDP_STATUS_OK);
+}
+
+int test_http_proxy_join_status(test_http_proxy* proxy,
+                                librdp_status expected_status)
+{
     if (!proxy || !proxy->thread_started)
         return 0;
     if (pthread_join(proxy->thread, NULL) != 0)
         return 0;
     proxy->thread_started = 0;
-    return proxy->status == LIBRDP_STATUS_OK;
+    return proxy->status == expected_status;
 }
 
 void test_http_proxy_clear(test_http_proxy* proxy)

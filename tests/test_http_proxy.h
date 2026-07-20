@@ -57,6 +57,9 @@ void test_http_proxy_cancel(test_http_proxy* proxy);
 
 int test_http_proxy_join(test_http_proxy* proxy);
 
+int test_http_proxy_join_status(test_http_proxy* proxy,
+                                librdp_status expected_status);
+
 void test_http_proxy_clear(test_http_proxy* proxy);
 
 #endif

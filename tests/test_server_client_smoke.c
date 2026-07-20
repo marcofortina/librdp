@@ -129,6 +129,13 @@ typedef enum smoke_integrity_tamper
     SMOKE_INTEGRITY_SLOWPATH_CIPHERTEXT = 3
 } smoke_integrity_tamper;
 
+typedef enum smoke_gateway_credentials
+{
+    SMOKE_GATEWAY_CREDENTIALS_EXPLICIT = 0,
+    SMOKE_GATEWAY_CREDENTIALS_SESSION = 1,
+    SMOKE_GATEWAY_CREDENTIALS_NONE = 2
+} smoke_gateway_credentials;
+
 typedef struct smoke_integrity_peer
 {
     librdp_server_config config;
@@ -1517,7 +1524,8 @@ static int smoke_run_profile(librdp_security_mode security,
                              const char* bind_address,
                              const char* target,
                              librdp_gateway_mode gateway_mode,
-                             int reuse_session_credentials)
+                             smoke_gateway_credentials gateway_credentials,
+                             librdp_status expected_gateway_status)
 {
     char cert_path[128] = {0};
     char key_path[128] = {0};
@@ -1569,7 +1577,8 @@ static int smoke_run_profile(librdp_security_mode security,
     trace_capture.identity = identity;
     trace_capture.gateway_identity =
         gateway_mode != LIBRDP_GATEWAY_DISABLED
-            ? (reuse_session_credentials
+            ? (gateway_credentials ==
+                       SMOKE_GATEWAY_CREDENTIALS_SESSION
                    ? identity
                    : &smoke_gateway_identity)
             : NULL;
@@ -1645,11 +1654,13 @@ static int smoke_run_profile(librdp_security_mode security,
         if (gateway_mode == LIBRDP_GATEWAY_HTTP_CONNECT)
         {
             const smoke_nla_identity* proxy_identity =
-                reuse_session_credentials
+                gateway_credentials ==
+                        SMOKE_GATEWAY_CREDENTIALS_SESSION
                     ? identity
                     : &smoke_gateway_identity;
             const smoke_nla_identity* forbidden_identity =
-                reuse_session_credentials
+                gateway_credentials ==
+                        SMOKE_GATEWAY_CREDENTIALS_SESSION
                     ? &smoke_gateway_identity
                     : identity;
 
@@ -1715,7 +1726,8 @@ static int smoke_run_profile(librdp_security_mode security,
                 LIBRDP_STATUS_OK);
         gateway_config.mode = gateway_mode;
         gateway_config.url = gateway_url;
-        if (!reuse_session_credentials)
+        if (gateway_credentials ==
+            SMOKE_GATEWAY_CREDENTIALS_EXPLICIT)
         {
             gateway_config.username =
                 smoke_gateway_identity.username;
@@ -1725,7 +1737,8 @@ static int smoke_run_profile(librdp_security_mode security,
                 smoke_gateway_identity.domain;
         }
         gateway_config.use_session_credentials =
-            reuse_session_credentials;
+            gateway_credentials ==
+            SMOKE_GATEWAY_CREDENTIALS_SESSION;
         gateway_config.timeout_ms = 5000u;
         REQUIRE(librdp_settings_set_gateway_config(
                     settings,
@@ -1750,7 +1763,10 @@ static int smoke_run_profile(librdp_security_mode security,
     client_runtime_init(&runtime, session);
     connect_status = client_runtime_connect(&runtime);
     if (gateway_mode != LIBRDP_GATEWAY_DISABLED &&
-        connect_status != expected_connect_status)
+        connect_status !=
+            (expected_gateway_status != LIBRDP_STATUS_OK
+                 ? expected_gateway_status
+                 : expected_connect_status))
     {
         const librdp_error* connect_error =
             librdp_session_last_error(session);
@@ -1778,6 +1794,56 @@ static int smoke_run_profile(librdp_security_mode security,
                                      memory_order_acquire),
                 atomic_load_explicit(&proxy.credential_leak,
                                      memory_order_acquire));
+    }
+    if (expected_gateway_status != LIBRDP_STATUS_OK)
+    {
+        const librdp_error* error = NULL;
+
+        REQUIRE(connect_status == expected_gateway_status);
+        REQUIRE(nla_provider.calls == 0u);
+        REQUIRE(trace_capture.records > 0u);
+        REQUIRE(trace_capture.connect_starts == 0u);
+        REQUIRE(trace_capture.connect_completions == 0u);
+        REQUIRE(trace_capture.gateway_connect_starts == 1u);
+        REQUIRE(trace_capture.gateway_connect_completions == 0u);
+        REQUIRE(trace_capture.leaked == 0);
+        REQUIRE(atomic_load_explicit(&proxy.authenticated,
+                                     memory_order_acquire) == 0u);
+        REQUIRE(atomic_load_explicit(&proxy.forwarded,
+                                     memory_order_acquire) == 0u);
+        REQUIRE(atomic_load_explicit(&proxy.credential_leak,
+                                     memory_order_acquire) == 0u);
+        error = librdp_session_last_error(session);
+        REQUIRE(error != NULL);
+        REQUIRE(librdp_error_info_init(&error_info) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(librdp_error_copy_info(error, &error_info) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(error_info.status == expected_gateway_status);
+        REQUIRE(error_info.component ==
+                LIBRDP_ERROR_COMPONENT_TRANSPORT);
+        REQUIRE(error_info.phase != NULL);
+        REQUIRE(strcmp(error_info.phase,
+                       "transport.gateway.connect") == 0);
+        REQUIRE(error_info.trace_id != NULL);
+        REQUIRE(strcmp(error_info.trace_id,
+                       "server-client-smoke") == 0);
+        if (proxy_started)
+        {
+            test_http_proxy_cancel(&proxy);
+            REQUIRE(test_http_proxy_join_status(
+                &proxy,
+                LIBRDP_STATUS_IO_ERROR));
+            proxy_started = 0;
+            test_http_proxy_clear(&proxy);
+        }
+        REQUIRE(server_host_cancel(host_fixture.host) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(pthread_join(host_fixture.thread, NULL) == 0);
+        thread_started = 0;
+        REQUIRE(host_fixture.status == LIBRDP_STATUS_OK);
+        result = 0;
+        goto cleanup;
     }
     if (expected_connect_status != LIBRDP_STATUS_OK)
     {
@@ -2580,7 +2646,8 @@ int main(int argc, char** argv)
             "127.0.0.1",
             "127.0.0.1",
             LIBRDP_GATEWAY_HTTP_CONNECT,
-            0);
+            SMOKE_GATEWAY_CREDENTIALS_EXPLICIT,
+            LIBRDP_STATUS_OK);
 #else
         return 77;
 #endif
@@ -2597,7 +2664,26 @@ int main(int argc, char** argv)
             "127.0.0.1",
             "127.0.0.1",
             LIBRDP_GATEWAY_HTTP_CONNECT,
-            1);
+            SMOKE_GATEWAY_CREDENTIALS_SESSION,
+            LIBRDP_STATUS_OK);
+#else
+        return 77;
+#endif
+    }
+    if (argc == 2 &&
+        strcmp(argv[1],
+               "gateway-no-session-credentials") == 0)
+    {
+#ifdef RDP_HAVE_CURL
+        return smoke_run_profile(
+            LIBRDP_SECURITY_NLA,
+            LIBRDP_STATUS_OK,
+            &smoke_nla_default_identity,
+            "127.0.0.1",
+            "127.0.0.1",
+            LIBRDP_GATEWAY_HTTP_CONNECT,
+            SMOKE_GATEWAY_CREDENTIALS_NONE,
+            LIBRDP_STATUS_IO_ERROR);
 #else
         return 77;
 #endif
@@ -2612,7 +2698,8 @@ int main(int argc, char** argv)
             "127.0.0.1",
             "127.0.0.1",
             LIBRDP_GATEWAY_RDG_HTTP,
-            0);
+            SMOKE_GATEWAY_CREDENTIALS_EXPLICIT,
+            LIBRDP_STATUS_OK);
 #else
         return 77;
 #endif
@@ -2633,7 +2720,7 @@ int main(int argc, char** argv)
                 "timeout-credssp|standard-integrity|security-downgrade|"
                 "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake|"
                 "gateway-http-connect|gateway-session-credentials|"
-                "gateway-rdg\n");
+                "gateway-no-session-credentials|gateway-rdg\n");
         return 2;
     }
     return smoke_run_profile(security,
@@ -2642,5 +2729,6 @@ int main(int argc, char** argv)
                              bind_address,
                              target,
                              LIBRDP_GATEWAY_DISABLED,
-                             0);
+                             SMOKE_GATEWAY_CREDENTIALS_EXPLICIT,
+                             LIBRDP_STATUS_OK);
 }
