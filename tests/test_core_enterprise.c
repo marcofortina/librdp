@@ -184,9 +184,15 @@ static int test_workspace_write_all(int fd, const char* data, size_t length)
 static int test_workspace_http_child(int listen_fd)
 {
     static const char feed[] =
-        "<Workspace><Resources><Resource><Title>Remote Desktop</Title><Type>Desktop</Type>"
+        "<Workspace><Resources>"
+        "<Resource><ID>desktop-one</ID><Title>Remote Desktop</Title>"
+        "<Type>Desktop</Type>"
         "<RDPFileContents>full address:s:desktop.example.test</RDPFileContents>"
-        "</Resource></Resources></Workspace>";
+        "</Resource>"
+        "<RemoteApp id=\"published-app\"><Title>Published Tool</Title>"
+        "<Alias>tool</Alias><RemoteAppProgram>||tool</RemoteAppProgram>"
+        "</RemoteApp>"
+        "</Resources></Workspace>";
     char request[1024];
     char header[256];
     size_t used = 0;
@@ -259,12 +265,22 @@ int test_workspace_fetch_http(void)
     workspace = librdp_workspace_new(&config);
     CHECK(workspace != NULL);
     CHECK(librdp_workspace_fetch(workspace) == LIBRDP_STATUS_OK);
-    CHECK(librdp_workspace_resource_count(workspace) == 1u);
+    CHECK(librdp_workspace_resource_count(workspace) == 2u);
     CHECK(librdp_workspace_resource_init(&resource) == LIBRDP_STATUS_OK);
     CHECK(librdp_workspace_resource_at(workspace, 0, &resource) == LIBRDP_STATUS_OK);
     CHECK(resource.type == LIBRDP_WORKSPACE_RESOURCE_DESKTOP);
+    CHECK(resource.id && strcmp(resource.id, "desktop-one") == 0);
     CHECK(resource.title && strcmp(resource.title, "Remote Desktop") == 0);
     CHECK(resource.rdp_file_contents && strstr(resource.rdp_file_contents, "desktop.example.test") != NULL);
+    CHECK(librdp_workspace_resource_init(&resource) == LIBRDP_STATUS_OK);
+    CHECK(librdp_workspace_resource_at(workspace, 1, &resource) ==
+          LIBRDP_STATUS_OK);
+    CHECK(resource.type == LIBRDP_WORKSPACE_RESOURCE_REMOTE_APP);
+    CHECK(resource.id && strcmp(resource.id, "published-app") == 0);
+    CHECK(resource.title && strcmp(resource.title, "Published Tool") == 0);
+    CHECK(resource.alias && strcmp(resource.alias, "tool") == 0);
+    CHECK(resource.remote_app_program &&
+          strcmp(resource.remote_app_program, "||tool") == 0);
     librdp_workspace_free(workspace);
     close(listen_fd);
     CHECK(waitpid(child, &child_status, 0) == child);

@@ -274,6 +274,11 @@ static int test_workspace_selection(void)
     CHECK(workspace_select_resource(workspace, NULL, &selected, errors) == 0);
     CHECK(workspace_select_resource(workspace, "0", &selected, errors) == 1);
     CHECK(selected == 0u);
+    CHECK(workspace_select_resource(workspace,
+                                    "desktop-one",
+                                    &selected,
+                                    errors) == 1);
+    CHECK(selected == 0u);
     CHECK(workspace_select_resource(workspace, "tool", &selected, errors) == 1);
     CHECK(selected == 1u);
     CHECK(workspace_select_resource(workspace, "Published Tool", &selected, errors) == 1);
