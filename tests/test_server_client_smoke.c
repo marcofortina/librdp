@@ -23,16 +23,21 @@
 
 #include <librdp/librdp.h>
 
+#include <openssl/err.h>
+
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -128,6 +133,24 @@ typedef struct smoke_integrity_peer
     librdp_status status;
 } smoke_integrity_peer;
 
+typedef enum smoke_security_peer_mode
+{
+    SMOKE_SECURITY_PEER_DOWNGRADE = 1,
+    SMOKE_SECURITY_PEER_TLS_CERTIFICATE = 2,
+    SMOKE_SECURITY_PEER_TLS_INVALID = 3
+} smoke_security_peer_mode;
+
+typedef struct smoke_security_peer
+{
+    pthread_t thread;
+    atomic_uint port;
+    atomic_uint stop;
+    smoke_security_peer_mode mode;
+    const char* certificate_path;
+    const char* private_key_path;
+    librdp_status status;
+} smoke_security_peer;
+
 typedef struct smoke_client_events
 {
     unsigned int state_events;
@@ -152,6 +175,9 @@ typedef struct smoke_trace_capture
     unsigned int slowpath_integrity_failures;
     unsigned int fastpath_integrity_failures;
     unsigned int integrity_failures;
+    unsigned int security_downgrades;
+    unsigned int tls_connect_failures;
+    unsigned int tls_verify_failures;
     int leaked;
     int address_matched;
     const smoke_nla_identity* identity;
@@ -252,6 +278,18 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event,
                     "rdp.security.integrity.failed") == 0)
         capture->integrity_failures++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "x224.negotiation.downgrade") == 0)
+        capture->security_downgrades++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "transport.tls.connect.failed") == 0)
+        capture->tls_connect_failures++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "transport.tls.verify.failed") == 0)
+        capture->tls_verify_failures++;
     if (!capture->identity)
         return;
     if ((capture->identity->username &&
@@ -668,6 +706,206 @@ static void* smoke_host_main(void* user_data)
     }
     if (server_host_get_state(fixture->host) != SERVER_HOST_STOPPED)
         (void)server_host_stop(fixture->host);
+    return NULL;
+}
+
+/*
+ * Read one bounded X.224 request from a raw loopback peer. Polling keeps the
+ * fixture cancellable when a client fails before reaching negotiation.
+ */
+static int smoke_security_peer_read_exact(smoke_security_peer* fixture,
+                                          int fd,
+                                          uint8_t* data,
+                                          size_t length)
+{
+    uint64_t deadline_ns = smoke_now_ns() + 5000000000ULL;
+    size_t offset = 0u;
+
+    while (offset < length &&
+           atomic_load_explicit(&fixture->stop, memory_order_acquire) == 0u)
+    {
+        struct pollfd pfd;
+        ssize_t count = 0;
+        int ready = 0;
+
+        memset(&pfd, 0, sizeof(pfd));
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        do
+        {
+            ready = poll(&pfd, 1u, 50);
+        } while (ready < 0 && errno == EINTR);
+        if (ready < 0 || smoke_now_ns() >= deadline_ns)
+            return 0;
+        if (ready == 0)
+            continue;
+        count = recv(fd, data + offset, length - offset, 0);
+        if (count <= 0)
+            return 0;
+        offset += (size_t)count;
+    }
+    return offset == length;
+}
+
+static int smoke_security_peer_read_x224(smoke_security_peer* fixture,
+                                         int fd)
+{
+    uint8_t header[4];
+    uint8_t body[4092];
+    size_t packet_length = 0u;
+
+    if (!smoke_security_peer_read_exact(fixture,
+                                        fd,
+                                        header,
+                                        sizeof(header)) ||
+        header[0] != 3u)
+        return 0;
+    packet_length = ((size_t)header[2] << 8u) | (size_t)header[3];
+    if (packet_length < sizeof(header) ||
+        packet_length > sizeof(header) + sizeof(body))
+        return 0;
+    return smoke_security_peer_read_exact(fixture,
+                                          fd,
+                                          body,
+                                          packet_length - sizeof(header));
+}
+
+/*
+ * Present a deterministic X.224 security boundary without running later RDP
+ * phases. Certificate modes perform a real server-side TLS handshake, while
+ * the invalid mode deliberately returns non-TLS bytes after selecting TLS.
+ */
+static void* smoke_security_peer_main(void* user_data)
+{
+    static const uint8_t invalid_tls[] = {
+        'N', 'O', 'T', '-', 'T', 'L', 'S', '\r', '\n'
+    };
+    smoke_security_peer* fixture = (smoke_security_peer*)user_data;
+    struct sockaddr_in address;
+    struct timeval timeout = {5, 0};
+    socklen_t address_len = (socklen_t)sizeof(address);
+    SSL_CTX* tls_context = NULL;
+    SSL* tls = NULL;
+    sigset_t blocked_signals;
+    int listener = -1;
+    int client = -1;
+    int ok = 0;
+
+    if (!fixture)
+        return NULL;
+    fixture->status = LIBRDP_STATUS_IO_ERROR;
+    if (sigemptyset(&blocked_signals) != 0 ||
+        sigaddset(&blocked_signals, SIGPIPE) != 0 ||
+        pthread_sigmask(SIG_BLOCK, &blocked_signals, NULL) != 0)
+        return NULL;
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0)
+        goto cleanup;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (bind(listener,
+             (const struct sockaddr*)&address,
+             (socklen_t)sizeof(address)) != 0 ||
+        getsockname(listener,
+                    (struct sockaddr*)&address,
+                    &address_len) != 0 ||
+        listen(listener, 1) != 0)
+        goto cleanup;
+    atomic_store_explicit(&fixture->port,
+                          (unsigned int)ntohs(address.sin_port),
+                          memory_order_release);
+    while (atomic_load_explicit(&fixture->stop,
+                                memory_order_acquire) == 0u)
+    {
+        struct pollfd pfd;
+        int ready = 0;
+
+        memset(&pfd, 0, sizeof(pfd));
+        pfd.fd = listener;
+        pfd.events = POLLIN;
+        do
+        {
+            ready = poll(&pfd, 1u, 50);
+        } while (ready < 0 && errno == EINTR);
+        if (ready < 0)
+            goto cleanup;
+        if (ready == 0)
+            continue;
+        client = accept(listener, NULL, NULL);
+        if (client < 0 && errno == EINTR)
+            continue;
+        if (client < 0)
+            goto cleanup;
+        break;
+    }
+    if (client < 0 ||
+        setsockopt(client,
+                   SOL_SOCKET,
+                   SO_RCVTIMEO,
+                   &timeout,
+                   (socklen_t)sizeof(timeout)) != 0 ||
+        setsockopt(client,
+                   SOL_SOCKET,
+                   SO_SNDTIMEO,
+                   &timeout,
+                   (socklen_t)sizeof(timeout)) != 0 ||
+        !smoke_security_peer_read_x224(fixture, client))
+        goto cleanup;
+    {
+        uint8_t response[] = {
+            0x03u, 0x00u, 0x00u, 0x13u,
+            0x0eu, 0xd0u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u,
+            0x02u, 0x00u, 0x08u, 0x00u,
+            0x00u, 0x00u, 0x00u, 0x00u
+        };
+
+        if (fixture->mode != SMOKE_SECURITY_PEER_DOWNGRADE)
+            response[15] = 0x01u;
+        if (!test_server_send_all(client, response, sizeof(response)))
+            goto cleanup;
+    }
+    if (fixture->mode == SMOKE_SECURITY_PEER_TLS_INVALID)
+    {
+        if (!test_server_send_all(client,
+                                  invalid_tls,
+                                  sizeof(invalid_tls)))
+            goto cleanup;
+    }
+    else if (fixture->mode == SMOKE_SECURITY_PEER_TLS_CERTIFICATE)
+    {
+        int tls_result = 0;
+
+        if (!fixture->certificate_path || !fixture->private_key_path)
+            goto cleanup;
+        tls_context = SSL_CTX_new(TLS_server_method());
+        if (!tls_context ||
+            SSL_CTX_use_certificate_chain_file(
+                tls_context,
+                fixture->certificate_path) != 1 ||
+            SSL_CTX_use_PrivateKey_file(tls_context,
+                                        fixture->private_key_path,
+                                        SSL_FILETYPE_PEM) != 1 ||
+            SSL_CTX_check_private_key(tls_context) != 1)
+            goto cleanup;
+        tls = SSL_new(tls_context);
+        if (!tls || SSL_set_fd(tls, client) != 1)
+            goto cleanup;
+        tls_result = SSL_accept(tls);
+        if (tls_result != 1)
+            ERR_clear_error();
+    }
+    ok = 1;
+
+cleanup:
+    SSL_free(tls);
+    SSL_CTX_free(tls_context);
+    if (client >= 0)
+        close(client);
+    if (listener >= 0)
+        close(listener);
+    fixture->status = ok ? LIBRDP_STATUS_OK : LIBRDP_STATUS_IO_ERROR;
     return NULL;
 }
 
@@ -1348,9 +1586,13 @@ static int smoke_run_profile(librdp_security_mode security,
         REQUIRE(librdp_error_copy_info(error, &error_info) ==
                 LIBRDP_STATUS_OK);
         REQUIRE(error_info.status == expected_connect_status);
+        REQUIRE(error_info.os_errno == 0);
         REQUIRE(error_info.component == LIBRDP_ERROR_COMPONENT_CREDSSP);
         REQUIRE(error_info.phase != NULL);
         REQUIRE(strcmp(error_info.phase, "credssp.nla.authenticate") == 0);
+        REQUIRE(error_info.trace_id != NULL);
+        REQUIRE(strcmp(error_info.trace_id,
+                       "server-client-smoke") == 0);
         (void)server_host_cancel(host_fixture.host);
         REQUIRE(pthread_join(host_fixture.thread, NULL) == 0);
         thread_started = 0;
@@ -1461,6 +1703,188 @@ cleanup:
         (void)unlink(drive_marker);
     if (drive_directory[0] != '\0')
         (void)rmdir(drive_directory);
+    if (cert_path[0] != '\0')
+        (void)unlink(cert_path);
+    if (key_path[0] != '\0')
+        (void)unlink(key_path);
+    return result;
+}
+
+/*
+ * Verify that each pre-authentication security boundary preserves its exact
+ * public status, component, phase, native error, and per-session trace ID.
+ */
+static int smoke_run_security_error(smoke_security_peer_mode peer_mode,
+                                    librdp_status expected_status,
+                                    int trust_test_certificate,
+                                    int use_wrong_pin)
+{
+    static const char wrong_pin[] =
+        "0000000000000000000000000000000000000000000000000000000000000000";
+    char cert_path[128] = {0};
+    char key_path[128] = {0};
+    char* saved_cert_file = NULL;
+    const char* current_cert_file = NULL;
+    smoke_security_peer fixture;
+    smoke_trace_capture trace_capture;
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_tls_policy tls_policy;
+    librdp_trace_policy trace_policy;
+    librdp_error_info error_info;
+    uint16_t port = 0u;
+    int cert_environment_changed = 0;
+    int thread_started = 0;
+    int result = 1;
+
+    memset(&fixture, 0, sizeof(fixture));
+    memset(&trace_capture, 0, sizeof(trace_capture));
+    atomic_init(&fixture.port, 0u);
+    atomic_init(&fixture.stop, 0u);
+    fixture.mode = peer_mode;
+    fixture.status = LIBRDP_STATUS_AGAIN;
+    if (peer_mode == SMOKE_SECURITY_PEER_TLS_CERTIFICATE)
+    {
+        REQUIRE(test_server_make_tls_files(cert_path,
+                                           sizeof(cert_path),
+                                           key_path,
+                                           sizeof(key_path)));
+        fixture.certificate_path = cert_path;
+        fixture.private_key_path = key_path;
+    }
+    if (trust_test_certificate)
+    {
+        current_cert_file = getenv("SSL_CERT_FILE");
+        if (current_cert_file)
+        {
+            saved_cert_file = strdup(current_cert_file);
+            REQUIRE(saved_cert_file != NULL);
+        }
+        REQUIRE(setenv("SSL_CERT_FILE", cert_path, 1) == 0);
+        cert_environment_changed = 1;
+    }
+    REQUIRE(pthread_create(&fixture.thread,
+                           NULL,
+                           smoke_security_peer_main,
+                           &fixture) == 0);
+    thread_started = 1;
+    REQUIRE(smoke_wait_for_port(&fixture.port, &port));
+
+    settings = librdp_settings_new();
+    REQUIRE(settings != NULL);
+    REQUIRE(librdp_settings_set_target(settings, "127.0.0.1") ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_port(settings, port) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_security_mode(
+                settings,
+                peer_mode == SMOKE_SECURITY_PEER_DOWNGRADE
+                    ? LIBRDP_SECURITY_AUTO
+                    : LIBRDP_SECURITY_TLS) ==
+            LIBRDP_STATUS_OK);
+    if (peer_mode != SMOKE_SECURITY_PEER_DOWNGRADE)
+    {
+        REQUIRE(librdp_tls_policy_init(&tls_policy) ==
+                LIBRDP_STATUS_OK);
+        if (use_wrong_pin)
+        {
+            tls_policy.mode = LIBRDP_TLS_POLICY_PINNED_FINGERPRINT;
+            tls_policy.use_system_store = 0;
+            tls_policy.pinned_sha256 = wrong_pin;
+        }
+        else
+        {
+            tls_policy.mode =
+                peer_mode == SMOKE_SECURITY_PEER_TLS_INVALID
+                    ? LIBRDP_TLS_POLICY_INSECURE_LAB
+                    : LIBRDP_TLS_POLICY_STRICT;
+            tls_policy.use_system_store =
+                peer_mode == SMOKE_SECURITY_PEER_TLS_CERTIFICATE ? 1 : 0;
+        }
+        REQUIRE(librdp_settings_set_tls_policy(settings, &tls_policy) ==
+                LIBRDP_STATUS_OK);
+    }
+    session = librdp_session_new(settings);
+    REQUIRE(session != NULL);
+    REQUIRE(librdp_trace_policy_init(&trace_policy) ==
+            LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = smoke_trace_callback;
+    trace_policy.callback_user_data = &trace_capture;
+    trace_policy.trace_id = "security-boundary";
+    trace_capture.target = "127.0.0.1";
+    trace_capture.port = port;
+    REQUIRE(librdp_session_set_trace_policy(session, &trace_policy) ==
+            LIBRDP_STATUS_OK);
+
+    REQUIRE(librdp_session_connect(session) == expected_status);
+    REQUIRE(librdp_session_get_state(session) ==
+            LIBRDP_SESSION_FAILED);
+    REQUIRE(librdp_session_get_lifecycle(session) ==
+            LIBRDP_LIFECYCLE_FAILED);
+    REQUIRE(trace_capture.records > 0u);
+    REQUIRE(trace_capture.connect_starts == 1u);
+    REQUIRE(trace_capture.connect_completions == 1u);
+    REQUIRE(trace_capture.address_matched);
+    REQUIRE(trace_capture.leaked == 0);
+    if (peer_mode == SMOKE_SECURITY_PEER_DOWNGRADE)
+    {
+        REQUIRE(trace_capture.security_downgrades == 1u);
+        REQUIRE(trace_capture.tls_connect_failures == 0u);
+        REQUIRE(trace_capture.tls_verify_failures == 0u);
+    }
+    else if (use_wrong_pin)
+    {
+        REQUIRE(trace_capture.security_downgrades == 0u);
+        REQUIRE(trace_capture.tls_connect_failures == 0u);
+        REQUIRE(trace_capture.tls_verify_failures == 1u);
+    }
+    else
+    {
+        REQUIRE(trace_capture.security_downgrades == 0u);
+        REQUIRE(trace_capture.tls_connect_failures == 1u);
+        REQUIRE(trace_capture.tls_verify_failures == 0u);
+    }
+    REQUIRE(librdp_error_info_init(&error_info) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_error_copy_info(librdp_session_last_error(session),
+                                   &error_info) == LIBRDP_STATUS_OK);
+    REQUIRE(error_info.status == expected_status);
+    REQUIRE(error_info.os_errno == 0);
+    REQUIRE(error_info.component ==
+            (peer_mode == SMOKE_SECURITY_PEER_DOWNGRADE
+                 ? LIBRDP_ERROR_COMPONENT_PROTOCOL
+                 : LIBRDP_ERROR_COMPONENT_TLS));
+    REQUIRE(error_info.phase != NULL);
+    REQUIRE(strcmp(error_info.phase,
+                   peer_mode == SMOKE_SECURITY_PEER_DOWNGRADE
+                       ? "x224.negotiation.policy"
+                       : "transport.tls.handshake") == 0);
+    REQUIRE(error_info.trace_id != NULL);
+    REQUIRE(strcmp(error_info.trace_id,
+                   "security-boundary") == 0);
+    result = 0;
+
+cleanup:
+    atomic_store_explicit(&fixture.stop, 1u, memory_order_release);
+    if (thread_started)
+    {
+        (void)pthread_join(fixture.thread, NULL);
+        if (result == 0 && fixture.status != LIBRDP_STATUS_OK)
+            result = 1;
+    }
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    if (cert_environment_changed)
+    {
+        if (saved_cert_file)
+            (void)setenv("SSL_CERT_FILE", saved_cert_file, 1);
+        else
+            (void)unsetenv("SSL_CERT_FILE");
+    }
+    free(saved_cert_file);
     if (cert_path[0] != '\0')
         (void)unlink(cert_path);
     if (key_path[0] != '\0')
@@ -1827,6 +2251,36 @@ int main(int argc, char** argv)
         return smoke_run_credssp_timeout();
     if (argc == 2 && strcmp(argv[1], "standard-integrity") == 0)
         return smoke_run_standard_integrity();
+    if (argc == 2 && strcmp(argv[1], "security-downgrade") == 0)
+        return smoke_run_security_error(
+            SMOKE_SECURITY_PEER_DOWNGRADE,
+            LIBRDP_STATUS_SECURITY_DOWNGRADE,
+            0,
+            0);
+    if (argc == 2 && strcmp(argv[1], "tls-untrusted") == 0)
+        return smoke_run_security_error(
+            SMOKE_SECURITY_PEER_TLS_CERTIFICATE,
+            LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
+            0,
+            0);
+    if (argc == 2 && strcmp(argv[1], "tls-hostname") == 0)
+        return smoke_run_security_error(
+            SMOKE_SECURITY_PEER_TLS_CERTIFICATE,
+            LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH,
+            1,
+            0);
+    if (argc == 2 && strcmp(argv[1], "tls-wrong-pin") == 0)
+        return smoke_run_security_error(
+            SMOKE_SECURITY_PEER_TLS_CERTIFICATE,
+            LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
+            0,
+            1);
+    if (argc == 2 && strcmp(argv[1], "tls-handshake") == 0)
+        return smoke_run_security_error(
+            SMOKE_SECURITY_PEER_TLS_INVALID,
+            LIBRDP_STATUS_TLS_HANDSHAKE_FAILED,
+            0,
+            0);
     if (argc != 2 ||
         !smoke_parse_security(argv[1],
                               &security,
@@ -1840,7 +2294,8 @@ int main(int argc, char** argv)
                 "standard|standard-dns|standard-ipv6|tls|nla|"
                 "nla-invalid|nla-expired|nla-locked|"
                 "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8|"
-                "timeout-credssp|standard-integrity\n");
+                "timeout-credssp|standard-integrity|security-downgrade|"
+                "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake\n");
         return 2;
     }
     return smoke_run_profile(security,

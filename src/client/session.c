@@ -3440,6 +3440,12 @@ librdp_status librdp_session_connect(librdp_session* session)
                         confirm.negotiation.present ? 1u : 0u,
                         selected_protocol);
         status = LIBRDP_STATUS_SECURITY_DOWNGRADE;
+        rdp_session_set_last_error(session,
+                                   status,
+                                   0,
+                                   LIBRDP_ERROR_COMPONENT_PROTOCOL,
+                                   "x224.negotiation.policy",
+                                   "server selected a protocol below the configured security policy");
         goto fail;
     }
 
@@ -3468,7 +3474,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         {
             rdp_session_set_last_error(session,
                                        status,
-                                       errno,
+                                       status == LIBRDP_STATUS_IO_ERROR ? errno : 0,
                                        LIBRDP_ERROR_COMPONENT_TLS,
                                        "transport.tls.handshake",
                                        "tls handshake failed");

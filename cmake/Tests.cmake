@@ -373,6 +373,16 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke timeout-credssp)
     add_test(NAME server_client_smoke_standard_integrity
              COMMAND test_server_client_smoke standard-integrity)
+    add_test(NAME server_client_smoke_security_downgrade
+             COMMAND test_server_client_smoke security-downgrade)
+    add_test(NAME server_client_smoke_tls_untrusted
+             COMMAND test_server_client_smoke tls-untrusted)
+    add_test(NAME server_client_smoke_tls_hostname
+             COMMAND test_server_client_smoke tls-hostname)
+    add_test(NAME server_client_smoke_tls_wrong_pin
+             COMMAND test_server_client_smoke tls-wrong-pin)
+    add_test(NAME server_client_smoke_tls_handshake
+             COMMAND test_server_client_smoke tls-handshake)
     set_tests_properties(
         common
         transport
@@ -397,6 +407,11 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_nla_utf8
         server_client_smoke_credssp_timeout
         server_client_smoke_standard_integrity
+        server_client_smoke_security_downgrade
+        server_client_smoke_tls_untrusted
+        server_client_smoke_tls_hostname
+        server_client_smoke_tls_wrong_pin
+        server_client_smoke_tls_handshake
         PROPERTIES TIMEOUT 60
     )
     set_tests_properties(
