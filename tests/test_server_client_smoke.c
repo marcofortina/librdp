@@ -1516,7 +1516,8 @@ static int smoke_run_profile(librdp_security_mode security,
                              const smoke_nla_identity* identity,
                              const char* bind_address,
                              const char* target,
-                             librdp_gateway_mode gateway_mode)
+                             librdp_gateway_mode gateway_mode,
+                             int reuse_session_credentials)
 {
     char cert_path[128] = {0};
     char key_path[128] = {0};
@@ -1568,7 +1569,9 @@ static int smoke_run_profile(librdp_security_mode security,
     trace_capture.identity = identity;
     trace_capture.gateway_identity =
         gateway_mode != LIBRDP_GATEWAY_DISABLED
-            ? &smoke_gateway_identity
+            ? (reuse_session_credentials
+                   ? identity
+                   : &smoke_gateway_identity)
             : NULL;
     memset(&runtime, 0, sizeof(runtime));
     memset(&key, 0, sizeof(key));
@@ -1641,17 +1644,29 @@ static int smoke_run_profile(librdp_security_mode security,
 
         if (gateway_mode == LIBRDP_GATEWAY_HTTP_CONNECT)
         {
+            const smoke_nla_identity* proxy_identity =
+                reuse_session_credentials
+                    ? identity
+                    : &smoke_gateway_identity;
+            const smoke_nla_identity* forbidden_identity =
+                reuse_session_credentials
+                    ? &smoke_gateway_identity
+                    : identity;
+
             proxy_config.target_host = target;
             proxy_config.target_port = port;
             proxy_config.gateway_username =
-                smoke_gateway_identity.username;
+                proxy_identity->username;
             proxy_config.gateway_password =
-                smoke_gateway_identity.password;
+                proxy_identity->password;
             proxy_config.gateway_domain =
-                smoke_gateway_identity.domain;
-            proxy_config.forbidden_username = identity->username;
-            proxy_config.forbidden_password = identity->password;
-            proxy_config.forbidden_domain = identity->domain;
+                proxy_identity->domain;
+            proxy_config.forbidden_username =
+                forbidden_identity->username;
+            proxy_config.forbidden_password =
+                forbidden_identity->password;
+            proxy_config.forbidden_domain =
+                forbidden_identity->domain;
             REQUIRE(test_http_proxy_start(&proxy, &proxy_config));
             proxy_started = 1;
             written = snprintf(gateway_url,
@@ -1700,10 +1715,17 @@ static int smoke_run_profile(librdp_security_mode security,
                 LIBRDP_STATUS_OK);
         gateway_config.mode = gateway_mode;
         gateway_config.url = gateway_url;
-        gateway_config.username = smoke_gateway_identity.username;
-        gateway_config.password = smoke_gateway_identity.password;
-        gateway_config.domain = smoke_gateway_identity.domain;
-        gateway_config.use_session_credentials = 0;
+        if (!reuse_session_credentials)
+        {
+            gateway_config.username =
+                smoke_gateway_identity.username;
+            gateway_config.password =
+                smoke_gateway_identity.password;
+            gateway_config.domain =
+                smoke_gateway_identity.domain;
+        }
+        gateway_config.use_session_credentials =
+            reuse_session_credentials;
         gateway_config.timeout_ms = 5000u;
         REQUIRE(librdp_settings_set_gateway_config(
                     settings,
@@ -2557,7 +2579,25 @@ int main(int argc, char** argv)
             &smoke_nla_default_identity,
             "127.0.0.1",
             "127.0.0.1",
-            LIBRDP_GATEWAY_HTTP_CONNECT);
+            LIBRDP_GATEWAY_HTTP_CONNECT,
+            0);
+#else
+        return 77;
+#endif
+    }
+    if (argc == 2 &&
+        strcmp(argv[1],
+               "gateway-session-credentials") == 0)
+    {
+#ifdef RDP_HAVE_CURL
+        return smoke_run_profile(
+            LIBRDP_SECURITY_NLA,
+            LIBRDP_STATUS_OK,
+            &smoke_nla_default_identity,
+            "127.0.0.1",
+            "127.0.0.1",
+            LIBRDP_GATEWAY_HTTP_CONNECT,
+            1);
 #else
         return 77;
 #endif
@@ -2571,7 +2611,8 @@ int main(int argc, char** argv)
             &smoke_nla_default_identity,
             "127.0.0.1",
             "127.0.0.1",
-            LIBRDP_GATEWAY_RDG_HTTP);
+            LIBRDP_GATEWAY_RDG_HTTP,
+            0);
 #else
         return 77;
 #endif
@@ -2591,7 +2632,8 @@ int main(int argc, char** argv)
                 "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8|"
                 "timeout-credssp|standard-integrity|security-downgrade|"
                 "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake|"
-                "gateway-http-connect|gateway-rdg\n");
+                "gateway-http-connect|gateway-session-credentials|"
+                "gateway-rdg\n");
         return 2;
     }
     return smoke_run_profile(security,
@@ -2599,5 +2641,6 @@ int main(int argc, char** argv)
                              identity,
                              bind_address,
                              target,
-                             LIBRDP_GATEWAY_DISABLED);
+                             LIBRDP_GATEWAY_DISABLED,
+                             0);
 }

@@ -388,6 +388,8 @@ if(LIBRDP_BUILD_TESTS)
     if(LIBRDP_CURL_FOUND)
         add_test(NAME server_client_smoke_gateway_http_connect
                  COMMAND test_server_client_smoke gateway-http-connect)
+        add_test(NAME server_client_smoke_gateway_session_credentials
+                 COMMAND test_server_client_smoke gateway-session-credentials)
         add_test(NAME server_client_smoke_gateway_rdg
                  COMMAND test_server_client_smoke gateway-rdg)
     endif()
@@ -425,6 +427,7 @@ if(LIBRDP_BUILD_TESTS)
     if(TEST server_client_smoke_gateway_http_connect)
         set_tests_properties(
             server_client_smoke_gateway_http_connect
+            server_client_smoke_gateway_session_credentials
             server_client_smoke_gateway_rdg
             PROPERTIES TIMEOUT 60
         )
