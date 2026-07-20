@@ -274,6 +274,12 @@ if(LIBRDP_BUILD_TESTS)
     librdp_configure_test_executable(
         test_server_client_port_smoke
     )
+    if(LIBRDP_CUPS_FOUND)
+        add_executable(test_printer_cups_smoke
+            tests/test_printer_cups_smoke.c
+        )
+        librdp_configure_test_executable(test_printer_cups_smoke)
+    endif()
     if(TARGET librdp-viewer AND
        LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         find_program(LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE NAMES Xvfb)
@@ -407,6 +413,9 @@ if(LIBRDP_BUILD_TESTS)
         test_server_client_smoke
         test_abi_probe
     )
+    if(TARGET test_printer_cups_smoke)
+        add_dependencies(librdp_tests test_printer_cups_smoke)
+    endif()
     if(TARGET test_workspace_launch_smoke)
         add_dependencies(librdp_tests test_workspace_launch_smoke)
     endif()
@@ -577,6 +586,14 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_port_smoke serial)
     add_test(NAME server_client_smoke_parallel_port
              COMMAND test_server_client_port_smoke parallel)
+    if(TARGET test_printer_cups_smoke)
+        add_test(NAME printer_cups_smoke
+                 COMMAND test_printer_cups_smoke)
+        set_tests_properties(printer_cups_smoke PROPERTIES
+            SKIP_RETURN_CODE 77
+            TIMEOUT 15
+        )
+    endif()
     add_test(NAME server_client_smoke_clipboard_text
              COMMAND test_server_client_smoke clipboard-text)
     add_test(NAME server_client_smoke_clipboard_html

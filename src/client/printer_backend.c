@@ -181,37 +181,14 @@ static int rdp_printer_backend_cups_remaining_ms(const rdp_printer_backend_cups_
 
 static int rdp_printer_backend_cups_copy_destination(
     rdp_printer_backend_cups_context* context,
-    const cups_dest_t* source)
+    cups_dest_t* source)
 {
     cups_dest_t* destination = NULL;
 
     if (!context || !source || !source->name)
         return 0;
-    destination = (cups_dest_t*)calloc(1, sizeof(*destination));
-    if (!destination)
+    if (cupsCopyDest(source, 0, &destination) != 1 || !destination)
         return 0;
-    destination->name = rdp_printer_backend_strdup(source->name);
-    destination->instance = rdp_printer_backend_strdup(source->instance);
-    destination->is_default = source->is_default;
-    if (!destination->name || (source->instance && !destination->instance))
-    {
-        cupsFreeDests(1, destination);
-        return 0;
-    }
-    for (int i = 0; destination->name && i < source->num_options; i++)
-    {
-        int next_count = cupsAddOption(source->options[i].name,
-                                       source->options[i].value,
-                                       destination->num_options,
-                                       &destination->options);
-
-        if (next_count <= destination->num_options)
-        {
-            cupsFreeDests(1, destination);
-            return 0;
-        }
-        destination->num_options = next_count;
-    }
     context->destination = destination;
     return 1;
 }
