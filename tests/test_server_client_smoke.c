@@ -342,6 +342,15 @@ typedef struct smoke_integrity_peer
 typedef librdp_status (*smoke_fastpath_send_fn)(
     librdp_server_peer* peer);
 
+typedef enum smoke_graphics_mode
+{
+    SMOKE_GRAPHICS_PLANAR = 0,
+    SMOKE_GRAPHICS_PROGRESSIVE = 1,
+    SMOKE_GRAPHICS_LIFECYCLE = 2,
+    SMOKE_GRAPHICS_MULTI_SURFACE = 3,
+    SMOKE_GRAPHICS_CLEARCODEC = 4
+} smoke_graphics_mode;
+
 typedef struct smoke_fastpath_peer
 {
     librdp_server_config config;
@@ -366,6 +375,7 @@ typedef struct smoke_graphics_peer
     int progressive;
     int reconnect;
     int multi_surface;
+    int clearcodec;
     librdp_status status;
 } smoke_graphics_peer;
 
@@ -453,6 +463,7 @@ typedef struct smoke_trace_capture
     unsigned int graphics_surface_maps;
     unsigned int graphics_planar_updates;
     unsigned int graphics_uncompressed_updates;
+    unsigned int graphics_clearcodec_updates;
     unsigned int graphics_progressive_first_updates;
     unsigned int graphics_progressive_upgrade_updates;
     unsigned int graphics_progressive_missing_tiles;
@@ -735,6 +746,12 @@ static void smoke_trace_callback(librdp_session* session,
              record->message &&
              strstr(record->message, "codec_id=0 ") != NULL)
         capture->graphics_uncompressed_updates++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.graphics.wire_to_surface") == 0 &&
+             record->message &&
+             strstr(record->message, "codec_id=8 ") != NULL)
+        capture->graphics_clearcodec_updates++;
     else if (record->event &&
              strcmp(record->event,
                     "client.graphics.progressive") == 0 &&
@@ -2674,6 +2691,41 @@ static librdp_status smoke_graphics_send_command(
     return status;
 }
 
+static librdp_status smoke_graphics_send_wire_bitmap(
+    librdp_server_peer* peer,
+    uint32_t channel_id,
+    uint16_t surface_id,
+    uint16_t codec_id,
+    const rdp_graphics_rect16* dest_rect,
+    const uint8_t* bitmap_data,
+    uint32_t bitmap_data_len)
+{
+    rdp_buffer command;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !dest_rect ||
+        (!bitmap_data && bitmap_data_len != 0u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&command);
+    status = rdp_graphics_write_wire_to_surface_1(
+        &command,
+        surface_id,
+        codec_id,
+        RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888,
+        dest_rect,
+        bitmap_data,
+        bitmap_data_len);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_graphics_send_command(
+            peer,
+            channel_id,
+            &command);
+    }
+    rdp_buffer_free(&command);
+    return status;
+}
+
 typedef enum smoke_progressive_pass
 {
     SMOKE_PROGRESSIVE_FIRST = 1,
@@ -2886,6 +2938,68 @@ static librdp_status smoke_graphics_run_connection(
         0x70u, 0x80u, 0x90u, 0x77u,
         0xa0u, 0xb0u, 0xc0u, 0x88u
     };
+    static const uint8_t clear_residual[] = {
+        0x00u, 0x00u,
+        0x04u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x01u, 0x02u, 0x03u, 0x04u
+    };
+    static const uint8_t clear_band_store[] = {
+        0x04u, 0x02u,
+        0x04u, 0x00u, 0x00u, 0x00u,
+        0x13u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x04u,
+        0x01u, 0x00u, 0x01u, 0x00u,
+        0x00u, 0x00u, 0x01u, 0x00u,
+        0x0au, 0x14u, 0x1eu,
+        0x00u, 0x02u,
+        0x01u, 0x02u, 0x03u,
+        0x04u, 0x05u, 0x06u
+    };
+    static const uint8_t clear_band_reuse[] = {
+        0x00u, 0x03u,
+        0x04u, 0x00u, 0x00u, 0x00u,
+        0x0du, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x04u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x01u, 0x00u,
+        0x0au, 0x14u, 0x1eu,
+        0x00u, 0x80u
+    };
+    static const uint8_t clear_glyph_store[] = {
+        0x01u, 0x05u,
+        0x02u, 0x00u,
+        0x04u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x09u, 0x08u, 0x07u, 0x04u
+    };
+    static const uint8_t clear_glyph_reuse[] = {
+        0x03u, 0x06u,
+        0x02u, 0x00u
+    };
+    static const uint8_t clear_glyph_reset_store[] = {
+        0x05u, 0x07u,
+        0x02u, 0x00u,
+        0x04u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x05u, 0x06u, 0x07u, 0x04u
+    };
+    static const uint8_t clear_band_after_reset[] = {
+        0x00u, 0x08u,
+        0x04u, 0x00u, 0x00u, 0x00u,
+        0x0du, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x04u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x01u, 0x00u,
+        0x0au, 0x14u, 0x1eu,
+        0x0au, 0x80u
+    };
     const rdp_graphics_rect16 planar_rect = {
         0u, 0u, 2u, 1u
     };
@@ -3070,6 +3184,104 @@ static librdp_status smoke_graphics_run_connection(
                     73u,
                     5u,
                     SMOKE_PROGRESSIVE_UPGRADE);
+        }
+        if (fixture->status == LIBRDP_STATUS_OK)
+        {
+            fixture->status =
+                librdp_server_peer_send_graphics_end_frame(
+                    peer,
+                    17u,
+                    frame_id);
+        }
+    }
+    else if (fixture->clearcodec)
+    {
+        const uint8_t* payloads[] = {
+            clear_residual,
+            clear_band_store,
+            clear_band_reuse,
+            clear_glyph_store,
+            clear_glyph_reuse,
+            clear_glyph_reset_store,
+            clear_glyph_reuse,
+            clear_band_after_reset
+        };
+        const uint32_t payload_lengths[] = {
+            (uint32_t)sizeof(clear_residual),
+            (uint32_t)sizeof(clear_band_store),
+            (uint32_t)sizeof(clear_band_reuse),
+            (uint32_t)sizeof(clear_glyph_store),
+            (uint32_t)sizeof(clear_glyph_reuse),
+            (uint32_t)sizeof(clear_glyph_reset_store),
+            (uint32_t)sizeof(clear_glyph_reuse),
+            (uint32_t)sizeof(clear_band_after_reset)
+        };
+        size_t payload_index = 0u;
+
+        if (fixture->status == LIBRDP_STATUS_OK)
+        {
+            fixture->status =
+                librdp_server_peer_send_graphics_reset(
+                    peer,
+                    17u,
+                    SMOKE_WIDTH,
+                    SMOKE_HEIGHT);
+        }
+        if (fixture->status == LIBRDP_STATUS_OK)
+        {
+            fixture->status =
+                librdp_server_peer_send_graphics_create_surface(
+                    peer,
+                    17u,
+                    1u,
+                    16u,
+                    2u,
+                    RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888);
+        }
+        if (fixture->status == LIBRDP_STATUS_OK)
+        {
+            fixture->status =
+                rdp_graphics_write_map_surface_to_output(
+                    &command,
+                    1u,
+                    0u,
+                    0u);
+        }
+        if (fixture->status == LIBRDP_STATUS_OK)
+            fixture->status = smoke_graphics_send_command(
+                peer,
+                17u,
+                &command);
+        command.length = 0u;
+        if (fixture->status == LIBRDP_STATUS_OK)
+        {
+            fixture->status =
+                librdp_server_peer_send_graphics_start_frame(
+                    peer,
+                    17u,
+                    1000u,
+                    &frame_id);
+        }
+        for (payload_index = 0u;
+             fixture->status == LIBRDP_STATUS_OK &&
+             payload_index <
+                 sizeof(payloads) / sizeof(payloads[0]);
+             payload_index++)
+        {
+            rdp_graphics_rect16 dest_rect;
+
+            dest_rect.left = (uint16_t)(payload_index * 2u);
+            dest_rect.top = 0u;
+            dest_rect.right = (uint16_t)(dest_rect.left + 2u);
+            dest_rect.bottom = 2u;
+            fixture->status = smoke_graphics_send_wire_bitmap(
+                peer,
+                17u,
+                1u,
+                RDP_GRAPHICS_CODECID_CLEARCODEC,
+                &dest_rect,
+                payloads[payload_index],
+                payload_lengths[payload_index]);
         }
         if (fixture->status == LIBRDP_STATUS_OK)
         {
@@ -6082,7 +6294,7 @@ cleanup:
     return result;
 }
 
-static int smoke_run_graphics(int mode)
+static int smoke_run_graphics(smoke_graphics_mode mode)
 {
     static const uint8_t expected_row[] = {
         0x50u, 0x30u, 0x10u, 0xffu,
@@ -6102,6 +6314,28 @@ static int smoke_run_graphics(int mode)
         0x70u, 0x80u, 0x90u, 0xffu,
         0xa0u, 0xb0u, 0xc0u, 0xffu
     };
+    static const uint8_t expected_clear_bgr[2][16][3] = {
+        {
+            {1u, 2u, 3u}, {1u, 2u, 3u},
+            {0u, 0u, 0u}, {1u, 2u, 3u},
+            {1u, 2u, 3u}, {0u, 0u, 0u},
+            {9u, 8u, 7u}, {9u, 8u, 7u},
+            {9u, 8u, 7u}, {9u, 8u, 7u},
+            {5u, 6u, 7u}, {5u, 6u, 7u},
+            {5u, 6u, 7u}, {5u, 6u, 7u},
+            {0u, 0u, 0u}, {0u, 0u, 0u}
+        },
+        {
+            {1u, 2u, 3u}, {1u, 2u, 3u},
+            {0u, 0u, 0u}, {4u, 5u, 6u},
+            {4u, 5u, 6u}, {0u, 0u, 0u},
+            {9u, 8u, 7u}, {9u, 8u, 7u},
+            {9u, 8u, 7u}, {9u, 8u, 7u},
+            {5u, 6u, 7u}, {5u, 6u, 7u},
+            {5u, 6u, 7u}, {5u, 6u, 7u},
+            {0u, 0u, 0u}, {0u, 0u, 0u}
+        }
+    };
     smoke_graphics_peer fixture;
     smoke_client_events events;
     smoke_trace_capture trace_capture;
@@ -6117,13 +6351,15 @@ static int smoke_run_graphics(int mode)
     unsigned int cycle = 0u;
     unsigned int connection = 0u;
     unsigned int connection_count = 1u;
-    int progressive = mode == 1;
-    int reconnect = mode == 2;
-    int multi_surface = mode == 3;
+    int progressive = mode == SMOKE_GRAPHICS_PROGRESSIVE;
+    int reconnect = mode == SMOKE_GRAPHICS_LIFECYCLE;
+    int multi_surface = mode == SMOKE_GRAPHICS_MULTI_SURFACE;
+    int clearcodec = mode == SMOKE_GRAPHICS_CLEARCODEC;
     int thread_started = 0;
     int result = 1;
 
-    REQUIRE(mode >= 0 && mode <= 3);
+    REQUIRE(mode >= SMOKE_GRAPHICS_PLANAR &&
+            mode <= SMOKE_GRAPHICS_CLEARCODEC);
     connection_count = reconnect ? 2u : 1u;
     memset(&fixture, 0, sizeof(fixture));
     memset(&events, 0, sizeof(events));
@@ -6137,6 +6373,7 @@ static int smoke_run_graphics(int mode)
     fixture.progressive = progressive;
     fixture.reconnect = reconnect;
     fixture.multi_surface = multi_surface;
+    fixture.clearcodec = clearcodec;
     fixture.status = LIBRDP_STATUS_AGAIN;
     REQUIRE(librdp_server_config_init(&fixture.config) ==
             LIBRDP_STATUS_OK);
@@ -6183,7 +6420,9 @@ static int smoke_run_graphics(int mode)
                                       ? "graphics-lifecycle"
                                       : multi_surface
                                             ? "graphics-multi-surface"
-                                            : "graphics-planar";
+                                            : clearcodec
+                                                  ? "graphics-clearcodec"
+                                                  : "graphics-planar";
     trace_capture.target = "127.0.0.1";
     trace_capture.port = port;
     REQUIRE(librdp_session_set_trace_policy(session,
@@ -6211,12 +6450,15 @@ static int smoke_run_graphics(int mode)
                 trace_capture.graphics_frame_ends >= required &&
                 trace_capture.graphics_frame_acks >= required &&
                 trace_capture.graphics_surface_deletes >= required_surfaces &&
-                ((!progressive && !multi_surface &&
+                ((!progressive && !multi_surface && !clearcodec &&
                   trace_capture.graphics_planar_updates >= required &&
                   trace_capture.graphics_uncompressed_updates >= required) ||
                  (multi_surface &&
                   trace_capture.graphics_uncompressed_updates >=
                       required_surfaces) ||
+                 (clearcodec &&
+                  trace_capture.graphics_clearcodec_updates >=
+                      required * 8u) ||
                  (progressive &&
                   trace_capture.graphics_progressive_first_updates == 2u &&
                   trace_capture.graphics_progressive_upgrade_updates == 3u &&
@@ -6230,15 +6472,15 @@ static int smoke_run_graphics(int mode)
         surface = librdp_session_get_surface(session);
         REQUIRE(surface != NULL);
         REQUIRE(librdp_surface_width(surface) ==
-                ((progressive || multi_surface) ?
+                ((progressive || multi_surface || clearcodec) ?
                      SMOKE_WIDTH :
                      SMOKE_WIDTH + 1u));
         REQUIRE(librdp_surface_height(surface) ==
-                ((progressive || multi_surface) ?
+                ((progressive || multi_surface || clearcodec) ?
                      SMOKE_HEIGHT :
                      SMOKE_HEIGHT + 1u));
         REQUIRE(librdp_surface_stride(surface) ==
-                (size_t)((progressive || multi_surface) ?
+                (size_t)((progressive || multi_surface || clearcodec) ?
                              SMOKE_WIDTH :
                              SMOKE_WIDTH + 1u) *
                     4u);
@@ -6265,6 +6507,26 @@ static int smoke_run_graphics(int mode)
                         pixel[0] = 128u;
                         pixel[1] = 128u;
                         pixel[2] = 128u;
+                        pixel[3] = 0xffu;
+                    }
+                }
+            }
+            else if (clearcodec)
+            {
+                size_t y = 0u;
+                size_t x = 0u;
+                size_t stride = librdp_surface_stride(surface);
+
+                for (y = 0u; y < 2u; y++)
+                {
+                    for (x = 0u; x < 16u; x++)
+                    {
+                        uint8_t* pixel =
+                            expected + (y * stride) + (x * 4u);
+
+                        pixel[0] = expected_clear_bgr[y][x][0];
+                        pixel[1] = expected_clear_bgr[y][x][1];
+                        pixel[2] = expected_clear_bgr[y][x][2];
                         pixel[3] = 0xffu;
                     }
                 }
@@ -6446,13 +6708,15 @@ int main(int argc, char** argv)
     if (argc == 2 && strcmp(argv[1], "fastpath-rfx") == 0)
         return smoke_run_fastpath_rfx();
     if (argc == 2 && strcmp(argv[1], "graphics-planar") == 0)
-        return smoke_run_graphics(0);
+        return smoke_run_graphics(SMOKE_GRAPHICS_PLANAR);
     if (argc == 2 && strcmp(argv[1], "graphics-progressive") == 0)
-        return smoke_run_graphics(1);
+        return smoke_run_graphics(SMOKE_GRAPHICS_PROGRESSIVE);
     if (argc == 2 && strcmp(argv[1], "graphics-lifecycle") == 0)
-        return smoke_run_graphics(2);
+        return smoke_run_graphics(SMOKE_GRAPHICS_LIFECYCLE);
     if (argc == 2 && strcmp(argv[1], "graphics-multi-surface") == 0)
-        return smoke_run_graphics(3);
+        return smoke_run_graphics(SMOKE_GRAPHICS_MULTI_SURFACE);
+    if (argc == 2 && strcmp(argv[1], "graphics-clearcodec") == 0)
+        return smoke_run_graphics(SMOKE_GRAPHICS_CLEARCODEC);
     if (argc == 2 && strcmp(argv[1], "security-downgrade") == 0)
         return smoke_run_security_error(
             SMOKE_SECURITY_PEER_DOWNGRADE,
