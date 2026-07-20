@@ -5193,6 +5193,14 @@ int start_handshake_server_full(uint16_t* port,
                                                    7,
                                                    echo_request,
                                                    sizeof(echo_request)) ||
+                            !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
+                            !read_echo_response_fd(client,
+                                                   input,
+                                                   sizeof(input),
+                                                   1004,
+                                                   7,
+                                                   echo_request,
+                                                   sizeof(echo_request)) ||
                             !build_dynamic_channel_close_packet(&dvc_close) ||
                             !write_exact_fd(client, dvc_close.data, dvc_close.length))
                         {
@@ -5201,18 +5209,47 @@ int start_handshake_server_full(uint16_t* port,
                     }
                     else if (dynamic_channel_scenario == DVC_SCENARIO_ECHO_PING)
                     {
-                        static const uint8_t echo_ping[] = {'p', 'i', 'n', 'g'};
+                        static const uint8_t first_ping[] = {'p', 'i', 'n', 'g'};
+                        static const uint8_t second_ping[] = {'p', 'o', 'n', 'g'};
 
                         if (!read_echo_response_fd(client,
                                                    input,
                                                    sizeof(input),
                                                    1004,
                                                    7,
-                                                   echo_ping,
-                                                   sizeof(echo_ping)) ||
-                            !build_dynamic_channel_data_payload_packet(&dvc_data,
-                                                                       echo_ping,
-                                                                       sizeof(echo_ping)) ||
+                                                   first_ping,
+                                                   sizeof(first_ping)))
+                        {
+                            _exit(5);
+                        }
+                        test_sleep_ms(10u);
+                        if (!build_dynamic_channel_data_payload_packet(&dvc_data,
+                                                                       first_ping,
+                                                                       sizeof(first_ping)) ||
+                            !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
+                            !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
+                            !read_echo_response_fd(client,
+                                                   input,
+                                                   sizeof(input),
+                                                   1004,
+                                                   7,
+                                                   first_ping,
+                                                   sizeof(first_ping)) ||
+                            !read_echo_response_fd(client,
+                                                   input,
+                                                   sizeof(input),
+                                                   1004,
+                                                   7,
+                                                   second_ping,
+                                                   sizeof(second_ping)))
+                        {
+                            _exit(5);
+                        }
+                        test_sleep_ms(80u);
+                        dvc_data.length = 0;
+                        if (!build_dynamic_channel_data_payload_packet(&dvc_data,
+                                                                       second_ping,
+                                                                       sizeof(second_ping)) ||
                             !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
                             !build_dynamic_channel_close_packet(&dvc_close) ||
                             !write_exact_fd(client, dvc_close.data, dvc_close.length))

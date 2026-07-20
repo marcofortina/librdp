@@ -580,6 +580,7 @@ int test_echo_channel_auto_response(void)
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     librdp_feature_status feature_status;
+    librdp_echo_stats echo_stats;
     event_counter counter;
     uint16_t test_port = 0;
     pid_t server_pid = -1;
@@ -635,6 +636,12 @@ int test_echo_channel_auto_response(void)
     CHECK(feature_status.requested && feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    CHECK(librdp_echo_stats_init(&echo_stats) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_echo_stats(session, &echo_stats) == LIBRDP_STATUS_OK);
+    CHECK(echo_stats.requests_received == 2);
+    CHECK(echo_stats.responses_sent == 2);
+    CHECK(echo_stats.pings_sent == 0);
+    CHECK(echo_stats.ping_responses == 0);
 
     librdp_session_free(session);
     librdp_settings_free(settings);
@@ -645,20 +652,26 @@ int test_echo_channel_auto_response(void)
 
 /*
  * Coverage: validates client-originated Echo diagnostics without changing the
- * wire payload. The mock server echoes the payload byte-for-byte; the client
- * correlates it with the pending request, emits a result event, and updates
- * public Echo statistics instead of exposing the internal DVC as an app channel.
+ * wire payload. The mock server repeats the first response, then applies a
+ * different delay to a second response. The client emits one result per local
+ * ping, treats the repeated payload as a server request, and records both RTT
+ * samples and their jitter without exposing the internal DVC.
  */
 int test_echo_channel_client_ping(void)
 {
-    static const uint8_t ping[] = {'p', 'i', 'n', 'g'};
+    static const uint8_t first_ping[] = {'p', 'i', 'n', 'g'};
+    static const uint8_t second_ping[] = {'p', 'o', 'n', 'g'};
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     librdp_feature_status feature_status;
     librdp_echo_stats echo_stats;
     event_counter counter;
     uint16_t test_port = 0;
-    uint64_t sequence = 0;
+    uint64_t first_sequence = 0;
+    uint64_t second_sequence = 0;
+    uint64_t first_rtt_us = 0;
+    uint64_t second_rtt_us = 0;
+    uint64_t expected_jitter_us = 0;
     pid_t server_pid = -1;
     int child_status = 0;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -690,7 +703,11 @@ int test_echo_channel_client_ping(void)
     CHECK(librdp_echo_stats_init(&echo_stats) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_echo_stats(session, &echo_stats) == LIBRDP_STATUS_OK);
     CHECK(echo_stats.pings_sent == 0 && echo_stats.pending_sequence == 0);
-    CHECK(librdp_session_echo_send(session, ping, sizeof(ping), 1000, &sequence) ==
+    CHECK(librdp_session_echo_send(session,
+                                   first_ping,
+                                   sizeof(first_ping),
+                                   1000,
+                                   &first_sequence) ==
           LIBRDP_STATUS_UNSUPPORTED);
 
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
@@ -707,33 +724,80 @@ int test_echo_channel_client_ping(void)
     }
     CHECK(status == LIBRDP_STATUS_OK);
     CHECK(saw_active);
-    CHECK(librdp_session_echo_send(session, ping, sizeof(ping), 1000, &sequence) ==
+    CHECK(librdp_session_echo_send(session,
+                                   first_ping,
+                                   sizeof(first_ping),
+                                   1000,
+                                   &first_sequence) ==
           LIBRDP_STATUS_OK);
-    CHECK(sequence != 0);
-    CHECK(librdp_session_echo_send(session, ping, sizeof(ping), 1000, NULL) ==
+    CHECK(first_sequence != 0);
+    CHECK(librdp_session_echo_send(session,
+                                   first_ping,
+                                   sizeof(first_ping),
+                                   1000,
+                                   NULL) ==
           LIBRDP_STATUS_STATE);
     for (i = 0; i < 8u && status == LIBRDP_STATUS_OK && counter.echo_result == 0; i++)
         status = librdp_session_run_once(session, 1000);
     CHECK(status == LIBRDP_STATUS_OK);
     CHECK(counter.echo_result == 1);
     CHECK(counter.echo_ok == 1 && counter.echo_timed_out == 0);
-    CHECK(counter.echo_sequence == sequence);
+    CHECK(counter.echo_sequence == first_sequence);
     CHECK(counter.echo_rtt_us > 0);
+    first_rtt_us = counter.echo_rtt_us;
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(counter.echo_result == 1);
+    CHECK(librdp_echo_stats_init(&echo_stats) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_echo_stats(session, &echo_stats) == LIBRDP_STATUS_OK);
+    CHECK(echo_stats.requests_received == 1);
+    CHECK(echo_stats.responses_sent == 1);
+    CHECK(echo_stats.pings_sent == 1);
+    CHECK(echo_stats.ping_responses == 1);
+
+    CHECK(librdp_session_echo_send(session,
+                                   second_ping,
+                                   sizeof(second_ping),
+                                   1000,
+                                   &second_sequence) ==
+          LIBRDP_STATUS_OK);
+    CHECK(second_sequence == first_sequence + 1u);
+    for (i = 0; i < 8u && status == LIBRDP_STATUS_OK && counter.echo_result < 2; i++)
+        status = librdp_session_run_once(session, 1000);
+    CHECK(status == LIBRDP_STATUS_OK);
+    CHECK(counter.echo_result == 2);
+    CHECK(counter.echo_ok == 1 && counter.echo_timed_out == 0);
+    CHECK(counter.echo_sequence == second_sequence);
+    CHECK(counter.echo_rtt_us > 0);
+    second_rtt_us = counter.echo_rtt_us;
+    expected_jitter_us = first_rtt_us > second_rtt_us
+                             ? first_rtt_us - second_rtt_us
+                             : second_rtt_us - first_rtt_us;
+    CHECK(expected_jitter_us > 0);
     CHECK(counter.channel_open == 0);
     CHECK(counter.channel_data == 0);
     CHECK(counter.channel_close == 0);
     CHECK(librdp_echo_stats_init(&echo_stats) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_echo_stats(session, &echo_stats) == LIBRDP_STATUS_OK);
-    CHECK(echo_stats.pings_sent == 1);
-    CHECK(echo_stats.ping_responses == 1);
+    CHECK(echo_stats.pings_sent == 2);
+    CHECK(echo_stats.ping_responses == 2);
+    CHECK(echo_stats.requests_received == 1);
+    CHECK(echo_stats.responses_sent == 1);
     CHECK(echo_stats.pending_sequence == 0);
     CHECK(echo_stats.pending_payload_len == 0);
-    CHECK(echo_stats.last_sequence == sequence);
-    CHECK(echo_stats.last_rtt_us > 0);
-    CHECK(echo_stats.min_rtt_us > 0);
-    CHECK(echo_stats.max_rtt_us >= echo_stats.min_rtt_us);
-    CHECK(echo_stats.bytes_sent >= sizeof(ping));
-    CHECK(echo_stats.bytes_received >= sizeof(ping));
+    CHECK(echo_stats.last_sequence == second_sequence);
+    CHECK(echo_stats.last_rtt_us == second_rtt_us);
+    CHECK(echo_stats.min_rtt_us ==
+          (first_rtt_us < second_rtt_us ? first_rtt_us : second_rtt_us));
+    CHECK(echo_stats.max_rtt_us ==
+          (first_rtt_us > second_rtt_us ? first_rtt_us : second_rtt_us));
+    CHECK(echo_stats.jitter_us == expected_jitter_us);
+    CHECK(echo_stats.bytes_sent >= sizeof(first_ping) + sizeof(second_ping));
+    CHECK(echo_stats.bytes_received >= sizeof(first_ping) + sizeof(second_ping));
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_ECHO,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(!feature_status.negotiated && !feature_status.active);
 
     librdp_session_free(session);
     librdp_settings_free(settings);
