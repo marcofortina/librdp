@@ -470,7 +470,12 @@ typedef struct rdp_session_gdi_window_state
     uint8_t active;
     uint16_t order_size;
     uint32_t flags;
+    uint32_t window_id;
     uint64_t update_count;
+    uint64_t create_count;
+    uint64_t change_count;
+    uint64_t icon_count;
+    uint64_t delete_count;
     rdp_buffer data;
 } rdp_session_gdi_window_state;
 

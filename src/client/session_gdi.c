@@ -1028,11 +1028,21 @@ static librdp_status rdp_session_gdi_apply_window_order(librdp_session* session,
                                                         const rdp_gdi_window_order* order)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t window_id = 0u;
 
     if (!session || !order)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (order->data_len > RDP_SESSION_GDI_WINDOW_MAX_BYTES)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((order->flags & RDP_GDI_WINDOW_ORDER_TYPE_WINDOW) != 0u)
+    {
+        if (!order->data || order->data_len < 4u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        window_id = (uint32_t)order->data[0] |
+                    ((uint32_t)order->data[1] << 8u) |
+                    ((uint32_t)order->data[2] << 16u) |
+                    ((uint32_t)order->data[3] << 24u);
+    }
     status = rdp_buffer_reserve(&session->gdi_window_state.data, order->data_len);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -1040,18 +1050,50 @@ static librdp_status rdp_session_gdi_apply_window_order(librdp_session* session,
     status = rdp_buffer_append(&session->gdi_window_state.data, order->data, order->data_len);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    session->gdi_window_state.active = 1;
     session->gdi_window_state.order_size = order->order_size;
     session->gdi_window_state.flags = order->flags;
+    session->gdi_window_state.window_id = window_id;
     session->gdi_window_state.update_count++;
+    if ((order->flags & RDP_GDI_WINDOW_ORDER_TYPE_WINDOW) != 0u)
+    {
+        if ((order->flags & (RDP_GDI_WINDOW_ORDER_ICON |
+                             RDP_GDI_WINDOW_ORDER_CACHED_ICON)) != 0u)
+        {
+            session->gdi_window_state.icon_count++;
+        }
+        else if ((order->flags & RDP_GDI_WINDOW_ORDER_STATE_DELETED) != 0u)
+        {
+            session->gdi_window_state.delete_count++;
+            session->gdi_window_state.active = 0u;
+        }
+        else if ((order->flags & RDP_GDI_WINDOW_ORDER_STATE_NEW) != 0u)
+        {
+            session->gdi_window_state.create_count++;
+            session->gdi_window_state.active = 1u;
+        }
+        else
+        {
+            session->gdi_window_state.change_count++;
+            session->gdi_window_state.active = 1u;
+        }
+    }
+    else
+    {
+        session->gdi_window_state.active = 1u;
+    }
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_DEBUG,
                           "client.gdi.window.order",
-                          "order_size=%u flags=%u payload_len=%u updates=%u",
+                          "order_size=%u flags=%u window_id=%u payload_len=%u updates=%u creates=%u changes=%u icons=%u deletes=%u",
                           order->order_size,
                           order->flags,
+                          window_id,
                           order->data_len,
-                          (unsigned)session->gdi_window_state.update_count);
+                          (unsigned)session->gdi_window_state.update_count,
+                          (unsigned)session->gdi_window_state.create_count,
+                          (unsigned)session->gdi_window_state.change_count,
+                          (unsigned)session->gdi_window_state.icon_count,
+                          (unsigned)session->gdi_window_state.delete_count);
     return LIBRDP_STATUS_OK;
 }
 

@@ -2495,6 +2495,193 @@ int test_composited_runtime_lifecycle(void)
     return 0;
 }
 
+typedef struct rail_runtime_capture
+{
+    uint32_t ready;
+    uint32_t exec;
+    uint32_t handshake_ex;
+    uint32_t exec_result;
+    uint32_t activate;
+    uint32_t sysmenu;
+    uint32_t syscommand;
+    uint32_t notify_event;
+    uint32_t windowmove;
+    uint32_t localmovesize;
+    uint32_t minmaxinfo;
+} rail_runtime_capture;
+
+static void on_rail_runtime_trace(librdp_session* session,
+                                  const librdp_trace_record* record,
+                                  void* user_data)
+{
+    rail_runtime_capture* capture = (rail_runtime_capture*)user_data;
+    (void)session;
+
+    if (!record || !record->event || !capture)
+        return;
+    if (getenv("LIBRDP_TEST_TRACE_OUTPUT") && record->line)
+        fprintf(stderr, "%s\n", record->line);
+    if (strcmp(record->event, "client.rail.ready") == 0)
+        capture->ready++;
+    else if (strcmp(record->event, "client.rail.exec") == 0)
+        capture->exec++;
+    else if (strcmp(record->event, "client.rail.handshake_ex.server") == 0)
+        capture->handshake_ex++;
+    else if (strcmp(record->event, "client.rail.exec_result") == 0)
+        capture->exec_result++;
+    else if (strcmp(record->event, "client.rail.activate") == 0)
+        capture->activate++;
+    else if (strcmp(record->event, "client.rail.sysmenu") == 0)
+        capture->sysmenu++;
+    else if (strcmp(record->event, "client.rail.syscommand") == 0)
+        capture->syscommand++;
+    else if (strcmp(record->event, "client.rail.notify_event") == 0)
+        capture->notify_event++;
+    else if (strcmp(record->event, "client.rail.windowmove") == 0)
+        capture->windowmove++;
+    else if (strcmp(record->event, "client.rail.localmovesize") == 0)
+        capture->localmovesize++;
+    else if (strcmp(record->event, "client.rail.minmaxinfo") == 0)
+        capture->minmaxinfo++;
+}
+
+/*
+ * Coverage: validates the RemoteApp startup exchange and drives shell control
+ * messages together with window create, update, cached-icon, delete, and id
+ * reuse orders. It catches channel-ordering and teardown regressions that
+ * standalone RAIL and GDI parsers cannot expose.
+ */
+int test_rail_runtime_lifecycle(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_feature_status feature_status;
+    rail_runtime_capture capture;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int saw_window_lifecycle = 0;
+    int saw_active_feature = 0;
+    size_t i = 0u;
+
+    memset(&capture, 0, sizeof(capture));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings,
+                                            LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_desktop_size(settings, 640u, 480u) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_rail_app(settings, "smoke-app.exe") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings,
+                                         LIBRDP_FEATURE_RAIL,
+                                         1) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_full(&test_port,
+                                      &server_pid,
+                                      0,
+                                      0,
+                                      1,
+                                      0,
+                                      1,
+                                      DVC_SCENARIO_RAIL_RUNTIME,
+                                      GDI_SCENARIO_RAIL_RUNTIME,
+                                      LICENSE_SCENARIO_NONE,
+                                      CLIPBOARD_SCENARIO_NONE,
+                                      HANDSHAKE_SCENARIO_NORMAL));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_CLIENT |
+                              LIBRDP_TRACE_CATEGORY_PROTOCOL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_DEBUG;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = on_rail_runtime_trace;
+    trace_policy.callback_user_data = &capture;
+    trace_policy.trace_id = "rail-runtime";
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) ==
+          LIBRDP_STATUS_OK);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0u; i < 32u; i++)
+    {
+        status = librdp_session_run_once(session, 1000);
+        CHECK(status == LIBRDP_STATUS_OK ||
+              status == LIBRDP_STATUS_TIMEOUT ||
+              status == LIBRDP_STATUS_CLOSED);
+        if (session->gdi_window_state.update_count == 5u)
+        {
+            CHECK(session->gdi_window_state.window_id == 0x10203040u);
+            CHECK(session->gdi_window_state.create_count == 2u);
+            CHECK(session->gdi_window_state.change_count == 1u);
+            CHECK(session->gdi_window_state.icon_count == 1u);
+            CHECK(session->gdi_window_state.delete_count == 1u);
+            CHECK(session->gdi_window_state.active);
+            saw_window_lifecycle = 1;
+        }
+        CHECK(librdp_session_get_feature_status(session,
+                                                LIBRDP_FEATURE_RAIL,
+                                                &feature_status) == LIBRDP_STATUS_OK);
+        if (feature_status.negotiated && feature_status.active &&
+            feature_status.reason == LIBRDP_FEATURE_REASON_NONE)
+            saw_active_feature = 1;
+        if (saw_window_lifecycle &&
+            saw_active_feature &&
+            capture.handshake_ex == 1u &&
+            capture.exec_result == 1u &&
+            capture.activate == 2u &&
+            capture.sysmenu == 1u &&
+            capture.syscommand == 1u &&
+            capture.notify_event == 1u &&
+            capture.windowmove == 1u &&
+            capture.localmovesize == 2u &&
+            capture.minmaxinfo == 1u)
+        {
+            break;
+        }
+        if (status == LIBRDP_STATUS_CLOSED)
+            break;
+    }
+
+    CHECK(saw_window_lifecycle);
+    CHECK(saw_active_feature);
+    CHECK(capture.ready == 1u);
+    CHECK(capture.exec == 1u);
+    CHECK(capture.handshake_ex == 1u);
+    CHECK(capture.exec_result == 1u);
+    CHECK(capture.activate == 2u);
+    CHECK(capture.sysmenu == 1u);
+    CHECK(capture.syscommand == 1u);
+    CHECK(capture.notify_event == 1u);
+    CHECK(capture.windowmove == 1u);
+    CHECK(capture.localmovesize == 2u);
+    CHECK(capture.minmaxinfo == 1u);
+
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    CHECK(session->remote_programs_channel_id == 0u);
+    CHECK(!session->remote_programs_ready);
+    CHECK(!session->remote_programs_exec_sent);
+    CHECK(session->remote_programs_fragment.length == 0u);
+    CHECK(!session->gdi_window_state.active);
+    CHECK(session->gdi_window_state.update_count == 0u);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_RAIL,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested &&
+          feature_status.built &&
+          feature_status.backend_ready &&
+          !feature_status.negotiated &&
+          !feature_status.active &&
+          feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
 /*
  * Coverage: validates that slow-path graphics updates are rejected until the
  * Demand Active/Confirm Active activation exchange succeeds. It catches

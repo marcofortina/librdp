@@ -382,6 +382,12 @@ if(LIBRDP_BUILD_TESTS)
         ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_LEVEL=debug"
         TIMEOUT 60
     )
+    add_test(NAME smoke_rail_runtime
+        COMMAND test_core rail-runtime-smoke)
+    set_tests_properties(smoke_rail_runtime PROPERTIES
+        ENVIRONMENT "LIBRDP_TEST_TRACE_OUTPUT=1"
+        TIMEOUT 60
+    )
     if(LIBRDP_CAIRO_FOUND)
         add_test(NAME smoke_gdiplus_cairo
             COMMAND test_core gdiplus-native-smoke)

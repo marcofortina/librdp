@@ -31,6 +31,7 @@
 #include "channels/filesystem_redirection.h"
 #include "channels/multiparty.h"
 #include "channels/printer_redirection.h"
+#include "channels/remote_programs.h"
 #include "channels/telemetry.h"
 #include "channels/virtual_channel.h"
 #include "channels/video_redirection.h"
@@ -97,12 +98,14 @@
 #define DVC_SCENARIO_MULTIPARTY_RUNTIME 23
 #define DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME 24
 #define DVC_SCENARIO_COMPOSITED_RUNTIME 25
+#define DVC_SCENARIO_RAIL_RUNTIME 26
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_ALTSEC_RUNTIME 1
 #define GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION 2
 #define GDI_SCENARIO_DESKTOP_COMPOSITION 3
 #define GDI_SCENARIO_GOLDEN_RUNTIME 4
+#define GDI_SCENARIO_RAIL_RUNTIME 5
 
 #define LICENSE_SCENARIO_NONE 0
 #define LICENSE_SCENARIO_NEW 1

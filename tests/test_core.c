@@ -103,7 +103,8 @@ static int run_graphics(void)
         test_gdi_cache_lifecycle() != 0 ||
         test_gdi_orders_runtime_golden() != 0 ||
         test_gdi_altsec_runtime_orders() != 0 ||
-        test_composited_runtime_lifecycle() != 0)
+        test_composited_runtime_lifecycle() != 0 ||
+        test_rail_runtime_lifecycle() != 0)
         return 1;
     return test_graphics_update_before_activation();
 }
@@ -197,6 +198,8 @@ int test_client_core_named(const char* name)
         return test_gdi_bitmap_cache_eviction();
     if (strcmp(name, "composition-cr2-smoke") == 0)
         return test_composited_runtime_lifecycle();
+    if (strcmp(name, "rail-runtime-smoke") == 0)
+        return test_rail_runtime_lifecycle();
     if (strcmp(name, "gdiplus-native-smoke") == 0)
         return run_gdiplus_native();
     if (strcmp(name, "reactivation") == 0)

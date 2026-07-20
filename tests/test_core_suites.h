@@ -69,6 +69,7 @@ int test_gdi_bitmap_cache_eviction(void);
 int test_gdi_cache_lifecycle(void);
 int test_gdi_altsec_runtime_orders(void);
 int test_composited_runtime_lifecycle(void);
+int test_rail_runtime_lifecycle(void);
 int test_gdi_orders_runtime_golden(void);
 int test_graphics_update_before_activation(void);
 int test_activation_epoch_reset(void);

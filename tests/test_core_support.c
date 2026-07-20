@@ -1630,6 +1630,51 @@ static int build_gdi_desktop_composition_update_packet(rdp_buffer* out)
     return ok;
 }
 
+/*
+ * Build a deterministic RemoteApp window lifecycle. The same window id is
+ * created again after deletion so session state cannot rely on monotonic ids.
+ */
+static int build_gdi_rail_runtime_update_packet(rdp_buffer* out)
+{
+    static const uint8_t window_create[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_WINDOW << 2u) | RDP_GDI_TS_SECONDARY),
+        0x0bu, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x11u,
+        0x40u, 0x30u, 0x20u, 0x10u
+    };
+    static const uint8_t window_update[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_WINDOW << 2u) | RDP_GDI_TS_SECONDARY),
+        0x0bu, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x01u,
+        0x40u, 0x30u, 0x20u, 0x10u
+    };
+    static const uint8_t window_cached_icon[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_WINDOW << 2u) | RDP_GDI_TS_SECONDARY),
+        0x0eu, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x81u,
+        0x40u, 0x30u, 0x20u, 0x10u,
+        0x21u, 0x00u, 0x02u
+    };
+    static const uint8_t window_delete[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_WINDOW << 2u) | RDP_GDI_TS_SECONDARY),
+        0x0bu, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x21u,
+        0x40u, 0x30u, 0x20u, 0x10u
+    };
+    rdp_buffer orders;
+    int ok = 0;
+
+    rdp_buffer_init(&orders);
+    ok = rdp_buffer_append(&orders, window_create, sizeof(window_create)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, window_update, sizeof(window_update)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, window_cached_icon, sizeof(window_cached_icon)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, window_delete, sizeof(window_delete)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, window_create, sizeof(window_create)) == LIBRDP_STATUS_OK &&
+         build_gdi_update_packet_from_orders(out, orders.data, orders.length, 5u);
+    rdp_buffer_free(&orders);
+    return ok;
+}
+
 static int build_set_error_info_packet(rdp_buffer* out, uint32_t error_info)
 {
     rdp_buffer payload;
@@ -2156,6 +2201,175 @@ static int parse_client_dynamic_channel_payload(const uint8_t* input,
     if (rdp_stream_read_bytes(&stream, &channel_payload, channel_payload_len) != LIBRDP_STATUS_OK)
         return 0;
     return rdp_virtual_channel_parse_packet(channel_payload, channel_payload_len, packet) == LIBRDP_STATUS_OK;
+}
+
+/*
+ * Read one client RAIL order through its static virtual channel. Startup
+ * validation checks semantic fields rather than accepting any well-framed PDU.
+ */
+static int read_client_remote_programs_order_fd(int fd,
+                                                uint8_t* input,
+                                                size_t capacity,
+                                                uint16_t expected_channel_id,
+                                                uint16_t expected_order)
+{
+    size_t input_len = 0u;
+    rdp_virtual_channel_packet packet;
+    rdp_remote_programs_header header;
+
+    if (!read_tpkt_fd(fd, input, capacity, &input_len) ||
+        !parse_client_dynamic_channel_payload(input,
+                                              input_len,
+                                              expected_channel_id,
+                                              &packet) ||
+        rdp_remote_programs_parse_header(packet.payload,
+                                         packet.payload_len,
+                                         &header) != LIBRDP_STATUS_OK ||
+        header.order_type != expected_order)
+    {
+        return 0;
+    }
+    if (expected_order == RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE)
+    {
+        rdp_remote_programs_u32_order order;
+
+        return rdp_remote_programs_parse_u32_order(packet.payload,
+                                                   packet.payload_len,
+                                                   expected_order,
+                                                   &order) == LIBRDP_STATUS_OK &&
+               order.value != 0u;
+    }
+    if (expected_order == RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE_EX)
+    {
+        rdp_remote_programs_handshake_ex order;
+
+        return rdp_remote_programs_parse_handshake_ex(packet.payload,
+                                                      packet.payload_len,
+                                                      &order) == LIBRDP_STATUS_OK &&
+               order.build_number != 0u &&
+               (order.flags & RDP_REMOTE_PROGRAMS_HANDSHAKE_EX_HIDEF) != 0u;
+    }
+    if (expected_order == RDP_REMOTE_PROGRAMS_ORDER_CLIENTSTATUS)
+    {
+        rdp_remote_programs_u32_order order;
+
+        return rdp_remote_programs_parse_u32_order(packet.payload,
+                                                   packet.payload_len,
+                                                   expected_order,
+                                                   &order) == LIBRDP_STATUS_OK &&
+               (order.value & RDP_REMOTE_PROGRAMS_CLIENTSTATUS_ALLOW_LOCAL_MOVE_SIZE) != 0u;
+    }
+    if (expected_order == RDP_REMOTE_PROGRAMS_ORDER_EXEC)
+    {
+        rdp_remote_programs_exec order;
+
+        return rdp_remote_programs_parse_exec(packet.payload,
+                                              packet.payload_len,
+                                              &order) == LIBRDP_STATUS_OK &&
+               order.exe_or_file_len >= 2u &&
+               (order.exe_or_file_len & 1u) == 0u;
+    }
+    return 0;
+}
+
+static int write_remote_programs_order_fd(int fd, const rdp_buffer* order)
+{
+    rdp_buffer packet;
+    int ok = 0;
+
+    if (!order)
+        return 0;
+    rdp_buffer_init(&packet);
+    ok = build_static_channel_packet(&packet, order, 1006u) &&
+         write_exact_fd(fd, packet.data, packet.length);
+    rdp_buffer_free(&packet);
+    return ok;
+}
+
+/*
+ * Send server-side RAIL control traffic after activation. The sequence covers
+ * launch result, focus, shell controls, notification icons, movement, resize
+ * bounds, and application teardown on the negotiated channel.
+ */
+static int run_remote_programs_runtime_server_scenario(int fd)
+{
+    static const uint8_t executable[] = {
+        's', 0u, 'm', 0u, 'o', 0u, 'k', 0u, 'e', 0u,
+        '-', 0u, 'a', 0u, 'p', 0u, 'p', 0u, '.', 0u,
+        'e', 0u, 'x', 0u, 'e', 0u
+    };
+    rdp_remote_programs_localmovesize local_move;
+    rdp_remote_programs_minmaxinfo minmax;
+    rdp_buffer order;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int ok = 1;
+
+    memset(&local_move, 0, sizeof(local_move));
+    memset(&minmax, 0, sizeof(minmax));
+    rdp_buffer_init(&order);
+
+#define WRITE_RAIL_ORDER(expression)                                                                                   \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        order.length = 0u;                                                                                             \
+        status = (expression);                                                                                         \
+        if (status != LIBRDP_STATUS_OK || !write_remote_programs_order_fd(fd, &order))                                 \
+            ok = 0;                                                                                                    \
+    } while (0)
+
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_handshake_ex(
+        &order,
+        22621u,
+        RDP_REMOTE_PROGRAMS_HANDSHAKE_EX_HIDEF |
+            RDP_REMOTE_PROGRAMS_HANDSHAKE_EX_SNAP_ARRANGE));
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_exec_result(
+        &order,
+        RDP_REMOTE_PROGRAMS_EXEC_FLAG_EXPAND_ARGUMENTS,
+        RDP_REMOTE_PROGRAMS_EXEC_RESULT_OK,
+        0u,
+        executable,
+        (uint16_t)sizeof(executable)));
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_activate(&order, 0x10203040u, 1u));
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_sysmenu(&order, 0x10203040u, 20, 30));
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_syscommand(&order, 0x10203040u, 0xf020u));
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_notify_event(&order,
+                                                            0x10203040u,
+                                                            0x00000021u,
+                                                            0x00000201u));
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_windowmove(&order,
+                                                          0x10203040u,
+                                                          32,
+                                                          48,
+                                                          672,
+                                                          528));
+
+    local_move.window_id = 0x10203040u;
+    local_move.is_move_size_start = 1u;
+    local_move.move_size_type = 9u;
+    local_move.pos_x = 32;
+    local_move.pos_y = 48;
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_localmovesize(&order, &local_move));
+    local_move.is_move_size_start = 0u;
+    local_move.pos_x = 64;
+    local_move.pos_y = 80;
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_localmovesize(&order, &local_move));
+
+    minmax.window_id = 0x10203040u;
+    minmax.max_width = 1920;
+    minmax.max_height = 1080;
+    minmax.max_pos_x = 0;
+    minmax.max_pos_y = 0;
+    minmax.min_track_width = 160;
+    minmax.min_track_height = 120;
+    minmax.max_track_width = 3200;
+    minmax.max_track_height = 2000;
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_minmaxinfo(&order, &minmax));
+    WRITE_RAIL_ORDER(rdp_remote_programs_write_activate(&order, 0x10203040u, 0u));
+
+#undef WRITE_RAIL_ORDER
+
+    rdp_buffer_free(&order);
+    return ok;
 }
 
 static int read_soft_sync_response_fd(int fd,
@@ -3387,7 +3601,8 @@ int start_handshake_server_full(uint16_t* port,
         gdi_scenario != GDI_SCENARIO_ALTSEC_RUNTIME &&
         gdi_scenario != GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION &&
         gdi_scenario != GDI_SCENARIO_DESKTOP_COMPOSITION &&
-        gdi_scenario != GDI_SCENARIO_GOLDEN_RUNTIME)
+        gdi_scenario != GDI_SCENARIO_GOLDEN_RUNTIME &&
+        gdi_scenario != GDI_SCENARIO_RAIL_RUNTIME)
         return 0;
     if (license_scenario != LICENSE_SCENARIO_NONE &&
         license_scenario != LICENSE_SCENARIO_NEW &&
@@ -3645,6 +3860,31 @@ int start_handshake_server_full(uint16_t* port,
                     }
                     goto done_connection;
                 }
+                if (dynamic_channel_scenario == DVC_SCENARIO_RAIL_RUNTIME &&
+                    (!extra_static_channel ||
+                     !read_client_remote_programs_order_fd(client,
+                                                           input,
+                                                           sizeof(input),
+                                                           1006u,
+                                                           RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE) ||
+                     !read_client_remote_programs_order_fd(client,
+                                                           input,
+                                                           sizeof(input),
+                                                           1006u,
+                                                           RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE_EX) ||
+                     !read_client_remote_programs_order_fd(client,
+                                                           input,
+                                                           sizeof(input),
+                                                           1006u,
+                                                           RDP_REMOTE_PROGRAMS_ORDER_CLIENTSTATUS) ||
+                     !read_client_remote_programs_order_fd(client,
+                                                           input,
+                                                           sizeof(input),
+                                                           1006u,
+                                                           RDP_REMOTE_PROGRAMS_ORDER_EXEC)))
+                {
+                    _exit(4);
+                }
                 if (!build_demand_active_packet(&demand_active) ||
                     !write_exact_fd(client, demand_active.data, demand_active.length) ||
                     !read_tpkt_fd(client, input, sizeof(input), &input_len) ||
@@ -3664,7 +3904,9 @@ int start_handshake_server_full(uint16_t* port,
                               build_gdi_altsec_runtime_update_packet(&gdi_orders_update) :
                               ((gdi_scenario == GDI_SCENARIO_DESKTOP_COMPOSITION) ?
                                    build_gdi_desktop_composition_update_packet(&gdi_orders_update) :
-                                   build_gdi_orders_update_packet(&gdi_orders_update))) ||
+                                   ((gdi_scenario == GDI_SCENARIO_RAIL_RUNTIME) ?
+                                        build_gdi_rail_runtime_update_packet(&gdi_orders_update) :
+                                        build_gdi_orders_update_packet(&gdi_orders_update)))) ||
                         !write_exact_fd(client, gdi_orders_update.data, gdi_orders_update.length) ||
                         (gdi_scenario == GDI_SCENARIO_NORMAL && extra_static_channel &&
                          dynamic_channel_scenario != DVC_SCENARIO_RDPDR_PRINTER_JOB &&
@@ -3721,6 +3963,12 @@ int start_handshake_server_full(uint16_t* port,
                         {
                             _exit(5);
                         }
+                        goto done_connection;
+                    }
+                    if (dynamic_channel_scenario == DVC_SCENARIO_RAIL_RUNTIME)
+                    {
+                        if (!run_remote_programs_runtime_server_scenario(client))
+                            _exit(5);
                         goto done_connection;
                     }
                     if (dynamic_channel_scenario == DVC_SCENARIO_DATA_BEFORE_CREATE)
