@@ -268,6 +268,12 @@ if(LIBRDP_BUILD_TESTS)
     librdp_configure_test_executable(
         test_server_client_input_smoke
     )
+    add_executable(test_server_client_port_smoke
+        tests/test_server_client_port_smoke.c
+    )
+    librdp_configure_test_executable(
+        test_server_client_port_smoke
+    )
     if(TARGET librdp-viewer AND
        LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         find_program(LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE NAMES Xvfb)
@@ -567,6 +573,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_input_smoke core)
     add_test(NAME server_client_smoke_input_core_fallback
              COMMAND test_server_client_input_smoke core-fallback)
+    add_test(NAME server_client_smoke_serial_port
+             COMMAND test_server_client_port_smoke serial)
     add_test(NAME server_client_smoke_clipboard_text
              COMMAND test_server_client_smoke clipboard-text)
     add_test(NAME server_client_smoke_clipboard_html
@@ -786,6 +794,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_input_pen
         server_client_smoke_input_core
         server_client_smoke_input_core_fallback
+        server_client_smoke_serial_port
         server_client_smoke_clipboard_text
         server_client_smoke_clipboard_html
         server_client_smoke_clipboard_png

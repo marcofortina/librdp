@@ -428,6 +428,11 @@ static uint32_t rdp_session_port_purge(rdp_session_redirected_file* port,
                                        const uint8_t* data,
                                        uint32_t length)
 {
+    const uint32_t tx_abort = 0x00000001u;
+    const uint32_t rx_abort = 0x00000002u;
+    const uint32_t tx_clear = 0x00000004u;
+    const uint32_t rx_clear = 0x00000008u;
+    const uint32_t supported = tx_abort | rx_abort | tx_clear | rx_clear;
     uint32_t flags = 0;
     int queue = 0;
 
@@ -436,11 +441,13 @@ static uint32_t rdp_session_port_purge(rdp_session_redirected_file* port,
     if (!data || length < 4u)
         return RDP_SESSION_DEVICE_INVALID_PARAMETER;
     flags = rdp_session_read_u32_le_unaligned(data);
+    if ((flags & ~supported) != 0u)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
     if (!isatty(port->fd))
         return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
-    if ((flags & 0x00000008u) != 0)
+    if ((flags & (rx_abort | rx_clear)) != 0u)
         queue = TCIFLUSH;
-    if ((flags & 0x00000004u) != 0)
+    if ((flags & (tx_abort | tx_clear)) != 0u)
         queue = queue == TCIFLUSH ? TCIOFLUSH : TCOFLUSH;
     if (queue != 0 && tcflush(port->fd, queue) != 0)
         return rdp_session_errno_to_device_status(errno);
@@ -787,10 +794,25 @@ static librdp_status rdp_session_handle_port_close(librdp_session* session,
         status = rdp_session_send_device_redirection_packet(session,
                                                             &response,
                                                             "client.rdpdr.port.close.response");
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.port.close",
+                        "device_id=%u file_id=%u completion_id=%u status=%u",
+                        request->device_id,
+                        request->file_id,
+                        request->completion_id,
+                        io_status);
+    }
     rdp_buffer_free(&response);
     return status;
 }
 
+/*
+ * Services a redirected port read without blocking the session dispatch loop.
+ * The configured immediate-timeout mode converts EAGAIN into a successful
+ * zero-byte completion; all other failures are mapped to RDPDR status values.
+ */
 static librdp_status rdp_session_handle_port_read(librdp_session* session,
                                                   const uint8_t* data,
                                                   size_t data_len)
@@ -854,6 +876,22 @@ static librdp_status rdp_session_handle_port_read(librdp_session* session,
         status = rdp_session_send_device_redirection_packet(session,
                                                             &response,
                                                             "client.rdpdr.port.read.response");
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.port.read",
+                        "device_id=%u file_id=%u completion_id=%u requested=%u returned=%u status=%u immediate_timeout=%u",
+                        request.io.device_id,
+                        request.io.file_id,
+                        request.io.completion_id,
+                        request.length,
+                        payload_len,
+                        io_status,
+                        io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
+                                request.length > 0u && payload_len == 0u
+                            ? 1u
+                            : 0u);
+    }
     rdp_buffer_free(&response);
     free(payload);
     return status;
@@ -918,6 +956,18 @@ static librdp_status rdp_session_handle_port_write(librdp_session* session,
         status = rdp_session_send_device_redirection_packet(session,
                                                             &response,
                                                             "client.rdpdr.port.write.response");
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.port.write",
+                        "device_id=%u file_id=%u completion_id=%u requested=%u written=%u status=%u",
+                        request.io.device_id,
+                        request.io.file_id,
+                        request.io.completion_id,
+                        request.length,
+                        written,
+                        io_status);
+    }
     rdp_buffer_free(&response);
     return status;
 }
