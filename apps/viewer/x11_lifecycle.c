@@ -401,7 +401,11 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
         {
             const int dirty_before = app->dirty;
 
-            app->dirty = 1;
+            x11_render_mark_dirty(app,
+                                  event->data.surface.x,
+                                  event->data.surface.y,
+                                  event->data.surface.width,
+                                  event->data.surface.height);
             x11_trace_event_level(X11_TRACE_CLIENT,
                                   X11_TRACE_LEVEL_TRACE,
                                   "client.active.framebuffer.blit",
@@ -959,7 +963,7 @@ int x11_viewer_run(int argc, char** argv)
     }
 
     app.running = 1;
-    app.dirty = 1;
+    x11_render_mark_all_dirty(&app);
     while (app.running)
     {
         unsigned int events_processed = 0;
@@ -987,12 +991,27 @@ int x11_viewer_run(int argc, char** argv)
                                 event.xexpose.count,
                                 app.dirty ? 1u : 0u);
                 if (event.xexpose.width > 0 && event.xexpose.height > 0)
+                {
+                    uint32_t expose_x =
+                        event.xexpose.x < 0
+                            ? 0u
+                            : (uint32_t)event.xexpose.x;
+                    uint32_t expose_y =
+                        event.xexpose.y < 0
+                            ? 0u
+                            : (uint32_t)event.xexpose.y;
+
                     (void)librdp_session_refresh(app.session,
-                                                 event.xexpose.x < 0 ? 0u : (uint32_t)event.xexpose.x,
-                                                 event.xexpose.y < 0 ? 0u : (uint32_t)event.xexpose.y,
+                                                 expose_x,
+                                                 expose_y,
                                                  (uint32_t)event.xexpose.width,
                                                  (uint32_t)event.xexpose.height);
-                app.dirty = 1;
+                    x11_render_mark_dirty(&app,
+                                          expose_x,
+                                          expose_y,
+                                          (uint32_t)event.xexpose.width,
+                                          (uint32_t)event.xexpose.height);
+                }
             }
             else if (event.type == ClientMessage && (Atom)event.xclient.data.l[0] == app.wm_delete)
                 app.running = 0;
@@ -1103,7 +1122,7 @@ int x11_viewer_run(int argc, char** argv)
                                 "reason=configure width=%u height=%u",
                                 configured_width,
                                 configured_height);
-                app.dirty = 1;
+                x11_render_mark_all_dirty(&app);
                 x11_input_apply_cursor(&app);
             }
             if (x11_window_is_invalid())

@@ -63,6 +63,11 @@ typedef struct x11_app
     client_runtime* runtime;
     int running;
     int dirty;
+    int dirty_region_valid;
+    uint32_t dirty_left;
+    uint32_t dirty_top;
+    uint32_t dirty_right;
+    uint32_t dirty_bottom;
     uint64_t event_serial;
     uint32_t window_width;
     uint32_t window_height;

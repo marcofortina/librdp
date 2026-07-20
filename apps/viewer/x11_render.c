@@ -36,6 +36,7 @@ struct x11_render_state
 {
     int xshm_available;
     int xshm_disabled;
+    x11_render_method last_method;
 #ifdef LIBRDP_HAVE_XSHM
     XImage* xshm_image;
     XShmSegmentInfo xshm_info;
@@ -44,6 +45,7 @@ struct x11_render_state
     uint32_t xshm_height;
     unsigned int xshm_depth;
     int xshm_attached;
+    int xshm_needs_full_copy;
 #endif
 };
 
@@ -152,6 +154,108 @@ int x11_render_copy_bgra_rows(uint8_t* dst,
 }
 
 /*
+ * Copy one dirty rectangle between full-frame buffers with independent
+ * strides. Coordinates are applied to both buffers and checked before pointer
+ * arithmetic.
+ */
+int x11_render_copy_bgra_rect(uint8_t* dst,
+                              size_t dst_stride,
+                              const uint8_t* src,
+                              size_t src_stride,
+                              uint32_t x,
+                              uint32_t y,
+                              uint32_t width,
+                              uint32_t height)
+{
+    size_t x_offset = 0u;
+    size_t dst_y_offset = 0u;
+    size_t src_y_offset = 0u;
+
+    if (!dst || !src || width == 0u || height == 0u ||
+        x > (uint32_t)(SIZE_MAX / 4u))
+        return 0;
+    x_offset = (size_t)x * 4u;
+    if (x_offset > dst_stride || x_offset > src_stride ||
+        (size_t)width > (SIZE_MAX - x_offset) / 4u ||
+        (size_t)width * 4u > dst_stride - x_offset ||
+        (size_t)width * 4u > src_stride - x_offset)
+        return 0;
+    if ((size_t)y > SIZE_MAX / dst_stride ||
+        (size_t)y > SIZE_MAX / src_stride)
+        return 0;
+    dst_y_offset = (size_t)y * dst_stride;
+    src_y_offset = (size_t)y * src_stride;
+    if (dst_y_offset > SIZE_MAX - x_offset ||
+        src_y_offset > SIZE_MAX - x_offset)
+        return 0;
+    return x11_render_copy_bgra_rows(
+        dst + dst_y_offset + x_offset,
+        dst_stride,
+        src + src_y_offset + x_offset,
+        src_stride,
+        width,
+        height);
+}
+
+/*
+ * Accumulate dirty bounds without trusting event arithmetic. Clipping against
+ * the current surface happens immediately before presentation.
+ */
+void x11_render_mark_dirty(x11_app* app,
+                           uint32_t x,
+                           uint32_t y,
+                           uint32_t width,
+                           uint32_t height)
+{
+    uint32_t right = 0u;
+    uint32_t bottom = 0u;
+
+    if (!app || width == 0u || height == 0u)
+        return;
+    right = width > UINT32_MAX - x ? UINT32_MAX : x + width;
+    bottom = height > UINT32_MAX - y ? UINT32_MAX : y + height;
+    if (app->dirty && !app->dirty_region_valid)
+        return;
+    if (!app->dirty)
+    {
+        app->dirty_left = x;
+        app->dirty_top = y;
+        app->dirty_right = right;
+        app->dirty_bottom = bottom;
+        app->dirty_region_valid = 1;
+    }
+    else
+    {
+        if (x < app->dirty_left)
+            app->dirty_left = x;
+        if (y < app->dirty_top)
+            app->dirty_top = y;
+        if (right > app->dirty_right)
+            app->dirty_right = right;
+        if (bottom > app->dirty_bottom)
+            app->dirty_bottom = bottom;
+    }
+    app->dirty = 1;
+}
+
+/* Mark the complete current surface for presentation on the next draw. */
+void x11_render_mark_all_dirty(x11_app* app)
+{
+    if (!app)
+        return;
+    app->dirty = 1;
+    app->dirty_region_valid = 0;
+}
+
+/* Report the presentation path used by the most recent successful draw. */
+x11_render_method x11_render_last_method(const x11_app* app)
+{
+    return app && app->render
+               ? app->render->last_method
+               : X11_RENDER_METHOD_NONE;
+}
+
+/*
  * Create optional render state for the viewer. Failing to allocate or detect
  * MIT-SHM is not fatal because the presenter can always use XPutImage.
  */
@@ -216,6 +320,7 @@ static void x11_render_destroy_xshm(x11_app* app)
     render->xshm_width = 0;
     render->xshm_height = 0;
     render->xshm_depth = 0;
+    render->xshm_needs_full_copy = 0;
 }
 
 /*
@@ -327,6 +432,7 @@ static int x11_render_prepare_xshm(x11_app* app, uint32_t width, uint32_t height
     render->xshm_width = width;
     render->xshm_height = height;
     render->xshm_depth = depth;
+    render->xshm_needs_full_copy = 1;
     x11_trace_event(X11_TRACE_CLIENT,
                     "x11.render.xshm.ready",
                     "width=%u height=%u stride=%u bytes=%u depth=%u",
@@ -348,6 +454,10 @@ static int x11_render_draw_xshm(x11_app* app,
                                 uint32_t width,
                                 uint32_t height,
                                 size_t stride,
+                                uint32_t dirty_x,
+                                uint32_t dirty_y,
+                                uint32_t dirty_width,
+                                uint32_t dirty_height,
                                 uint64_t surface_hash)
 {
     x11_render_state* render = app ? app->render : NULL;
@@ -355,18 +465,30 @@ static int x11_render_draw_xshm(x11_app* app,
 
     if (!render || !x11_render_prepare_xshm(app, width, height))
         return 0;
-    if (!x11_render_copy_bgra_rows((uint8_t*)render->xshm_image->data,
-                                   (size_t)render->xshm_image->bytes_per_line,
-                                   pixels,
-                                   stride,
-                                   width,
-                                   height))
+    if (render->xshm_needs_full_copy)
+    {
+        dirty_x = 0u;
+        dirty_y = 0u;
+        dirty_width = width;
+        dirty_height = height;
+    }
+    if (!x11_render_copy_bgra_rect(
+            (uint8_t*)render->xshm_image->data,
+            (size_t)render->xshm_image->bytes_per_line,
+            pixels,
+            stride,
+            dirty_x,
+            dirty_y,
+            dirty_width,
+            dirty_height))
     {
         x11_trace_event(X11_TRACE_CLIENT,
                         "x11.render.xshm.copy.failed",
-                        "width=%u height=%u src_stride=%u dst_stride=%u",
-                        width,
-                        height,
+                        "x=%u y=%u width=%u height=%u src_stride=%u dst_stride=%u",
+                        dirty_x,
+                        dirty_y,
+                        dirty_width,
+                        dirty_height,
                         (unsigned)stride,
                         (unsigned)render->xshm_image->bytes_per_line);
         return 0;
@@ -375,18 +497,27 @@ static int x11_render_draw_xshm(x11_app* app,
                           app->window,
                           app->gc,
                           render->xshm_image,
-                          0,
-                          0,
-                          0,
-                          0,
-                          width,
-                          height,
+                          (int)dirty_x,
+                          (int)dirty_y,
+                          (int)dirty_x,
+                          (int)dirty_y,
+                          dirty_width,
+                          dirty_height,
                           False);
     XFlush(app->display);
+    if (result)
+    {
+        render->xshm_needs_full_copy = 0;
+        render->last_method = X11_RENDER_METHOD_XSHM;
+    }
     x11_trace_event_level(X11_TRACE_CLIENT,
                           X11_TRACE_LEVEL_TRACE,
                           "x11.surface.draw.done",
-                          "method=xshm surface_width=%u surface_height=%u surface_stride=%u image_stride=%u window_width=%u window_height=%u put_result=%d hash=%016llx",
+                          "method=xshm x=%u y=%u width=%u height=%u surface_width=%u surface_height=%u surface_stride=%u image_stride=%u window_width=%u window_height=%u put_result=%d hash=%016llx",
+                          dirty_x,
+                          dirty_y,
+                          dirty_width,
+                          dirty_height,
                           width,
                           height,
                           (unsigned)stride,
@@ -415,35 +546,96 @@ void x11_render_shutdown(x11_app* app)
 }
 
 /*
- * Present the current session surface into the X11 window. Clipping and stride
- * handling stay here so expose and resize repaint paths cannot read outside
- * the framebuffer snapshot delivered by the core.
+ * Resolve accumulated viewer damage against the current surface. A missing
+ * region means that expose, resize, or renderer recreation requires the full
+ * frame.
  */
-void x11_render_draw_surface(x11_app* app)
+static int x11_render_dirty_rect(const x11_app* app,
+                                 uint32_t surface_width,
+                                 uint32_t surface_height,
+                                 uint32_t* x,
+                                 uint32_t* y,
+                                 uint32_t* width,
+                                 uint32_t* height)
 {
-    const librdp_surface* surface = NULL;
+    uint32_t right = surface_width;
+    uint32_t bottom = surface_height;
+
+    if (!app || !x || !y || !width || !height ||
+        surface_width == 0u || surface_height == 0u)
+        return 0;
+    *x = 0u;
+    *y = 0u;
+    if (app->dirty_region_valid)
+    {
+        *x = app->dirty_left;
+        *y = app->dirty_top;
+        right = app->dirty_right;
+        bottom = app->dirty_bottom;
+        if (*x >= surface_width || *y >= surface_height)
+            return 0;
+        if (right > surface_width)
+            right = surface_width;
+        if (bottom > surface_height)
+            bottom = surface_height;
+        if (right <= *x || bottom <= *y)
+            return 0;
+    }
+    *width = right - *x;
+    *height = bottom - *y;
+    return 1;
+}
+
+/*
+ * Present a read-only BGRA framebuffer through the selected X11 transport.
+ * Dirty clipping and stride validation are shared by XShm and XPutImage.
+ */
+int x11_render_draw_bgra(x11_app* app,
+                         const uint8_t* pixels,
+                         uint32_t width,
+                         uint32_t height,
+                         size_t stride)
+{
     XImage* image = NULL;
-    uint32_t width = 0;
-    uint32_t height = 0;
-    size_t stride = 0;
+    uint32_t dirty_x = 0u;
+    uint32_t dirty_y = 0u;
+    uint32_t dirty_width = 0u;
+    uint32_t dirty_height = 0u;
     uint64_t surface_hash = 0;
     int put_result = 0;
 
-    if (!app || !app->display || !app->session || x11_window_is_invalid())
-        return;
-
-    surface = librdp_session_get_surface(app->session);
-    if (!surface || !librdp_surface_pixels(surface))
-        return;
-
-    width = librdp_surface_width(surface);
-    height = librdp_surface_height(surface);
-    stride = librdp_surface_stride(surface);
-    surface_hash = x11_trace_hash_bgra(librdp_surface_pixels(surface), width, height, stride);
+    if (!app || !app->display || !pixels ||
+        width == 0u || height == 0u ||
+        width > (uint32_t)INT_MAX ||
+        height > (uint32_t)INT_MAX ||
+        stride > (size_t)INT_MAX ||
+        stride < (size_t)width * 4u ||
+        x11_window_is_invalid())
+        return 0;
+    if (app->render)
+        app->render->last_method = X11_RENDER_METHOD_NONE;
+    if (!x11_render_dirty_rect(app,
+                               width,
+                               height,
+                               &dirty_x,
+                               &dirty_y,
+                               &dirty_width,
+                               &dirty_height))
+    {
+        app->dirty = 0;
+        app->dirty_region_valid = 0;
+        return 1;
+    }
+    surface_hash =
+        x11_trace_hash_bgra(pixels, width, height, stride);
     x11_trace_event_level(X11_TRACE_CLIENT,
                           X11_TRACE_LEVEL_TRACE,
                           "x11.surface.draw.start",
-                          "surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u dirty=%u hash=%016llx",
+                          "x=%u y=%u width=%u height=%u surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u dirty=%u hash=%016llx",
+                          dirty_x,
+                          dirty_y,
+                          dirty_width,
+                          dirty_height,
                           width,
                           height,
                           (unsigned)stride,
@@ -462,12 +654,26 @@ void x11_render_draw_surface(x11_app* app)
                         height,
                         app->window_width,
                         app->window_height);
+        dirty_x = 0u;
+        dirty_y = 0u;
+        dirty_width = width;
+        dirty_height = height;
     }
 #ifdef LIBRDP_HAVE_XSHM
-    if (x11_render_draw_xshm(app, librdp_surface_pixels(surface), width, height, stride, surface_hash))
+    if (x11_render_draw_xshm(app,
+                             pixels,
+                             width,
+                             height,
+                             stride,
+                             dirty_x,
+                             dirty_y,
+                             dirty_width,
+                             dirty_height,
+                             surface_hash))
     {
         app->dirty = 0;
-        return;
+        app->dirty_region_valid = 0;
+        return 1;
     }
 #endif
     image = XCreateImage(app->display,
@@ -475,7 +681,7 @@ void x11_render_draw_surface(x11_app* app)
                          (unsigned)DefaultDepth(app->display, app->screen),
                          ZPixmap,
                          0,
-                         (char*)librdp_surface_pixels(surface),
+                         (char*)pixels,
                          width,
                          height,
                          32,
@@ -488,17 +694,33 @@ void x11_render_draw_surface(x11_app* app)
                         width,
                         height,
                         (unsigned)stride);
-        return;
+        return 0;
     }
 
-    put_result = XPutImage(app->display, app->window, app->gc, image, 0, 0, 0, 0, width, height);
+    put_result = XPutImage(app->display,
+                           app->window,
+                           app->gc,
+                           image,
+                           (int)dirty_x,
+                           (int)dirty_y,
+                           (int)dirty_x,
+                           (int)dirty_y,
+                           dirty_width,
+                           dirty_height);
     image->data = NULL;
     XDestroyImage(image);
     XFlush(app->display);
+    if (app->render)
+        app->render->last_method =
+            X11_RENDER_METHOD_XPUTIMAGE;
     x11_trace_event_level(X11_TRACE_CLIENT,
                           X11_TRACE_LEVEL_TRACE,
                           "x11.surface.draw.done",
-                          "method=xputimage surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u put_result=%d hash=%016llx",
+                          "method=xputimage x=%u y=%u width=%u height=%u surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u put_result=%d hash=%016llx",
+                          dirty_x,
+                          dirty_y,
+                          dirty_width,
+                          dirty_height,
                           width,
                           height,
                           (unsigned)stride,
@@ -507,4 +729,24 @@ void x11_render_draw_surface(x11_app* app)
                           put_result,
                           (unsigned long long)surface_hash);
     app->dirty = 0;
+    app->dirty_region_valid = 0;
+    return 1;
+}
+
+/* Present the current public session surface without retaining its pixels. */
+void x11_render_draw_surface(x11_app* app)
+{
+    const librdp_surface* surface = NULL;
+
+    if (!app || !app->session)
+        return;
+    surface = librdp_session_get_surface(app->session);
+    if (!surface)
+        return;
+    (void)x11_render_draw_bgra(
+        app,
+        librdp_surface_pixels(surface),
+        librdp_surface_width(surface),
+        librdp_surface_height(surface),
+        librdp_surface_stride(surface));
 }

@@ -181,6 +181,12 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
                 target_link_libraries(test_x11_viewer_render PRIVATE ${X11_Xext_LIB})
             endif()
         endif()
+        find_program(LIBRDP_VIEWER_XVFB_EXECUTABLE NAMES Xvfb)
+        if(LIBRDP_VIEWER_XVFB_EXECUTABLE)
+            target_compile_definitions(test_x11_viewer_render PRIVATE
+                LIBRDP_TEST_XVFB_PATH="${LIBRDP_VIEWER_XVFB_EXECUTABLE}"
+            )
+        endif()
         librdp_apply_warning_options(test_x11_viewer_render)
         librdp_apply_sanitizer_compile_options(test_x11_viewer_render)
         librdp_apply_sanitizer_link_options(test_x11_viewer_render)
