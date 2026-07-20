@@ -121,6 +121,12 @@ static librdp_status rdp_pointer_parse_color_attributes(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Parse one complete fast-path pointer payload without committing partial
+ * fields to the caller. Message-specific framing selects legacy color, new,
+ * or large mask lengths; malformed dimensions, hotspots, and truncated mask
+ * planes fail before the previous caller state can be replaced.
+ */
 librdp_status rdp_pointer_parse_fastpath(uint8_t update_code,
                                          const void* data,
                                          size_t length,
@@ -168,6 +174,7 @@ librdp_status rdp_pointer_parse_fastpath(uint8_t update_code,
             librdp_status status = rdp_pointer_parse_color_attributes(&stream, 24, 0, &parsed);
             if (status != LIBRDP_STATUS_OK)
                 return status;
+            parsed.shape_format = RDP_POINTER_SHAPE_FORMAT_COLOR;
             *update = parsed;
             return LIBRDP_STATUS_OK;
         }
@@ -180,6 +187,7 @@ librdp_status rdp_pointer_parse_fastpath(uint8_t update_code,
             status = rdp_pointer_parse_color_attributes(&stream, bpp, 0, &parsed);
             if (status != LIBRDP_STATUS_OK)
                 return status;
+            parsed.shape_format = RDP_POINTER_SHAPE_FORMAT_NEW;
             *update = parsed;
             return LIBRDP_STATUS_OK;
         }
@@ -192,6 +200,7 @@ librdp_status rdp_pointer_parse_fastpath(uint8_t update_code,
             status = rdp_pointer_parse_color_attributes(&stream, bpp, 1, &parsed);
             if (status != LIBRDP_STATUS_OK)
                 return status;
+            parsed.shape_format = RDP_POINTER_SHAPE_FORMAT_LARGE;
             *update = parsed;
             return LIBRDP_STATUS_OK;
         }
@@ -250,6 +259,7 @@ librdp_status rdp_pointer_parse_slowpath(const void* data, size_t length, rdp_po
             librdp_status status = rdp_pointer_parse_color_attributes(&stream, 24, 0, &parsed);
             if (status != LIBRDP_STATUS_OK)
                 return status;
+            parsed.shape_format = RDP_POINTER_SHAPE_FORMAT_COLOR;
             *update = parsed;
             return LIBRDP_STATUS_OK;
         }
@@ -269,6 +279,7 @@ librdp_status rdp_pointer_parse_slowpath(const void* data, size_t length, rdp_po
             status = rdp_pointer_parse_color_attributes(&stream, bpp, 0, &parsed);
             if (status != LIBRDP_STATUS_OK)
                 return status;
+            parsed.shape_format = RDP_POINTER_SHAPE_FORMAT_NEW;
             *update = parsed;
             return LIBRDP_STATUS_OK;
         }
@@ -281,6 +292,7 @@ librdp_status rdp_pointer_parse_slowpath(const void* data, size_t length, rdp_po
             status = rdp_pointer_parse_color_attributes(&stream, bpp, 1, &parsed);
             if (status != LIBRDP_STATUS_OK)
                 return status;
+            parsed.shape_format = RDP_POINTER_SHAPE_FORMAT_LARGE;
             *update = parsed;
             return LIBRDP_STATUS_OK;
         }
@@ -353,13 +365,38 @@ librdp_status rdp_pointer_write_slowpath(
                 update->xor_mask_len > UINT32_MAX ||
                 update->and_mask_len > UINT32_MAX)
                 return LIBRDP_STATUS_INVALID_ARGUMENT;
-            large_lengths = update->xor_mask_len > UINT16_MAX ||
-                            update->and_mask_len > UINT16_MAX;
-            message_type = large_lengths
-                               ? RDP_POINTER_MESSAGE_TYPE_LARGE
-                               : RDP_POINTER_MESSAGE_TYPE_POINTER;
+            large_lengths =
+                update->shape_format == RDP_POINTER_SHAPE_FORMAT_LARGE ||
+                (update->shape_format == RDP_POINTER_SHAPE_FORMAT_AUTO &&
+                 (update->xor_mask_len > UINT16_MAX ||
+                  update->and_mask_len > UINT16_MAX));
+            if (update->shape_format == RDP_POINTER_SHAPE_FORMAT_COLOR)
+            {
+                if (update->xor_bpp != 24u ||
+                    update->xor_mask_len > UINT16_MAX ||
+                    update->and_mask_len > UINT16_MAX)
+                    return LIBRDP_STATUS_INVALID_ARGUMENT;
+                message_type = RDP_POINTER_MESSAGE_TYPE_COLOR;
+            }
+            else if (update->shape_format == RDP_POINTER_SHAPE_FORMAT_NEW ||
+                     update->shape_format == RDP_POINTER_SHAPE_FORMAT_AUTO)
+            {
+                if (!large_lengths &&
+                    (update->xor_mask_len > UINT16_MAX ||
+                     update->and_mask_len > UINT16_MAX))
+                    return LIBRDP_STATUS_INVALID_ARGUMENT;
+                message_type = large_lengths
+                                   ? RDP_POINTER_MESSAGE_TYPE_LARGE
+                                   : RDP_POINTER_MESSAGE_TYPE_POINTER;
+            }
+            else if (update->shape_format ==
+                     RDP_POINTER_SHAPE_FORMAT_LARGE)
+                message_type = RDP_POINTER_MESSAGE_TYPE_LARGE;
+            else
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
             status = rdp_buffer_append_u16_le(buffer, message_type);
-            if (status == LIBRDP_STATUS_OK)
+            if (status == LIBRDP_STATUS_OK &&
+                message_type != RDP_POINTER_MESSAGE_TYPE_COLOR)
                 status = rdp_buffer_append_u16_le(buffer, update->xor_bpp);
             if (status == LIBRDP_STATUS_OK)
                 status = rdp_buffer_append_u16_le(buffer,

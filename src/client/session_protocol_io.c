@@ -944,12 +944,14 @@ librdp_status rdp_session_process_fastpath_packet(librdp_session* session, const
                     goto out;
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
                                 "rdp.fastpath.pointer",
-                                "code=%u kind=%u cache_index=%u width=%u height=%u",
+                                "code=%u kind=%u shape_format=%u cache_index=%u width=%u height=%u xor_bpp=%u",
                                 update->update_code,
                                 pointer.kind,
+                                pointer.shape_format,
                                 pointer.cache_index,
                                 pointer.width,
-                                pointer.height);
+                                pointer.height,
+                                pointer.xor_bpp);
             }
         }
     }

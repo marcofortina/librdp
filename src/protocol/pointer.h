@@ -45,9 +45,18 @@ typedef enum rdp_pointer_update_kind
     RDP_POINTER_UPDATE_KIND_SHAPE = 4
 } rdp_pointer_update_kind;
 
+typedef enum rdp_pointer_shape_format
+{
+    RDP_POINTER_SHAPE_FORMAT_AUTO = 0,
+    RDP_POINTER_SHAPE_FORMAT_COLOR = 1,
+    RDP_POINTER_SHAPE_FORMAT_NEW = 2,
+    RDP_POINTER_SHAPE_FORMAT_LARGE = 3
+} rdp_pointer_shape_format;
+
 typedef struct rdp_pointer_update
 {
     rdp_pointer_update_kind kind;
+    rdp_pointer_shape_format shape_format;
     uint16_t cache_index;
     uint16_t x;
     uint16_t y;

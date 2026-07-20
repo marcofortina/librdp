@@ -69,6 +69,15 @@ typedef struct viewer_smoke_cursor_snapshot
     uint8_t digest[VIEWER_SMOKE_SHA256_BYTES];
 } viewer_smoke_cursor_snapshot;
 
+typedef struct viewer_smoke_cursor_expectation
+{
+    enum test_viewer_pointer_shape shape;
+    unsigned short width;
+    unsigned short height;
+    unsigned short xhot;
+    unsigned short yhot;
+} viewer_smoke_cursor_expectation;
+
 static void viewer_smoke_sleep_ms(unsigned int milliseconds)
 {
     struct timespec delay;
@@ -746,6 +755,7 @@ static int viewer_smoke_wait_cursor_equal(
 
 static int viewer_smoke_cursor_is_shape(
     Display* display,
+    const viewer_smoke_cursor_expectation* expected,
     unsigned long excluded_serial,
     unsigned long* serial)
 {
@@ -754,31 +764,34 @@ static int viewer_smoke_cursor_is_shape(
     uint16_t x = 0u;
     int result = 1;
 
-    if (!display || !serial)
+    if (!display || !expected || !serial)
         return 0;
     XSync(display, False);
     image = XFixesGetCursorImage(display);
     if (!image ||
-        image->width != TEST_VIEWER_POINTER_WIDTH ||
-        image->height != TEST_VIEWER_POINTER_HEIGHT ||
-        image->xhot != TEST_VIEWER_POINTER_HOTSPOT_X ||
-        image->yhot != TEST_VIEWER_POINTER_HOTSPOT_Y ||
+        image->width != expected->width ||
+        image->height != expected->height ||
+        image->xhot != expected->xhot ||
+        image->yhot != expected->yhot ||
         (excluded_serial != 0u &&
          image->cursor_serial == excluded_serial))
         result = 0;
     for (y = 0u;
-         result && y < TEST_VIEWER_POINTER_HEIGHT;
+         result && y < expected->height;
          y++)
     {
         for (x = 0u;
-             x < TEST_VIEWER_POINTER_WIDTH;
+             x < expected->width;
              x++)
         {
             size_t index =
-                (size_t)y * TEST_VIEWER_POINTER_WIDTH + x;
+                (size_t)y * expected->width + x;
 
             if ((uint32_t)image->pixels[index] !=
-                test_viewer_pointer_argb(x, y))
+                test_viewer_pointer_shape_argb(
+                    expected->shape,
+                    x,
+                    y))
             {
                 result = 0;
                 break;
@@ -795,6 +808,7 @@ static int viewer_smoke_cursor_is_shape(
 static int viewer_smoke_wait_cursor_shape(
     Display* display,
     pid_t viewer,
+    const viewer_smoke_cursor_expectation* expected,
     unsigned long excluded_serial,
     unsigned long* serial)
 {
@@ -803,6 +817,7 @@ static int viewer_smoke_wait_cursor_shape(
     for (step = 0u; step < VIEWER_SMOKE_WAIT_STEPS; step++)
     {
         if (viewer_smoke_cursor_is_shape(display,
+                                         expected,
                                          excluded_serial,
                                          serial))
             return 1;
@@ -1027,6 +1042,42 @@ static int viewer_smoke_run_pointer(
     Display* display,
     const char* root)
 {
+    static const viewer_smoke_cursor_expectation base_shape = {
+        TEST_VIEWER_POINTER_SHAPE_BASE,
+        TEST_VIEWER_POINTER_WIDTH,
+        TEST_VIEWER_POINTER_HEIGHT,
+        TEST_VIEWER_POINTER_HOTSPOT_X,
+        TEST_VIEWER_POINTER_HOTSPOT_Y
+    };
+    static const viewer_smoke_cursor_expectation
+        monochrome_shape = {
+            TEST_VIEWER_POINTER_SHAPE_MONOCHROME,
+            TEST_VIEWER_POINTER_MONOCHROME_WIDTH,
+            TEST_VIEWER_POINTER_MONOCHROME_HEIGHT,
+            TEST_VIEWER_POINTER_MONOCHROME_HOTSPOT_X,
+            TEST_VIEWER_POINTER_MONOCHROME_HOTSPOT_Y
+        };
+    static const viewer_smoke_cursor_expectation color_shape = {
+        TEST_VIEWER_POINTER_SHAPE_COLOR,
+        TEST_VIEWER_POINTER_COLOR_WIDTH,
+        TEST_VIEWER_POINTER_COLOR_HEIGHT,
+        TEST_VIEWER_POINTER_COLOR_HOTSPOT_X,
+        TEST_VIEWER_POINTER_COLOR_HOTSPOT_Y
+    };
+    static const viewer_smoke_cursor_expectation alpha_shape = {
+        TEST_VIEWER_POINTER_SHAPE_ALPHA,
+        TEST_VIEWER_POINTER_ALPHA_WIDTH,
+        TEST_VIEWER_POINTER_ALPHA_HEIGHT,
+        TEST_VIEWER_POINTER_ALPHA_HOTSPOT_X,
+        TEST_VIEWER_POINTER_ALPHA_HOTSPOT_Y
+    };
+    static const viewer_smoke_cursor_expectation large_shape = {
+        TEST_VIEWER_POINTER_SHAPE_LARGE,
+        TEST_VIEWER_POINTER_LARGE_WIDTH,
+        TEST_VIEWER_POINTER_LARGE_HEIGHT,
+        TEST_VIEWER_POINTER_LARGE_HOTSPOT_X,
+        TEST_VIEWER_POINTER_LARGE_HOTSPOT_Y
+    };
     char state_path[PATH_MAX];
     char ack_path[PATH_MAX];
     char server_log[PATH_MAX];
@@ -1039,6 +1090,10 @@ static int viewer_smoke_run_pointer(
     unsigned long shape_serial = 0u;
     unsigned long position_serial = 0u;
     unsigned long cached_serial = 0u;
+    unsigned long monochrome_serial = 0u;
+    unsigned long color_serial = 0u;
+    unsigned long alpha_serial = 0u;
+    unsigned long large_serial = 0u;
     int event_base = 0;
     int error_base = 0;
     int result = 0;
@@ -1121,6 +1176,7 @@ static int viewer_smoke_run_pointer(
         !viewer_smoke_wait_cursor_shape(
             display,
             processes.viewer,
+            &base_shape,
             default_cursor.serial,
             &shape_serial) ||
         !viewer_smoke_ack_pointer_stage(
@@ -1141,6 +1197,7 @@ static int viewer_smoke_run_pointer(
             processes.viewer) ||
         !viewer_smoke_cursor_is_shape(
             display,
+            &base_shape,
             0u,
             &position_serial) ||
         position_serial != shape_serial ||
@@ -1159,6 +1216,7 @@ static int viewer_smoke_run_pointer(
         !viewer_smoke_wait_cursor_shape(
             display,
             processes.viewer,
+            &base_shape,
             shape_serial,
             &cached_serial) ||
         !viewer_smoke_ack_pointer_stage(
@@ -1182,6 +1240,78 @@ static int viewer_smoke_run_pointer(
             TEST_VIEWER_POINTER_HIDDEN))
         goto cleanup;
     completed_stage = TEST_VIEWER_POINTER_HIDDEN;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_MONOCHROME,
+            &port) ||
+        !viewer_smoke_wait_cursor_shape(
+            display,
+            processes.viewer,
+            &monochrome_shape,
+            0u,
+            &monochrome_serial) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_MONOCHROME))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_MONOCHROME;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_COLOR,
+            &port) ||
+        !viewer_smoke_wait_cursor_shape(
+            display,
+            processes.viewer,
+            &color_shape,
+            monochrome_serial,
+            &color_serial) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_COLOR))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_COLOR;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_ALPHA,
+            &port) ||
+        !viewer_smoke_wait_cursor_shape(
+            display,
+            processes.viewer,
+            &alpha_shape,
+            color_serial,
+            &alpha_serial) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_ALPHA))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_ALPHA;
+
+    if (!viewer_smoke_wait_state(
+            state_path,
+            processes.server,
+            TEST_VIEWER_POINTER_LARGE,
+            &port) ||
+        !viewer_smoke_wait_cursor_shape(
+            display,
+            processes.viewer,
+            &large_shape,
+            alpha_serial,
+            &large_serial) ||
+        !viewer_smoke_ack_pointer_stage(
+            ack_path,
+            port,
+            TEST_VIEWER_POINTER_LARGE))
+        goto cleanup;
+    completed_stage = TEST_VIEWER_POINTER_LARGE;
 
     if (!viewer_smoke_wait_state(
             state_path,
@@ -1230,6 +1360,18 @@ static int viewer_smoke_run_pointer(
         !viewer_smoke_file_contains(
             viewer_log,
             "event=x11.pointer.hidden") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "shape_format=2 cache_index=8") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "shape_format=1 cache_index=9") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "shape_format=2 cache_index=10") ||
+        !viewer_smoke_file_contains(
+            viewer_log,
+            "shape_format=3 cache_index=11") ||
         viewer_smoke_file_contains(
             viewer_log,
             "status=protocol_error") ||
@@ -1238,11 +1380,15 @@ static int viewer_smoke_run_pointer(
             "event=client.connect.failed"))
         goto cleanup;
     fprintf(stdout,
-            "pointer default=%ux%u shape_serial=%lu cached_serial=%lu position=%u,%u\n",
+            "pointer default=%ux%u shape_serial=%lu cached_serial=%lu monochrome_serial=%lu color_serial=%lu alpha_serial=%lu large_serial=%lu position=%u,%u\n",
             (unsigned int)default_cursor.width,
             (unsigned int)default_cursor.height,
             shape_serial,
             cached_serial,
+            monochrome_serial,
+            color_serial,
+            alpha_serial,
+            large_serial,
             TEST_VIEWER_POINTER_POSITION_X,
             TEST_VIEWER_POINTER_POSITION_Y);
     result = 1;

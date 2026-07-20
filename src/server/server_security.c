@@ -544,6 +544,152 @@ librdp_status rdp_server_send_slowpath(librdp_server_peer* peer, const rdp_buffe
     return status;
 }
 
+/*
+ * Wrap one fast-path update fragment for the active transport security mode.
+ * Standard Security authenticates and encrypts the complete update bytes;
+ * TLS/NLA peers rely on their protected transport and receive a plain
+ * fast-path frame. No fragment is emitted until its complete wire frame exists.
+ */
+static librdp_status rdp_server_send_fastpath_fragment(
+    librdp_server_peer* peer,
+    const rdp_buffer* update)
+{
+    rdp_buffer encrypted;
+    rdp_buffer wire;
+    uint8_t signature[RDP_SERVER_FASTPATH_SIGNATURE_SIZE] = {0};
+    uint8_t security_flags = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !update)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&encrypted);
+    rdp_buffer_init(&wire);
+    if (peer->standard_security_ready)
+    {
+        security_flags = RDP_FASTPATH_OUTPUT_ENCRYPTED;
+        status = rdp_security_mac_signature(
+            &peer->standard_security,
+            update->data,
+            update->length,
+            signature);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append(&encrypted,
+                                       update->data,
+                                       update->length);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            status = rdp_security_encrypt_payload(
+                &peer->standard_security,
+                encrypted.data,
+                encrypted.length);
+        }
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        size_t payload_len = update->length;
+
+        if (peer->standard_security_ready)
+            payload_len += sizeof(signature);
+        status = rdp_fastpath_write_header(
+            &wire,
+            RDP_FASTPATH_OUTPUT_ACTION_FASTPATH,
+            security_flags,
+            payload_len);
+    }
+    if (status == LIBRDP_STATUS_OK &&
+        peer->standard_security_ready)
+    {
+        status = rdp_buffer_append(&wire,
+                                   signature,
+                                   sizeof(signature));
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        const uint8_t* payload = peer->standard_security_ready
+                                     ? encrypted.data
+                                     : update->data;
+        size_t payload_len = peer->standard_security_ready
+                                 ? encrypted.length
+                                 : update->length;
+
+        status = rdp_buffer_append(&wire, payload, payload_len);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_peer_send_all(peer,
+                                          wire.data,
+                                          wire.length);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_server_metric_add(&peer->metrics.pdu_out, 1u);
+    OPENSSL_cleanse(signature, sizeof(signature));
+    rdp_buffer_free(&wire);
+    rdp_buffer_free(&encrypted);
+    return status;
+}
+
+/*
+ * Fragment one logical fast-path update into independently framed packets.
+ * The shared payload ceiling leaves room for the longest fast-path header,
+ * Standard Security signature, and update header, so the same fragmentation
+ * is valid for every negotiated security mode.
+ */
+librdp_status rdp_server_send_fastpath_update(
+    librdp_server_peer* peer,
+    uint8_t update_code,
+    const void* data,
+    size_t data_len)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+    size_t offset = 0u;
+    size_t fragment_count = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || (!data && data_len > 0u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    do
+    {
+        rdp_buffer update;
+        size_t remaining = data_len - offset;
+        size_t fragment_len =
+            remaining > RDP_SERVER_FASTPATH_FRAGMENT_DATA_MAX
+                ? RDP_SERVER_FASTPATH_FRAGMENT_DATA_MAX
+                : remaining;
+        uint8_t fragmentation = RDP_FASTPATH_FRAGMENT_SINGLE;
+
+        if (data_len > RDP_SERVER_FASTPATH_FRAGMENT_DATA_MAX)
+        {
+            if (offset == 0u)
+                fragmentation = RDP_FASTPATH_FRAGMENT_FIRST;
+            else if (fragment_len == remaining)
+                fragmentation = RDP_FASTPATH_FRAGMENT_LAST;
+            else
+                fragmentation = RDP_FASTPATH_FRAGMENT_NEXT;
+        }
+        rdp_buffer_init(&update);
+        status = rdp_fastpath_write_update(
+            &update,
+            update_code,
+            fragmentation,
+            0u,
+            0u,
+            fragment_len > 0u ? bytes + offset : NULL,
+            fragment_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_send_fastpath_fragment(peer, &update);
+        rdp_buffer_free(&update);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        offset += fragment_len;
+        fragment_count++;
+    } while (offset < data_len);
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "server.fastpath.update",
+                    "code=%u payload_len=%u fragments=%u",
+                    update_code,
+                    (unsigned)data_len,
+                    (unsigned)fragment_count);
+    return LIBRDP_STATUS_OK;
+}
+
 void rdp_server_close_peer(librdp_server_peer* peer, librdp_server_peer_state state)
 {
     if (!peer)

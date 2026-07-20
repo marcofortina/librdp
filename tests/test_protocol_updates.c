@@ -659,6 +659,8 @@ int test_protocol_update_vectors(void)
                                       sizeof(pointer_shape_32),
                                       &pointer_update) == LIBRDP_STATUS_OK);
     PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.shape_format ==
+               RDP_POINTER_SHAPE_FORMAT_NEW &&
            pointer_update.cache_index == 5 &&
            pointer_update.hot_x == 1 &&
            pointer_update.hot_y == 0 &&
@@ -682,6 +684,8 @@ int test_protocol_update_vectors(void)
                                       sizeof(pointer_shape_16),
                                       &pointer_update) == LIBRDP_STATUS_OK);
     PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.shape_format ==
+               RDP_POINTER_SHAPE_FORMAT_NEW &&
            pointer_update.xor_bpp == 16 &&
            pointer_update.cache_index == 8);
     PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
@@ -698,6 +702,8 @@ int test_protocol_update_vectors(void)
                                       sizeof(pointer_shape_15),
                                       &pointer_update) == LIBRDP_STATUS_OK);
     PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.shape_format ==
+               RDP_POINTER_SHAPE_FORMAT_NEW &&
            pointer_update.xor_bpp == 15 &&
            pointer_update.cache_index == 9);
     PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
@@ -714,6 +720,8 @@ int test_protocol_update_vectors(void)
                                       sizeof(pointer_shape_1bpp_invert),
                                       &pointer_update) == LIBRDP_STATUS_OK);
     PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.shape_format ==
+               RDP_POINTER_SHAPE_FORMAT_NEW &&
            pointer_update.xor_bpp == 1 &&
            pointer_update.cache_index == 6);
     PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
@@ -753,6 +761,8 @@ int test_protocol_update_vectors(void)
                                       sizeof(pointer_slow_large),
                                       &pointer_update) == LIBRDP_STATUS_OK);
     PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.shape_format ==
+               RDP_POINTER_SHAPE_FORMAT_LARGE &&
            pointer_update.cache_index == 5 &&
            pointer_update.width == 2 &&
            pointer_update.height == 2 &&
@@ -760,6 +770,10 @@ int test_protocol_update_vectors(void)
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     {
+        static const uint8_t color_xor[4] = {
+            0x11u, 0x22u, 0x33u, 0x00u
+        };
+        static const uint8_t color_and[2] = {0x00u, 0x00u};
         rdp_pointer_update written = pointer_update;
         rdp_pointer_update parsed;
 
@@ -769,6 +783,7 @@ int test_protocol_update_vectors(void)
                                           dyn_response.length,
                                           &parsed) == LIBRDP_STATUS_OK);
         PCHECK(parsed.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+               parsed.shape_format == written.shape_format &&
                parsed.cache_index == written.cache_index &&
                parsed.width == written.width &&
                parsed.height == written.height &&
@@ -780,6 +795,54 @@ int test_protocol_update_vectors(void)
                memcmp(parsed.and_mask,
                       written.and_mask,
                       written.and_mask_len) == 0);
+        dyn_response.length = 0u;
+        written.shape_format = RDP_POINTER_SHAPE_FORMAT_NEW;
+        PCHECK(rdp_pointer_write_slowpath(&dyn_response,
+                                          &written) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_pointer_parse_slowpath(dyn_response.data,
+                                          dyn_response.length,
+                                          &parsed) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(parsed.shape_format ==
+                   RDP_POINTER_SHAPE_FORMAT_NEW &&
+               parsed.xor_bpp == written.xor_bpp);
+        dyn_response.length = 0u;
+        memset(&written, 0, sizeof(written));
+        written.kind = RDP_POINTER_UPDATE_KIND_SHAPE;
+        written.shape_format = RDP_POINTER_SHAPE_FORMAT_COLOR;
+        written.cache_index = 9u;
+        written.width = 1u;
+        written.height = 1u;
+        written.xor_bpp = 24u;
+        written.xor_mask = color_xor;
+        written.xor_mask_len = sizeof(color_xor);
+        written.and_mask = color_and;
+        written.and_mask_len = sizeof(color_and);
+        PCHECK(rdp_pointer_write_slowpath(&dyn_response,
+                                          &written) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_pointer_parse_slowpath(dyn_response.data,
+                                          dyn_response.length,
+                                          &parsed) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(parsed.shape_format ==
+                   RDP_POINTER_SHAPE_FORMAT_COLOR &&
+               parsed.xor_bpp == 24u &&
+               parsed.cache_index == written.cache_index);
+        dyn_response.length = 0u;
+        written.xor_bpp = 32u;
+        PCHECK(rdp_pointer_write_slowpath(&dyn_response,
+                                          &written) ==
+               LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(dyn_response.length == 0u);
+        written.shape_format = RDP_POINTER_SHAPE_FORMAT_NEW;
+        written.xor_bpp = 24u;
+        written.xor_mask_len = (size_t)UINT16_MAX + 1u;
+        PCHECK(rdp_pointer_write_slowpath(&dyn_response,
+                                          &written) ==
+               LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(dyn_response.length == 0u);
         dyn_response.length = 0u;
         memset(&written, 0, sizeof(written));
         written.kind = RDP_POINTER_UPDATE_KIND_POSITION;

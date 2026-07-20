@@ -46,6 +46,7 @@
 #include "graphics/gdi_orders.h"
 #include "licensing/licensing.h"
 #include "platform/socket.h"
+#include "protocol/fastpath.h"
 #include "protocol/mcs.h"
 #include "protocol/slowpath.h"
 #include "protocol/tpkt.h"
@@ -77,6 +78,15 @@
 #define RDP_SERVER_DYNAMIC_MESSAGE_MAX (64u * 1024u * 1024u)
 #define RDP_SERVER_STATIC_MESSAGE_MAX (64u * 1024u * 1024u)
 #define RDP_SERVER_STATIC_CHANNEL_CHUNK_SIZE 1600u
+#define RDP_SERVER_FASTPATH_PACKET_MAX 0x7fffu
+#define RDP_SERVER_FASTPATH_HEADER_MAX 3u
+#define RDP_SERVER_FASTPATH_SIGNATURE_SIZE 8u
+#define RDP_SERVER_FASTPATH_UPDATE_HEADER_SIZE 3u
+#define RDP_SERVER_FASTPATH_FRAGMENT_DATA_MAX \
+    (RDP_SERVER_FASTPATH_PACKET_MAX - \
+     RDP_SERVER_FASTPATH_HEADER_MAX - \
+     RDP_SERVER_FASTPATH_SIGNATURE_SIZE - \
+     RDP_SERVER_FASTPATH_UPDATE_HEADER_SIZE)
 #define RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_DEFAULT 4u
 #define RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_MAX 1024u
 #define RDP_SERVER_MAX_CLIPBOARD_FORMATS 4096u

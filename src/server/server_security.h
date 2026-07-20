@@ -39,6 +39,12 @@ librdp_status rdp_server_prepare_outbound_security_payload(librdp_server_peer* p
 
 librdp_status rdp_server_send_slowpath(librdp_server_peer* peer, const rdp_buffer* slowpath_pdu);
 
+librdp_status rdp_server_send_fastpath_update(
+    librdp_server_peer* peer,
+    uint8_t update_code,
+    const void* data,
+    size_t data_len);
+
 void rdp_server_close_peer(librdp_server_peer* peer, librdp_server_peer_state state);
 
 int rdp_server_uses_standard_security(const librdp_server_peer* peer);

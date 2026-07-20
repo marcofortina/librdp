@@ -15,6 +15,10 @@
 
 #include "server/server_common.h"
 
+librdp_status rdp_server_peer_send_pointer_wire_update(
+    librdp_server_peer* peer,
+    const rdp_pointer_update* update);
+
 librdp_status rdp_server_send_dynamic_named_buffer(librdp_server_peer* peer,
                                                          uint32_t dynamic_channel_id,
                                                          const char* expected_name,

@@ -328,14 +328,20 @@ librdp_status rdp_mouse_cursor_parse_update(const void* data, size_t length, rdp
     {
         status = rdp_mouse_cursor_parse_pointer_attributes(&stream, 0, &parsed);
         if (status == LIBRDP_STATUS_OK)
+        {
+            parsed.shape_format = RDP_POINTER_SHAPE_FORMAT_NEW;
             *update = parsed;
+        }
         return status;
     }
     if (header.update_type == RDP_MOUSE_CURSOR_UPDATE_LARGE_POINTER)
     {
         status = rdp_mouse_cursor_parse_pointer_attributes(&stream, 1, &parsed);
         if (status == LIBRDP_STATUS_OK)
+        {
+            parsed.shape_format = RDP_POINTER_SHAPE_FORMAT_LARGE;
             *update = parsed;
+        }
         return status;
     }
     return LIBRDP_STATUS_UNSUPPORTED;

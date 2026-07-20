@@ -893,21 +893,168 @@ static librdp_status rdp_server_pointer_convert_shape(
 }
 
 /*
- * Select the negotiated cursor DVC only when its provider and channel are
- * active; otherwise emit the equivalent base pointer update. Shape conversion
- * remains local to the call, and no wire output is attempted after validation
- * or allocation failure.
+ * Map a normalized pointer update onto the equivalent fast-path update code.
+ * The slow-path serializer supplies the shared pointer attribute layout; only
+ * its two-byte message discriminator is omitted from fast-path payloads.
+ */
+static librdp_status rdp_server_send_fastpath_pointer(
+    librdp_server_peer* peer,
+    const rdp_pointer_update* wire)
+{
+    rdp_buffer payload;
+    uint8_t update_code = 0u;
+    const uint8_t* update_data = NULL;
+    size_t update_len = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !wire)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    switch (wire->kind)
+    {
+        case RDP_POINTER_UPDATE_KIND_NULL:
+            update_code = RDP_FASTPATH_UPDATE_POINTER_NULL;
+            break;
+        case RDP_POINTER_UPDATE_KIND_DEFAULT:
+            update_code = RDP_FASTPATH_UPDATE_POINTER_DEFAULT;
+            break;
+        case RDP_POINTER_UPDATE_KIND_POSITION:
+            update_code = RDP_FASTPATH_UPDATE_POINTER_POSITION;
+            break;
+        case RDP_POINTER_UPDATE_KIND_CACHED:
+            update_code = RDP_FASTPATH_UPDATE_POINTER_CACHED;
+            break;
+        case RDP_POINTER_UPDATE_KIND_SHAPE:
+            if (wire->shape_format ==
+                RDP_POINTER_SHAPE_FORMAT_COLOR)
+                update_code = RDP_FASTPATH_UPDATE_POINTER_COLOR;
+            else if (wire->shape_format ==
+                         RDP_POINTER_SHAPE_FORMAT_LARGE ||
+                     wire->xor_mask_len > UINT16_MAX ||
+                     wire->and_mask_len > UINT16_MAX)
+                update_code = RDP_FASTPATH_UPDATE_POINTER_LARGE;
+            else
+                update_code = RDP_FASTPATH_UPDATE_POINTER_NEW;
+            break;
+        default:
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    rdp_buffer_init(&payload);
+    status = rdp_pointer_write_slowpath(&payload, wire);
+    if (status == LIBRDP_STATUS_OK &&
+        wire->kind != RDP_POINTER_UPDATE_KIND_NULL &&
+        wire->kind != RDP_POINTER_UPDATE_KIND_DEFAULT)
+    {
+        if (payload.length < sizeof(uint16_t))
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+        {
+            update_data = payload.data + sizeof(uint16_t);
+            update_len = payload.length - sizeof(uint16_t);
+        }
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_server_send_fastpath_update(peer,
+                                                 update_code,
+                                                 update_data,
+                                                 update_len);
+    }
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+/*
+ * Serialize an already normalized wire pointer through the negotiated cursor
+ * DVC or the base slow-path update. This internal boundary preserves explicit
+ * legacy color and large-pointer formats without exposing mask planes in the
+ * public API.
+ */
+librdp_status rdp_server_peer_send_pointer_wire_update(
+    librdp_server_peer* peer,
+    const rdp_pointer_update* wire)
+{
+    rdp_server_dynamic_channel* mouse_channel = NULL;
+    rdp_buffer update_payload;
+    rdp_buffer slowpath;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !wire)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state != LIBRDP_SERVER_PEER_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    rdp_buffer_init(&update_payload);
+    rdp_buffer_init(&slowpath);
+    if (rdp_server_extension_provider_ready(
+            peer->backend_extension_families,
+            LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR))
+    {
+        mouse_channel = rdp_server_find_dynamic_channel_named(
+            peer,
+            RDP_MOUSE_CURSOR_CHANNEL_NAME);
+    }
+    if (mouse_channel)
+    {
+        status = librdp_server_peer_send_mouse_cursor_update(
+            peer,
+            mouse_channel->channel_id,
+            (uint32_t)wire->kind,
+            wire->cache_index,
+            wire->x,
+            wire->y,
+            wire->hot_x,
+            wire->hot_y,
+            wire->width,
+            wire->height,
+            wire->xor_bpp,
+            wire->xor_mask,
+            wire->xor_mask_len,
+            wire->and_mask,
+            wire->and_mask_len);
+    }
+    else if (wire->kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+             (wire->shape_format ==
+                  RDP_POINTER_SHAPE_FORMAT_LARGE ||
+              wire->xor_mask_len > UINT16_MAX ||
+              wire->and_mask_len > UINT16_MAX))
+    {
+        status = rdp_server_send_fastpath_pointer(peer, wire);
+    }
+    else
+    {
+        status = rdp_buffer_append_u16_le(&update_payload,
+                                          RDP_UPDATE_TYPE_POINTER);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_pointer_write_slowpath(&update_payload, wire);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            status = rdp_slowpath_write_data_pdu(
+                &slowpath,
+                peer->share_id,
+                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                RDP_SLOWPATH_DATA_PDU_UPDATE,
+                update_payload.data,
+                update_payload.length);
+        }
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_send_slowpath(peer, &slowpath);
+    }
+    rdp_buffer_free(&slowpath);
+    rdp_buffer_free(&update_payload);
+    return status;
+}
+
+/*
+ * Convert a public BGRA pointer to protocol masks, then select the negotiated
+ * cursor DVC or base slow-path update. Conversion storage remains local to the
+ * call and no wire output occurs after validation or allocation failure.
  */
 librdp_status librdp_server_peer_send_pointer_update(
     librdp_server_peer* peer,
     const librdp_server_pointer_update* update)
 {
-    rdp_server_dynamic_channel* mouse_channel = NULL;
     rdp_pointer_update wire;
     rdp_buffer xor_mask;
     rdp_buffer and_mask;
-    rdp_buffer update_payload;
-    rdp_buffer slowpath;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!peer || !update ||
@@ -945,8 +1092,6 @@ librdp_status librdp_server_peer_send_pointer_update(
     }
     rdp_buffer_init(&xor_mask);
     rdp_buffer_init(&and_mask);
-    rdp_buffer_init(&update_payload);
-    rdp_buffer_init(&slowpath);
     if (update->type == LIBRDP_SERVER_POINTER_SHAPE)
     {
         status = rdp_server_pointer_convert_shape(update,
@@ -954,55 +1099,9 @@ librdp_status librdp_server_peer_send_pointer_update(
                                                   &and_mask,
                                                   &wire);
     }
-    if (status == LIBRDP_STATUS_OK &&
-        rdp_server_extension_provider_ready(
-            peer->backend_extension_families,
-            LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR))
-    {
-        mouse_channel = rdp_server_find_dynamic_channel_named(
-            peer,
-            RDP_MOUSE_CURSOR_CHANNEL_NAME);
-    }
-    if (status == LIBRDP_STATUS_OK && mouse_channel)
-    {
-        status = librdp_server_peer_send_mouse_cursor_update(
-            peer,
-            mouse_channel->channel_id,
-            (uint32_t)wire.kind,
-            wire.cache_index,
-            wire.x,
-            wire.y,
-            wire.hot_x,
-            wire.hot_y,
-            wire.width,
-            wire.height,
-            wire.xor_bpp,
-            wire.xor_mask,
-            wire.xor_mask_len,
-            wire.and_mask,
-            wire.and_mask_len);
-    }
-    else if (status == LIBRDP_STATUS_OK)
-    {
-        status = rdp_buffer_append_u16_le(&update_payload,
-                                          RDP_UPDATE_TYPE_POINTER);
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_pointer_write_slowpath(&update_payload, &wire);
-        if (status == LIBRDP_STATUS_OK)
-        {
-            status = rdp_slowpath_write_data_pdu(
-                &slowpath,
-                peer->share_id,
-                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
-                RDP_SLOWPATH_DATA_PDU_UPDATE,
-                update_payload.data,
-                update_payload.length);
-        }
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_server_send_slowpath(peer, &slowpath);
-    }
-    rdp_buffer_free(&slowpath);
-    rdp_buffer_free(&update_payload);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_peer_send_pointer_wire_update(peer,
+                                                          &wire);
     rdp_buffer_free(&and_mask);
     rdp_buffer_free(&xor_mask);
     return status;
