@@ -1274,6 +1274,127 @@ static int test_clipboard_runtime(void)
 }
 
 /*
+ * Keep disabled clipboard classes on their respective side of the platform
+ * boundary. A text-only policy must filter local and remote advertisements,
+ * reject native requests for filtered formats, and send negative terminal
+ * responses when a peer requests filtered HTML or file data.
+ */
+static int test_clipboard_format_policy(void)
+{
+    static const char html_name[] = LIBRDP_CLIPBOARD_FORMAT_NAME_HTML;
+    static const char file_name[] =
+        LIBRDP_CLIPBOARD_FORMAT_NAME_FILEGROUPDESCRIPTORW;
+    server_clipboard_config config;
+    server_clipboard_runtime* runtime = NULL;
+    server_platform_clipboard_format local_formats[3];
+    librdp_server_clipboard_format remote_formats[3];
+    librdp_server_clipboard_event event;
+    server_platform_clipboard_request request;
+    mock_platform_context platform;
+    mock_clipboard_protocol protocol;
+    uint64_t ownership_generation = 0u;
+
+    memset(&platform, 0, sizeof(platform));
+    memset(&protocol, 0, sizeof(protocol));
+    server_clipboard_config_init(&config);
+    config.max_peers = 1u;
+    config.max_formats = 3u;
+    config.allowed_formats = SERVER_CLIPBOARD_FORMAT_TEXT;
+    CHECK(server_clipboard_config_validate(&config) == LIBRDP_STATUS_OK);
+    config.allowed_formats |= 0x80000000u;
+    CHECK(server_clipboard_config_validate(&config) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    config.allowed_formats = SERVER_CLIPBOARD_FORMAT_TEXT;
+    runtime = server_clipboard_runtime_new(&config,
+                                           &mock_clipboard,
+                                           &platform);
+    CHECK(runtime != NULL);
+    CHECK(server_clipboard_runtime_add_peer(
+              runtime,
+              11u,
+              1u,
+              &mock_clipboard_protocol_vtable,
+              &protocol) == LIBRDP_STATUS_OK);
+    CHECK(server_clipboard_runtime_channel_ready(runtime, 11u, 1u, 1005u) ==
+          LIBRDP_STATUS_OK);
+
+    memset(local_formats, 0, sizeof(local_formats));
+    local_formats[0].mime_type = "text/plain;charset=utf-8";
+    local_formats[1].mime_type = "text/html";
+    local_formats[2].mime_type = "text/uri-list";
+    CHECK(server_clipboard_runtime_platform_formats(runtime,
+                                                    local_formats,
+                                                    3u,
+                                                    12u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.format_count == 1u);
+    CHECK(protocol.format_ids[0] == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT);
+
+    memset(remote_formats, 0, sizeof(remote_formats));
+    remote_formats[0].format_id = LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT;
+    remote_formats[1].format_id = 0xd101u;
+    remote_formats[1].name = html_name;
+    remote_formats[1].name_len = strlen(html_name);
+    remote_formats[2].format_id = 0xd102u;
+    remote_formats[2].name = file_name;
+    remote_formats[2].name_len = strlen(file_name);
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FORMAT_LIST;
+    event.channel_id = 1005u;
+    event.formats = remote_formats;
+    event.format_count = 3u;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  11u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(platform.published_format_count == 1u);
+    CHECK(platform.published_format_ids[0] ==
+          LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT);
+    ownership_generation = platform.last_clipboard_ownership_generation;
+    CHECK(ownership_generation != 0u);
+
+    memset(&request, 0, sizeof(request));
+    request.peer_id = 11u;
+    request.generation = 1u;
+    request.ownership_generation = ownership_generation;
+    request.request_id = 91u;
+    request.format_id = remote_formats[1].format_id;
+    CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
+          LIBRDP_STATUS_STATE);
+    CHECK(protocol.data_requests == 0u);
+
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FORMAT_DATA_REQUEST;
+    event.channel_id = 1005u;
+    event.format_id = LIBRDP_CLIPBOARD_FORMAT_HTML;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  11u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.data_responses == 1u && !protocol.response_ok);
+    CHECK(platform.last_clipboard_request_id == 0u);
+
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FILE_CONTENTS_REQUEST;
+    event.channel_id = 1005u;
+    event.stream_id = 92u;
+    event.file_flags = LIBRDP_CLIPBOARD_FILECONTENTS_RANGE;
+    event.requested_bytes = 4u;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  11u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.file_responses == 1u && !protocol.response_ok);
+    CHECK(platform.last_file_request.request_id == 0u);
+
+    server_clipboard_runtime_free(runtime);
+    return 0;
+}
+
+/*
  * Close and reuse one slot while asserting that every peer-scoped platform
  * resource is revoked with the old generation before the replacement peer is
  * accepted and requests a fresh capture frame.
@@ -2173,6 +2294,8 @@ int main(void)
     if (test_platform_contract() != 0)
         return 1;
     if (test_clipboard_runtime() != 0)
+        return 1;
+    if (test_clipboard_format_policy() != 0)
         return 1;
     if (test_dirty_scheduler() != 0)
         return 1;
