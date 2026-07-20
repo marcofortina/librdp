@@ -24,6 +24,104 @@ typedef struct dvc_boundary_capture
     int valid;
 } dvc_boundary_capture;
 
+typedef struct unknown_channel_capture
+{
+    uint32_t static_open;
+    uint32_t static_data;
+    uint32_t dynamic_open;
+    uint32_t dynamic_data;
+    uint32_t dynamic_close;
+    int valid;
+} unknown_channel_capture;
+
+/*
+ * Separate application-owned static and dynamic traffic by the public channel
+ * name. Exact payload checks ensure neither path exposes partial reassembly.
+ */
+static void on_unknown_channel_event(librdp_session* session,
+                                     const librdp_event* event,
+                                     void* user_data)
+{
+    unknown_channel_capture* capture =
+        (unknown_channel_capture*)user_data;
+    const char* name = NULL;
+    size_t name_len = 0u;
+
+    (void)session;
+    if (!capture || !event)
+        return;
+    switch (event->type)
+    {
+        case LIBRDP_EVENT_CHANNEL_OPEN:
+            name = event->data.channel_open.name;
+            name_len = event->data.channel_open.name_len;
+            if (name_len == 7u && name &&
+                memcmp(name, "UNKSTAT", 7u) == 0)
+            {
+                capture->static_open++;
+            }
+            else if (name_len == 6u && name &&
+                     memcmp(name, "APPDVC", 6u) == 0)
+            {
+                capture->dynamic_open++;
+            }
+            else
+            {
+                capture->valid = 0;
+            }
+            break;
+        case LIBRDP_EVENT_CHANNEL_DATA:
+            name = event->data.channel_data.name;
+            name_len = event->data.channel_data.name_len;
+            if (name_len == 7u && name &&
+                memcmp(name, "UNKSTAT", 7u) == 0)
+            {
+                capture->static_data++;
+                if (event->data.channel_data.data_len != 8u ||
+                    !event->data.channel_data.data ||
+                    memcmp(event->data.channel_data.data,
+                           "statchan",
+                           8u) != 0)
+                {
+                    capture->valid = 0;
+                }
+            }
+            else if (name_len == 6u && name &&
+                     memcmp(name, "APPDVC", 6u) == 0)
+            {
+                capture->dynamic_data++;
+                if (event->data.channel_data.data_len != 8u ||
+                    !event->data.channel_data.data ||
+                    memcmp(event->data.channel_data.data,
+                           "abcdefgh",
+                           8u) != 0)
+                {
+                    capture->valid = 0;
+                }
+            }
+            else
+            {
+                capture->valid = 0;
+            }
+            break;
+        case LIBRDP_EVENT_CHANNEL_CLOSE:
+            name = event->data.channel_close.name;
+            name_len = event->data.channel_close.name_len;
+            if (name_len == 6u && name &&
+                memcmp(name, "APPDVC", 6u) == 0)
+            {
+                capture->dynamic_close++;
+            }
+            else
+            {
+                capture->valid = 0;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 /*
  * Validate reassembled application payloads while preserving the shared event
  * counters used to observe channel create and close ordering.
@@ -1826,6 +1924,185 @@ int test_dynamic_channel_fragment_boundaries(void)
     CHECK(capture.message_count == CORE_TEST_DVC_BOUNDARY_COUNT);
     CHECK(capture.events.channel_data == (int)CORE_TEST_DVC_BOUNDARY_COUNT);
     CHECK(capture.events.channel_close == 1);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: drives unknown application-owned static and dynamic channels at
+ * configured payload and channel-count limits. It catches accidental routing
+ * into protocol runtimes, unbounded tables, partial callback payloads, and
+ * stale channel state after disconnect.
+ */
+int test_unknown_channels_bounded(void)
+{
+    static const librdp_feature features[] = {
+        LIBRDP_FEATURE_AUDIO_OUTPUT,
+        LIBRDP_FEATURE_AUDIO_INPUT,
+        LIBRDP_FEATURE_VIDEO,
+        LIBRDP_FEATURE_CAMERA,
+        LIBRDP_FEATURE_SMARTCARD,
+        LIBRDP_FEATURE_USB,
+        LIBRDP_FEATURE_PNP,
+        LIBRDP_FEATURE_WEBAUTHN,
+        LIBRDP_FEATURE_RAIL,
+        LIBRDP_FEATURE_CR2,
+        LIBRDP_FEATURE_ECHO,
+        LIBRDP_FEATURE_TELEMETRY,
+        LIBRDP_FEATURE_MULTITRANSPORT,
+        LIBRDP_FEATURE_DESKTOP_COMPOSITION,
+        LIBRDP_FEATURE_DISPLAY_CONTROL,
+        LIBRDP_FEATURE_UDP_TRANSPORT,
+        LIBRDP_FEATURE_UDP2_TRANSPORT,
+        LIBRDP_FEATURE_GEOMETRY_TRACKING,
+        LIBRDP_FEATURE_MULTIPARTY
+    };
+    static const uint8_t oversized_payload[9] = {0};
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_limits limits;
+    librdp_metrics before;
+    librdp_metrics after;
+    librdp_feature_status feature_status;
+    librdp_channel_handle dynamic_handle = 0u;
+    unknown_channel_capture capture;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t dynamic_count = 0u;
+    size_t static_count = 0u;
+
+    memset(&capture, 0, sizeof(capture));
+    capture.valid = 1;
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_limits_init(&limits) == LIBRDP_STATUS_OK);
+    limits.channel_buffer_bytes = 8u;
+    limits.dynamic_channel_count = 1u;
+    limits.dynamic_channel_message_bytes = 8u;
+    CHECK(librdp_settings_set_limits(settings, &limits) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_static_channel(
+              settings,
+              "UNKSTAT",
+              LIBRDP_STATIC_CHANNEL_DEFAULT_FLAGS) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(
+              settings,
+              LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_ex(&test_port,
+                                    &server_pid,
+                                    0,
+                                    0,
+                                    1,
+                                    0));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session,
+                                      on_unknown_channel_event,
+                                      &capture);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(capture.static_open == 1u);
+    CHECK(librdp_session_static_channel_list(
+              session,
+              NULL,
+              0u,
+              &static_count) == LIBRDP_STATUS_OK);
+    CHECK(static_count == 1u);
+    for (size_t attempt = 0u;
+         attempt < 16u && capture.dynamic_open == 0u;
+         attempt++)
+    {
+        CHECK(librdp_session_run_once(session, 1000) ==
+              LIBRDP_STATUS_OK);
+    }
+    CHECK(capture.dynamic_open == 1u);
+    CHECK(librdp_session_channel_list(
+              session,
+              NULL,
+              0u,
+              &dynamic_count) == LIBRDP_STATUS_OK);
+    CHECK(dynamic_count == 1u);
+    CHECK(librdp_session_channel_handle_for_id(
+              session,
+              7u,
+              &dynamic_handle) == LIBRDP_STATUS_OK);
+    CHECK(dynamic_handle != 0u);
+    CHECK(librdp_metrics_init(&before) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &before) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_static_channel_send(
+              session,
+              "UNKSTAT",
+              oversized_payload,
+              sizeof(oversized_payload)) ==
+          LIBRDP_STATUS_LIMIT_EXCEEDED);
+    CHECK(librdp_session_channel_send(
+              session,
+              7u,
+              oversized_payload,
+              sizeof(oversized_payload)) ==
+          LIBRDP_STATUS_LIMIT_EXCEEDED);
+    CHECK(librdp_metrics_init(&after) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &after) == LIBRDP_STATUS_OK);
+    CHECK(after.limits_rejected == before.limits_rejected + 2u);
+
+    for (size_t attempt = 0u;
+         attempt < 16u &&
+         (capture.static_data == 0u ||
+          capture.dynamic_data == 0u ||
+          capture.dynamic_close == 0u);
+         attempt++)
+    {
+        CHECK(librdp_session_run_once(session, 1000) ==
+              LIBRDP_STATUS_OK);
+    }
+    CHECK(capture.valid);
+    CHECK(capture.static_open == 1u);
+    CHECK(capture.static_data == 1u);
+    CHECK(capture.dynamic_open == 1u);
+    CHECK(capture.dynamic_data == 1u);
+    CHECK(capture.dynamic_close == 1u);
+    CHECK(librdp_session_channel_list(
+              session,
+              NULL,
+              0u,
+              &dynamic_count) == LIBRDP_STATUS_OK);
+    CHECK(dynamic_count == 0u);
+    for (size_t i = 0u;
+         i < sizeof(features) / sizeof(features[0]);
+         i++)
+    {
+        CHECK(librdp_session_get_feature_status(
+                  session,
+                  features[i],
+                  &feature_status) == LIBRDP_STATUS_OK);
+        CHECK(!feature_status.requested);
+        CHECK(!feature_status.negotiated);
+        CHECK(!feature_status.active);
+        CHECK(feature_status.reason ==
+              LIBRDP_FEATURE_REASON_NOT_REQUESTED);
+    }
+
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_channel_list(
+              session,
+              NULL,
+              0u,
+              &dynamic_count) == LIBRDP_STATUS_OK);
+    CHECK(dynamic_count == 0u);
+    CHECK(librdp_session_static_channel_list(
+              session,
+              NULL,
+              0u,
+              &static_count) == LIBRDP_STATUS_OK);
+    CHECK(static_count == 0u);
 
     librdp_session_free(session);
     librdp_settings_free(settings);
