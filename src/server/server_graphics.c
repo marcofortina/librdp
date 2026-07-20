@@ -493,6 +493,7 @@ librdp_status librdp_server_peer_surface_resize(librdp_server_peer* peer, uint32
     {
         peer->confirm_active_seen = 0;
         peer->synchronize_seen = 0;
+        peer->control_cooperate_seen = 0;
         peer->control_seen = 0;
         peer->font_list_seen = 0;
         status = rdp_server_send_demand_active(peer);

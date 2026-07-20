@@ -3823,7 +3823,7 @@ int test_server_loopback_standard_activation_sequence(void)
     dvc_packet.length = 0;
     SCHECK(rdp_slowpath_write_client_synchronize(&dvc_packet,
                                                  demand.share_id,
-                                                 (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK);
+                                                 attach_confirm.user_id) == LIBRDP_STATUS_OK);
     SCHECK(test_server_send_encrypted_slowpath(client_fd,
                                                attach_confirm.user_id,
                                                &client_security,

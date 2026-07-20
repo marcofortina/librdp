@@ -508,6 +508,33 @@ librdp_status librdp_server_peer_dispatch_pending(librdp_server_peer* peer)
     return status == LIBRDP_STATUS_TIMEOUT ? LIBRDP_STATUS_OK : status;
 }
 
+static const char* rdp_server_peer_dispatch_phase(
+    librdp_server_peer_state state)
+{
+    switch (state)
+    {
+        case LIBRDP_SERVER_PEER_NEGOTIATING:
+            return "server.x224.negotiation";
+        case LIBRDP_SERVER_PEER_X224_CONFIRMED:
+            return "server.mcs-gcc.connect";
+        case LIBRDP_SERVER_PEER_MCS_CONNECTED:
+            return "server.mcs.erect-domain";
+        case LIBRDP_SERVER_PEER_DOMAIN_READY:
+            return "server.mcs.attach-user";
+        case LIBRDP_SERVER_PEER_USER_ATTACHED:
+        case LIBRDP_SERVER_PEER_CHANNEL_JOINING:
+            return "server.mcs.channel-join";
+        case LIBRDP_SERVER_PEER_LICENSING:
+            return "server.licensing.client-info";
+        case LIBRDP_SERVER_PEER_ACTIVATING:
+            return "server.activation";
+        case LIBRDP_SERVER_PEER_ACTIVE:
+            return "server.runtime";
+        default:
+            return "server.peer.dispatch";
+    }
+}
+
 /*
  * Advance one externally-driven server peer phase. TLS handshaking is handled
  * before TPKT parsing because encrypted peers switch transport semantics after
@@ -519,6 +546,7 @@ librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_
     rdp_tpkt packet;
     librdp_status status = LIBRDP_STATUS_OK;
     size_t packet_len = 0;
+    const char* dispatch_phase = NULL;
 
     if (!peer || timeout_ms < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -526,6 +554,7 @@ librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_
         return LIBRDP_STATUS_STATE;
     if (peer->state == LIBRDP_SERVER_PEER_NEW)
         rdp_server_set_state(peer, LIBRDP_SERVER_PEER_NEGOTIATING);
+    dispatch_phase = rdp_server_peer_dispatch_phase(peer->state);
     if (peer->state == LIBRDP_SERVER_PEER_TLS_HANDSHAKING)
     {
         const char* tls_failure_message = "server TLS handshake failed";
@@ -599,7 +628,7 @@ librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_
         rdp_server_record_status(peer,
                                  status,
                                  rdp_server_component_for_status(status),
-                                 "server.peer.dispatch",
+                                 dispatch_phase,
                                  "peer dispatch failed");
     }
     return status;

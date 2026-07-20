@@ -387,6 +387,7 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME server_feature_status COMMAND test_server features)
     add_test(NAME server_security COMMAND test_server security)
     add_test(NAME server_lifecycle COMMAND test_server lifecycle)
+    add_test(NAME server_protocol_order COMMAND test_server protocol-order)
     add_test(NAME server_channels COMMAND test_server channels)
     add_test(NAME server_drive_metadata COMMAND test_server drive-metadata)
     add_test(NAME server_graphics COMMAND test_server graphics)
@@ -586,6 +587,7 @@ if(LIBRDP_BUILD_TESTS)
         server_config
         server_feature_status
         server_lifecycle
+        server_protocol_order
         server_channels
         server_drive_metadata
         server_graphics

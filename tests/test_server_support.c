@@ -813,7 +813,7 @@ int test_server_send_confirm_active(
     if (rdp_slowpath_write_confirm_active(
             &confirm,
             share_id,
-            (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+            user_id,
             800,
             600,
             "test") == LIBRDP_STATUS_OK)
@@ -916,7 +916,7 @@ int test_server_send_client_synchronize(
     rdp_buffer_init(&slowpath);
     if (rdp_slowpath_write_client_synchronize(&slowpath,
                                               share_id,
-                                              (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK)
+                                              user_id) == LIBRDP_STATUS_OK)
     {
         ok = test_server_send_encrypted_slowpath(
             fd,
@@ -942,7 +942,7 @@ int test_server_send_client_control(
     rdp_buffer_init(&slowpath);
     if (rdp_slowpath_write_client_control(&slowpath,
                                           share_id,
-                                          (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                          user_id,
                                           action) == LIBRDP_STATUS_OK)
     {
         ok = test_server_send_encrypted_slowpath(
@@ -968,7 +968,7 @@ int test_server_send_client_font_list(
     rdp_buffer_init(&slowpath);
     if (rdp_slowpath_write_client_font_list(&slowpath,
                                             share_id,
-                                            (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK)
+                                            user_id) == LIBRDP_STATUS_OK)
     {
         ok = test_server_send_encrypted_slowpath(
             fd,
@@ -993,7 +993,7 @@ int test_server_send_keyboard_input(
     rdp_buffer_init(&slowpath);
     if (rdp_slowpath_write_client_keyboard_input(&slowpath,
                                                  share_id,
-                                                 (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                 user_id,
                                                  0,
                                                  30) == LIBRDP_STATUS_OK)
     {
@@ -1026,7 +1026,7 @@ int test_server_send_sync_input(
     rdp_buffer_init(&slowpath);
     if (rdp_slowpath_write_data_pdu(&slowpath,
                                     share_id,
-                                    (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                    user_id,
                                     RDP_SLOWPATH_DATA_PDU_INPUT,
                                     payload,
                                     sizeof(payload)) == LIBRDP_STATUS_OK)

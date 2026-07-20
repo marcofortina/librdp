@@ -59,6 +59,16 @@ typedef struct rdp_slowpath_demand_active
     rdp_capability_list capabilities;
 } rdp_slowpath_demand_active;
 
+typedef struct rdp_slowpath_confirm_active
+{
+    rdp_slowpath_share_control_header header;
+    uint32_t share_id;
+    uint16_t originator_id;
+    const uint8_t* source_descriptor;
+    uint16_t source_descriptor_len;
+    rdp_capability_list capabilities;
+} rdp_slowpath_confirm_active;
+
 typedef struct rdp_slowpath_data_pdu
 {
     rdp_slowpath_share_control_header header;
@@ -97,6 +107,10 @@ librdp_status rdp_slowpath_write_share_control_header(rdp_buffer* buffer,
 librdp_status rdp_slowpath_parse_demand_active(const void* data,
                                                size_t length,
                                                rdp_slowpath_demand_active* demand);
+librdp_status rdp_slowpath_parse_confirm_active(
+    const void* data,
+    size_t length,
+    rdp_slowpath_confirm_active* confirm);
 librdp_status rdp_slowpath_write_demand_active(rdp_buffer* buffer,
                                                uint32_t share_id,
                                                uint16_t channel_id,

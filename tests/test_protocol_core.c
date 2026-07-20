@@ -366,6 +366,10 @@ static int test_mcs_gcc_capabilities(void)
         0x01, 0x00, 0x04, 0x00,
         0x01, 0x00, 0x04, 0x00
     };
+    const uint8_t unknown_caps[] = {
+        0x01, 0x00, 0x00, 0x00,
+        0xfe, 0x7f, 0x04, 0x00
+    };
     rdp_stream stream;
     size_t length = 0;
     rdp_mcs_connect_response response;
@@ -489,6 +493,10 @@ static int test_mcs_gcc_capabilities(void)
                LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&list, &valid_list, sizeof(list)) == 0);
     }
+    PCHECK(rdp_capabilities_parse(unknown_caps, sizeof(unknown_caps), &list) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(list.count == 1u && list.sets[0].type == 0x7ffeu);
+    PCHECK(rdp_capabilities_find(&list, RDP_CAPABILITY_TYPE_GENERAL) == NULL);
 
     memset(&config, 0, sizeof(config));
     config.desktop_width = 1024;

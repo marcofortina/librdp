@@ -172,6 +172,72 @@ librdp_status rdp_slowpath_parse_demand_active(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode Confirm Active without committing a partial result. Capability
+ * parsing enforces bounded set counts, exact lengths, and unique set types.
+ */
+librdp_status rdp_slowpath_parse_confirm_active(
+    const void* data,
+    size_t length,
+    rdp_slowpath_confirm_active* confirm)
+{
+    rdp_stream stream;
+    rdp_slowpath_confirm_active parsed;
+    const uint8_t* capabilities = NULL;
+    uint16_t capabilities_len = 0u;
+    uint16_t source_len = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !confirm)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&parsed, 0, sizeof(parsed));
+    status = rdp_slowpath_parse_share_control_header(
+        data,
+        length,
+        &parsed.header);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (rdp_slowpath_base_type(parsed.header.pdu_type) !=
+        RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_stream_init(&stream, data, parsed.header.total_length);
+    if (rdp_stream_skip(&stream, 6u) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.share_id) !=
+            LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.originator_id) !=
+            LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &source_len) !=
+            LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &capabilities_len) !=
+            LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (parsed.share_id == 0u || parsed.originator_id == 0u ||
+        source_len == 0u || capabilities_len < 4u ||
+        rdp_stream_remaining(&stream) !=
+            (size_t)source_len + (size_t)capabilities_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(
+            &stream,
+            &parsed.source_descriptor,
+            source_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_bytes(
+            &stream,
+            &capabilities,
+            capabilities_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    parsed.source_descriptor_len = source_len;
+    status = rdp_capabilities_parse(
+        capabilities,
+        capabilities_len,
+        &parsed.capabilities);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *confirm = parsed;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_slowpath_write_general_capability(rdp_buffer* buffer)
 {
     const uint16_t fields[] = {

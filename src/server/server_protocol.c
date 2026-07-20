@@ -696,8 +696,27 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
                           (unsigned)runtime_payload_len);
     if ((header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE)
     {
-        peer->confirm_active_seen = 1;
-        status = rdp_server_send_activation_responses(peer);
+        rdp_slowpath_confirm_active confirm;
+
+        memset(&confirm, 0, sizeof(confirm));
+        if (peer->state != LIBRDP_SERVER_PEER_ACTIVATING ||
+            peer->confirm_active_seen)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            status = rdp_slowpath_parse_confirm_active(
+                runtime_payload,
+                runtime_payload_len,
+                &confirm);
+        if (status == LIBRDP_STATUS_OK &&
+            (confirm.share_id != peer->share_id ||
+             confirm.header.channel_id !=
+                 peer->user_id))
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK)
+        {
+            peer->confirm_active_seen = 1;
+            status = rdp_server_send_activation_responses(peer);
+        }
         if (status != LIBRDP_STATUS_OK)
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
         rdp_buffer_free(&security_payload);
@@ -720,6 +739,20 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
             rdp_buffer_free(&security_payload);
             return status;
         }
+        if (pdu.share_id != peer->share_id ||
+            pdu.header.channel_id !=
+                peer->user_id)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK &&
+            peer->state == LIBRDP_SERVER_PEER_ACTIVATING &&
+            !peer->confirm_active_seen)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+            rdp_buffer_free(&security_payload);
+            return status;
+        }
         rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                               RDP_TRACE_LEVEL_DEBUG,
                               "server.slowpath.data",
@@ -728,6 +761,16 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
                               (unsigned)pdu.payload_len);
         if (pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE)
         {
+            if (peer->state == LIBRDP_SERVER_PEER_ACTIVATING &&
+                (peer->synchronize_seen || pdu.payload_len != 4u ||
+                 pdu.payload[0] != 1u || pdu.payload[1] != 0u))
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+                rdp_buffer_free(&security_payload);
+                return status;
+            }
             peer->synchronize_seen = 1;
             if (librdp_server_input_event_init(&event) == LIBRDP_STATUS_OK)
             {
@@ -737,16 +780,71 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
         }
         else if (pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_CONTROL)
         {
-            peer->control_seen = 1;
-            if (librdp_server_input_event_init(&event) == LIBRDP_STATUS_OK && pdu.payload_len >= 2u)
+            uint16_t action = 0u;
+
+            if (pdu.payload_len >= 2u)
+                action = (uint16_t)((uint16_t)pdu.payload[0] |
+                                    ((uint16_t)pdu.payload[1] << 8u));
+            if (peer->state == LIBRDP_SERVER_PEER_ACTIVATING)
+            {
+                if (!peer->synchronize_seen ||
+                    pdu.payload_len != 8u)
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                else if (action == 4u)
+                {
+                    if (peer->control_cooperate_seen ||
+                        peer->control_seen)
+                        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                    else
+                        peer->control_cooperate_seen = 1;
+                }
+                else if (action == 1u)
+                {
+                    if (!peer->control_cooperate_seen ||
+                        peer->control_seen)
+                        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                    else
+                        peer->control_seen = 1;
+                }
+                else
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+                rdp_buffer_free(&security_payload);
+                return status;
+            }
+            if (librdp_server_input_event_init(&event) == LIBRDP_STATUS_OK &&
+                pdu.payload_len >= 2u)
             {
                 event.type = LIBRDP_SERVER_INPUT_CONTROL;
-                event.control_action = (uint16_t)((uint16_t)pdu.payload[0] | ((uint16_t)pdu.payload[1] << 8));
+                event.control_action = action;
                 rdp_server_emit_input(peer, &event);
             }
         }
+        else if (pdu.pdu_type2 ==
+                 RDP_SLOWPATH_DATA_PDU_BITMAP_CACHE_PERSISTENT_LIST)
+        {
+            if (peer->state != LIBRDP_SERVER_PEER_ACTIVATING ||
+                !peer->control_seen || pdu.payload_len < 24u)
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
         else if (pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_LIST)
         {
+            if (peer->state != LIBRDP_SERVER_PEER_ACTIVATING ||
+                !peer->confirm_active_seen ||
+                !peer->synchronize_seen ||
+                !peer->control_cooperate_seen ||
+                !peer->control_seen ||
+                pdu.payload_len != 8u)
+            {
+                rdp_server_close_peer(
+                    peer,
+                    LIBRDP_SERVER_PEER_FAILED);
+                rdp_buffer_free(&security_payload);
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
             peer->font_list_seen = 1;
             if (librdp_server_input_event_init(&event) == LIBRDP_STATUS_OK)
             {
@@ -774,6 +872,8 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
             status = rdp_server_handle_refresh_rect(peer, pdu.payload, pdu.payload_len);
         else if (pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_SUPPRESS_OUTPUT)
             status = rdp_server_handle_suppress_output(peer, pdu.payload, pdu.payload_len);
+        else
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
         if (status != LIBRDP_STATUS_OK)
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
         rdp_buffer_free(&security_payload);

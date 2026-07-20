@@ -15,6 +15,11 @@
 #include "test_server_suites.h"
 #include "channels/filesystem_redirection.h"
 #include "channels/virtual_channel.h"
+#include "protocol/mcs.h"
+#include "protocol/slowpath.h"
+#include "protocol/tpkt.h"
+#include "protocol/x224.h"
+#include "security/security.h"
 #include "server/server_channels.h"
 
 #include <string.h>
@@ -277,6 +282,96 @@ static void test_server_peer_fixture_close(test_server_peer_fixture* fixture)
     fixture->client_fd = -1;
 }
 
+static int test_server_wrap_mcs_packet(
+    const rdp_buffer* mcs,
+    rdp_buffer* packet)
+{
+    rdp_buffer x224;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!mcs || !packet)
+        return 0;
+    rdp_buffer_init(&x224);
+    status = rdp_x224_wrap_data(
+        &x224,
+        mcs->data,
+        mcs->length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_tpkt_write(packet, x224.data, x224.length);
+    rdp_buffer_free(&x224);
+    return status == LIBRDP_STATUS_OK;
+}
+
+static int test_server_wrap_slowpath_packet(
+    const rdp_buffer* slowpath,
+    uint16_t user_id,
+    rdp_buffer* packet)
+{
+    rdp_buffer mcs;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!slowpath || !packet)
+        return 0;
+    rdp_buffer_init(&mcs);
+    status = rdp_security_write_send_data_request(
+        &mcs,
+        user_id,
+        (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+        slowpath->data,
+        slowpath->length);
+    if (status == LIBRDP_STATUS_OK &&
+        !test_server_wrap_mcs_packet(&mcs, packet))
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_buffer_free(&mcs);
+    return status == LIBRDP_STATUS_OK;
+}
+
+/*
+ * Send one complete packet while the controlled peer is pinned to a selected
+ * handshake phase. Rejection must retain the phase that owned the packet
+ * rather than collapsing every parser failure into a generic dispatch error.
+ */
+static int test_server_expect_packet_rejection(
+    librdp_server_peer_state state,
+    const rdp_buffer* packet,
+    const char* phase)
+{
+    test_server_peer_fixture fixture;
+    librdp_server_status server_status;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int valid = 0;
+
+    if (!packet || !phase ||
+        !test_server_peer_fixture_open(&fixture))
+        return 0;
+    fixture.peer->state = state;
+    fixture.peer->selected_protocol = RDP_X224_PROTOCOL_TLS;
+    if (!test_server_send_all(
+            fixture.client_fd,
+            packet->data,
+            packet->length))
+        goto complete;
+    status = librdp_server_peer_run_once(fixture.peer, 1000);
+    if (librdp_server_status_init(&server_status) !=
+            LIBRDP_STATUS_OK ||
+        librdp_server_peer_get_last_status(
+            fixture.peer,
+            &server_status) != LIBRDP_STATUS_OK)
+        goto complete;
+    valid = status == LIBRDP_STATUS_PROTOCOL_ERROR &&
+            server_status.status ==
+                LIBRDP_STATUS_PROTOCOL_ERROR &&
+            server_status.component ==
+                LIBRDP_ERROR_COMPONENT_PROTOCOL &&
+            strcmp(server_status.phase, phase) == 0 &&
+            librdp_server_peer_get_state(fixture.peer) ==
+                LIBRDP_SERVER_PEER_FAILED;
+
+complete:
+    test_server_peer_fixture_close(&fixture);
+    return valid;
+}
+
 int test_server_lifecycle_focused(void)
 {
     test_server_peer_fixture fixture;
@@ -295,6 +390,111 @@ int test_server_lifecycle_focused(void)
     SCHECK(librdp_server_peer_close(fixture.peer) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_pollfds(fixture.peer, NULL, 0, &count) == LIBRDP_STATUS_STATE);
     test_server_peer_fixture_close(&fixture);
+    return 0;
+}
+
+/*
+ * Exercise the server handshake state gates with complete, valid packets from
+ * adjacent phases. This catches accidental parser fall-through and activation
+ * before licensing or capability validation has completed.
+ */
+int test_server_protocol_order_focused(void)
+{
+    rdp_buffer packet;
+    rdp_buffer mcs;
+    rdp_buffer slowpath;
+    static const uint8_t invalid_gcc[] = {0x00u, 0x01u, 0x02u, 0x03u};
+
+    rdp_buffer_init(&packet);
+    rdp_buffer_init(&mcs);
+    rdp_buffer_init(&slowpath);
+
+    SCHECK(rdp_mcs_write_erect_domain_request(&mcs) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_wrap_mcs_packet(&mcs, &packet));
+    SCHECK(test_server_expect_packet_rejection(
+        LIBRDP_SERVER_PEER_NEW,
+        &packet,
+        "server.x224.negotiation"));
+    SCHECK(test_server_expect_packet_rejection(
+        LIBRDP_SERVER_PEER_X224_CONFIRMED,
+        &packet,
+        "server.mcs-gcc.connect"));
+
+    packet.length = 0u;
+    mcs.length = 0u;
+    SCHECK(rdp_mcs_write_connect_initial(
+               &mcs,
+               invalid_gcc,
+               sizeof(invalid_gcc)) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_wrap_mcs_packet(&mcs, &packet));
+    SCHECK(test_server_expect_packet_rejection(
+        LIBRDP_SERVER_PEER_X224_CONFIRMED,
+        &packet,
+        "server.mcs-gcc.connect"));
+
+    packet.length = 0u;
+    mcs.length = 0u;
+    SCHECK(rdp_mcs_write_attach_user_request(&mcs) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_wrap_mcs_packet(&mcs, &packet));
+    SCHECK(test_server_expect_packet_rejection(
+        LIBRDP_SERVER_PEER_MCS_CONNECTED,
+        &packet,
+        "server.mcs.erect-domain"));
+    SCHECK(test_server_expect_packet_rejection(
+        LIBRDP_SERVER_PEER_USER_ATTACHED,
+        &packet,
+        "server.mcs.channel-join"));
+
+    packet.length = 0u;
+    mcs.length = 0u;
+    SCHECK(rdp_mcs_write_erect_domain_request(&mcs) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_wrap_mcs_packet(&mcs, &packet));
+    SCHECK(test_server_expect_packet_rejection(
+        LIBRDP_SERVER_PEER_DOMAIN_READY,
+        &packet,
+        "server.mcs.attach-user"));
+
+    packet.length = 0u;
+    slowpath.length = 0u;
+    SCHECK(rdp_slowpath_write_confirm_active(
+               &slowpath,
+               0x00010001u,
+               (uint16_t)RDP_MCS_BASE_CHANNEL_ID,
+               800u,
+               600u,
+               "order-test") == LIBRDP_STATUS_OK);
+    SCHECK(test_server_wrap_slowpath_packet(
+        &slowpath,
+        (uint16_t)RDP_MCS_BASE_CHANNEL_ID,
+        &packet));
+    SCHECK(test_server_expect_packet_rejection(
+        LIBRDP_SERVER_PEER_LICENSING,
+        &packet,
+        "server.licensing.client-info"));
+
+    packet.length = 0u;
+    slowpath.length = 0u;
+    SCHECK(rdp_slowpath_write_client_font_list(
+               &slowpath,
+               0x00010001u,
+               (uint16_t)RDP_MCS_BASE_CHANNEL_ID) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_wrap_slowpath_packet(
+        &slowpath,
+        (uint16_t)RDP_MCS_BASE_CHANNEL_ID,
+        &packet));
+    SCHECK(test_server_expect_packet_rejection(
+        LIBRDP_SERVER_PEER_ACTIVATING,
+        &packet,
+        "server.activation"));
+
+    rdp_buffer_free(&slowpath);
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&packet);
     return 0;
 }
 

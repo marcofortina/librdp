@@ -214,6 +214,7 @@ struct librdp_server_peer
     uint8_t licensing_done;
     uint8_t client_info_seen;
     uint8_t synchronize_seen;
+    uint8_t control_cooperate_seen;
     uint8_t control_seen;
     uint8_t font_list_seen;
     uint8_t updates_suppressed;

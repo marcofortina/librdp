@@ -91,6 +91,7 @@ int test_protocol_activation_vectors(void)
     rdp_capability_activation confirm_activation;
     rdp_capability_bitmap_codecs confirm_bitmap_codecs;
     rdp_nscodec_capability confirm_nscodec;
+    rdp_slowpath_confirm_active parsed_confirm;
     rdp_capability_set virtual_channel_minimal_set;
     uint32_t error_info = 0;
     size_t i = 0;
@@ -147,6 +148,22 @@ int test_protocol_activation_vectors(void)
     virtual_channel_minimal_set.data_len = sizeof(virtual_channel_minimal_data);
     PCHECK(rdp_slowpath_write_confirm_active(&confirm_active, 0x12345678u, 1004, 800, 600, "librdp") ==
            LIBRDP_STATUS_OK);
+    memset(&parsed_confirm, 0, sizeof(parsed_confirm));
+    PCHECK(rdp_slowpath_parse_confirm_active(
+               confirm_active.data,
+               confirm_active.length,
+               &parsed_confirm) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_confirm.share_id == 0x12345678u);
+    PCHECK(parsed_confirm.originator_id == 1002u);
+    PCHECK(parsed_confirm.header.channel_id == 1004u);
+    PCHECK(parsed_confirm.source_descriptor_len == 6u);
+    PCHECK(memcmp(parsed_confirm.source_descriptor, "librdp", 6u) == 0);
+    PCHECK(parsed_confirm.capabilities.count == 18u);
+    PCHECK(rdp_slowpath_parse_confirm_active(
+               confirm_active.data,
+               confirm_active.length - 1u,
+               &parsed_confirm) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(parsed_confirm.share_id == 0x12345678u);
     PCHECK(rdp_slowpath_parse_share_control_header(confirm_active.data, confirm_active.length, &slow_header) ==
            LIBRDP_STATUS_OK);
     PCHECK(slow_header.total_length == confirm_active.length);
@@ -165,6 +182,25 @@ int test_protocol_activation_vectors(void)
     {
         PCHECK(confirm_caps.sets[i].type == expected_confirm_types[i]);
         PCHECK(confirm_caps.sets[i].length == expected_confirm_lengths[i]);
+    }
+    {
+        const size_t capabilities_offset = 16u + confirm_source_len;
+        const size_t second_type_offset =
+            capabilities_offset + 4u + expected_confirm_lengths[0];
+        const uint8_t saved_type_low = confirm_active.data[second_type_offset];
+        const uint8_t saved_type_high = confirm_active.data[second_type_offset + 1u];
+
+        confirm_active.data[second_type_offset] =
+            confirm_active.data[capabilities_offset + 4u];
+        confirm_active.data[second_type_offset + 1u] =
+            confirm_active.data[capabilities_offset + 5u];
+        PCHECK(rdp_slowpath_parse_confirm_active(
+                   confirm_active.data,
+                   confirm_active.length,
+                   &parsed_confirm) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(parsed_confirm.share_id == 0x12345678u);
+        confirm_active.data[second_type_offset] = saved_type_low;
+        confirm_active.data[second_type_offset + 1u] = saved_type_high;
     }
     confirm_bitmap_set = rdp_capabilities_find(&confirm_caps, RDP_CAPABILITY_TYPE_BITMAP);
     PCHECK(confirm_bitmap_set != NULL);
@@ -209,12 +245,21 @@ int test_protocol_activation_vectors(void)
            confirm_order.order_flags == 0x002au &&
            confirm_order.desktop_save_size == 230400u &&
            confirm_order.text_ansi_code_page == 65001u);
-    for (i = 0; i < sizeof(confirm_order.order_support); i++)
     {
-        uint8_t field_bytes = 0;
-        const uint8_t expected = rdp_gdi_primary_order_field_bytes((uint8_t)i, &field_bytes) ? 1u : 0u;
+        size_t supported_orders = 0;
+        size_t unsupported_orders = 0;
 
-        PCHECK(confirm_order.order_support[i] == expected);
+        for (i = 0; i < sizeof(confirm_order.order_support); i++)
+        {
+            uint8_t field_bytes = 0;
+            const uint8_t expected =
+                rdp_gdi_primary_order_field_bytes((uint8_t)i, &field_bytes) ? 1u : 0u;
+
+            PCHECK(confirm_order.order_support[i] == expected);
+            supported_orders += expected != 0u ? 1u : 0u;
+            unsupported_orders += expected == 0u ? 1u : 0u;
+        }
+        PCHECK(supported_orders > 0u && unsupported_orders > 0u);
     }
     confirm_set = rdp_capabilities_find(&confirm_caps, RDP_CAPABILITY_TYPE_BITMAP_CACHE_V2);
     PCHECK(confirm_set != NULL);
