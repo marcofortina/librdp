@@ -238,6 +238,7 @@ if(LIBRDP_BUILD_TESTS)
     librdp_apply_sanitizer_link_options(test_server_host_drive)
 
     add_executable(test_server_client_smoke
+        tests/test_server_client_clipboard.c
         tests/test_server_client_smoke.c
         tests/test_http_proxy.c
         tests/test_process_state.c
@@ -563,6 +564,12 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_input_smoke core)
     add_test(NAME server_client_smoke_input_core_fallback
              COMMAND test_server_client_input_smoke core-fallback)
+    add_test(NAME server_client_smoke_clipboard_text
+             COMMAND test_server_client_smoke clipboard-text)
+    add_test(NAME server_client_smoke_clipboard_html
+             COMMAND test_server_client_smoke clipboard-html)
+    add_test(NAME server_client_smoke_clipboard_png
+             COMMAND test_server_client_smoke clipboard-png)
     if(TARGET test_workspace_launch_smoke)
         add_test(NAME workspace_desktop_launch_smoke
             COMMAND test_workspace_launch_smoke
@@ -752,6 +759,9 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_input_pen
         server_client_smoke_input_core
         server_client_smoke_input_core_fallback
+        server_client_smoke_clipboard_text
+        server_client_smoke_clipboard_html
+        server_client_smoke_clipboard_png
         server_client_smoke_nla_invalid
         server_client_smoke_nla_expired
         server_client_smoke_nla_locked
