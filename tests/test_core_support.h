@@ -99,6 +99,9 @@
 #define DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME 24
 #define DVC_SCENARIO_COMPOSITED_RUNTIME 25
 #define DVC_SCENARIO_RAIL_RUNTIME 26
+#define DVC_SCENARIO_DISPLAY_CONTROL_RESIZE_STRESS 27
+
+#define CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT 5u
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_ALTSEC_RUNTIME 1
@@ -226,8 +229,19 @@ typedef struct owner_thread_capture
     librdp_status status;
 } owner_thread_capture;
 
+typedef struct core_test_display_resize_stage
+{
+    uint32_t requested_width;
+    uint32_t requested_height;
+    uint32_t width;
+    uint32_t height;
+    uint32_t color;
+} core_test_display_resize_stage;
+
 extern const uint8_t core_test_server_random[32];
 extern const librdp_feature core_test_all_features[19];
+extern const core_test_display_resize_stage
+    core_test_display_resize_stages[CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT];
 extern const uint8_t core_test_server_certificate[];
 extern const size_t core_test_server_certificate_len;
 
@@ -417,6 +431,8 @@ int test_display_control_caps_reject_pending_layout(void);
 int test_display_control_dvc_rejects_unrequested_feature(void);
 
 int test_display_control_accept_pending_and_resize(void);
+
+int test_display_control_resize_frame_stability(void);
 
 int test_dynamic_channel_data_before_create(void);
 

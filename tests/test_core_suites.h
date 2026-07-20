@@ -45,6 +45,7 @@ int test_echo_channel_client_late_response(void);
 int test_display_control_caps_reject_pending_layout(void);
 int test_display_control_dvc_rejects_unrequested_feature(void);
 int test_display_control_accept_pending_and_resize(void);
+int test_display_control_resize_frame_stability(void);
 int test_dynamic_channel_data_before_create(void);
 int test_dynamic_channel_public_fragment_send(void);
 int test_server_redirection_state(void);

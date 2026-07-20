@@ -14,6 +14,9 @@
 
 #include "protocol/session_selection.h"
 
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+
 /*
  * Coverage: validates static channel registration, activation-time channel
  * metadata, fragmented channel delivery, and deterministic fixture shutdown.
@@ -1071,6 +1074,169 @@ int test_display_control_accept_pending_and_resize(void)
     CHECK(librdp_session_get_metrics(session, &after_resize) == LIBRDP_STATUS_OK);
     CHECK(after_resize.channel_out == before_resize.channel_out + 1u);
     CHECK(after_resize.channel_bytes_out == before_resize.channel_bytes_out + 58u);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+static int display_control_surface_matches_stage(
+    const librdp_surface* surface,
+    const core_test_display_resize_stage* stage)
+{
+    uint8_t actual_digest[EVP_MAX_MD_SIZE];
+    uint8_t expected_digest[EVP_MAX_MD_SIZE];
+    uint8_t* expected = NULL;
+    const uint8_t* actual = NULL;
+    size_t stride = 0u;
+    size_t expected_size = 0u;
+    size_t x = 0u;
+    size_t y = 0u;
+    unsigned int actual_digest_len = 0u;
+    unsigned int expected_digest_len = 0u;
+    int matches = 0;
+
+    if (!surface || !stage ||
+        librdp_surface_width(surface) != stage->width ||
+        librdp_surface_height(surface) != stage->height)
+        return 0;
+    actual = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    if (!actual || stride < (size_t)stage->width * 4u ||
+        stage->height > SIZE_MAX / stride)
+        return 0;
+    expected_size = stride * (size_t)stage->height;
+    expected = (uint8_t*)calloc(1u, expected_size);
+    if (!expected)
+        return 0;
+    for (y = 0u; y < stage->height; y++)
+    {
+        uint8_t* row = expected + y * stride;
+
+        for (x = 0u; x < stage->width; x++)
+        {
+            row[x * 4u] = (uint8_t)stage->color;
+            row[x * 4u + 1u] = (uint8_t)(stage->color >> 8u);
+            row[x * 4u + 2u] = (uint8_t)(stage->color >> 16u);
+            row[x * 4u + 3u] = 0xffu;
+        }
+    }
+    if (EVP_Digest(actual,
+                   expected_size,
+                   actual_digest,
+                   &actual_digest_len,
+                   EVP_sha256(),
+                   NULL) == 1 &&
+        EVP_Digest(expected,
+                   expected_size,
+                   expected_digest,
+                   &expected_digest_len,
+                   EVP_sha256(),
+                   NULL) == 1 &&
+        actual_digest_len == expected_digest_len &&
+        actual_digest_len != 0u &&
+        CRYPTO_memcmp(actual_digest, expected_digest, actual_digest_len) == 0)
+    {
+        matches = 1;
+    }
+    free(expected);
+    return matches;
+}
+
+/*
+ * Coverage: drives grow, shrink, maximize-like, restore, and odd-sized Display
+ * Control layouts through real reactivation epochs. Each stable frame must
+ * replace every framebuffer byte, preventing stale geometry from passing on
+ * callback counts alone.
+ */
+int test_display_control_resize_frame_stability(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    librdp_metrics metrics;
+    graphics_update_capture graphics;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t stage_index = 0u;
+
+    memset(&graphics, 0, sizeof(graphics));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_desktop_size(settings, 640u, 480u) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_DISPLAY_CONTROL_RESIZE_STRESS,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_graphics_update_callback(session, on_graphics_update, &graphics);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_resize(session,
+                                core_test_display_resize_stages[0].requested_width,
+                                core_test_display_resize_stages[0].requested_height) == LIBRDP_STATUS_OK);
+
+    for (stage_index = 0u;
+         stage_index < CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT;
+         stage_index++)
+    {
+        const core_test_display_resize_stage* stage =
+            &core_test_display_resize_stages[stage_index];
+        size_t attempt = 0u;
+        int stable = 0;
+
+        for (attempt = 0u; attempt < 24u && !stable; attempt++)
+        {
+            librdp_status status = librdp_session_run_once(session, 1000);
+
+            CHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT);
+            stable = graphics.desktop_resize >= (int)(stage_index + 1u) &&
+                     graphics.frame_end >= (int)(stage_index + 1u) &&
+                     display_control_surface_matches_stage(
+                         librdp_session_get_surface(session),
+                         stage);
+        }
+        CHECK(stable);
+        if (stage_index + 1u < CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT)
+        {
+            const core_test_display_resize_stage* next =
+                &core_test_display_resize_stages[stage_index + 1u];
+
+            CHECK(librdp_session_resize(session,
+                                        next->requested_width,
+                                        next->requested_height) == LIBRDP_STATUS_OK);
+        }
+    }
+
+    CHECK(graphics.desktop_resize == (int)CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT);
+    CHECK(graphics.frame_begin >= (int)CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT);
+    CHECK(graphics.frame_end >= (int)CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT);
+    CHECK(graphics.pixel_rect >= (int)CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT);
+    CHECK(graphics.borrowed_pixels >= (int)CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT);
+    CHECK(graphics.invalid == 0);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_DISPLAY_CONTROL,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.negotiated && feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.frames >= CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT);
+    CHECK(metrics.surface_updates >= CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT);
+    CHECK(metrics.channel_out >= CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT);
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
 
     librdp_session_free(session);
     librdp_settings_free(settings);

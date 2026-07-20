@@ -43,6 +43,16 @@ const librdp_feature core_test_all_features[] = {
     LIBRDP_FEATURE_GEOMETRY_TRACKING,
     LIBRDP_FEATURE_MULTIPARTY
 };
+
+const core_test_display_resize_stage
+    core_test_display_resize_stages[CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT] = {
+        {1024u, 768u, 1024u, 768u, 0x00332211u},
+        {800u, 600u, 800u, 600u, 0x00665544u},
+        {1600u, 900u, 1600u, 900u, 0x00998877u},
+        {1024u, 768u, 1024u, 768u, 0x00ccbbaau},
+        {1001u, 701u, 1000u, 701u, 0x00f0d0b0u}
+    };
+
 const uint8_t core_test_server_certificate[] = {
     0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
     0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
@@ -1310,6 +1320,142 @@ static int build_gdi_update_packet_from_orders(rdp_buffer* out,
     rdp_buffer_free(&mcs);
     rdp_buffer_free(&slow);
     rdp_buffer_free(&payload);
+    return ok;
+}
+
+/*
+ * Wrap one server slow-path PDU in MCS, X.224, and TPKT framing. Keeping this
+ * path structured catches reactivation framing regressions independently of
+ * the older byte-oriented handshake fixture.
+ */
+static int build_server_slowpath_packet(rdp_buffer* out, const rdp_buffer* slowpath)
+{
+    rdp_buffer mcs;
+    rdp_buffer x224;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!out || !slowpath)
+        return 0;
+
+    rdp_buffer_init(&mcs);
+    rdp_buffer_init(&x224);
+    status = rdp_mcs_write_send_data_indication(&mcs,
+                                                (uint16_t)(RDP_MCS_BASE_CHANNEL_ID + 3u),
+                                                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                slowpath->data,
+                                                slowpath->length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_x224_wrap_data(&x224, mcs.data, mcs.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_tpkt_write(out, x224.data, x224.length);
+    rdp_buffer_free(&x224);
+    rdp_buffer_free(&mcs);
+    return status == LIBRDP_STATUS_OK;
+}
+
+static int build_display_resize_deactivate_packet(rdp_buffer* out)
+{
+    rdp_buffer slowpath;
+    int ok = 0;
+
+    if (!out)
+        return 0;
+    rdp_buffer_init(&slowpath);
+    ok = rdp_slowpath_write_deactivate_all(&slowpath,
+                                           0x10203040u,
+                                           (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
+         build_server_slowpath_packet(out, &slowpath);
+    rdp_buffer_free(&slowpath);
+    return ok;
+}
+
+static int build_display_resize_demand_packet(rdp_buffer* out,
+                                              uint32_t width,
+                                              uint32_t height)
+{
+    rdp_buffer slowpath;
+    int ok = 0;
+
+    if (!out || width == 0u || height == 0u ||
+        width > UINT16_MAX || height > UINT16_MAX)
+        return 0;
+    rdp_buffer_init(&slowpath);
+    ok = rdp_slowpath_write_demand_active(&slowpath,
+                                          0x10203040u,
+                                          (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                          (uint16_t)width,
+                                          (uint16_t)height,
+                                          "resize-test") == LIBRDP_STATUS_OK &&
+         build_server_slowpath_packet(out, &slowpath);
+    rdp_buffer_free(&slowpath);
+    return ok;
+}
+
+/*
+ * Emit an atomic frame that fills the complete resized desktop. A whole-frame
+ * hash on the client then detects stale rows, clipped columns, or pixels left
+ * over from an earlier geometry.
+ */
+static int build_display_resize_frame_packet(rdp_buffer* out,
+                                             const core_test_display_resize_stage* stage)
+{
+    rdp_buffer orders;
+    rdp_buffer marker_payload;
+    rdp_buffer marker_order;
+    rdp_buffer opaque_payload;
+    rdp_gdi_frame_marker_order marker;
+    int ok = 0;
+
+    if (!out || !stage || stage->width == 0u || stage->height == 0u ||
+        stage->width > UINT16_MAX || stage->height > UINT16_MAX)
+        return 0;
+
+    rdp_buffer_init(&orders);
+    rdp_buffer_init(&marker_payload);
+    rdp_buffer_init(&marker_order);
+    rdp_buffer_init(&opaque_payload);
+    memset(&marker, 0, sizeof(marker));
+
+    ok = rdp_gdi_write_frame_marker_order(&marker_payload, &marker) == LIBRDP_STATUS_OK &&
+         rdp_gdi_write_altsec_order(&marker_order,
+                                    RDP_GDI_ALTSEC_FRAME_MARKER,
+                                    marker_payload.data,
+                                    marker_payload.length) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, marker_order.data, marker_order.length) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&opaque_payload, 0u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&opaque_payload, 0u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&opaque_payload, (uint16_t)stage->width) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&opaque_payload, (uint16_t)stage->height) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u8(&opaque_payload, (uint8_t)stage->color) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u8(&opaque_payload, (uint8_t)(stage->color >> 8u)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u8(&opaque_payload, (uint8_t)(stage->color >> 16u)) == LIBRDP_STATUS_OK &&
+         rdp_gdi_write_primary_order(&orders,
+                                     RDP_GDI_ORDER_OPAQUERECT,
+                                     RDP_GDI_ORDER_OPAQUERECT,
+                                     RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+                                     0x1fu,
+                                     NULL,
+                                     0u,
+                                     opaque_payload.data,
+                                     opaque_payload.length) == LIBRDP_STATUS_OK;
+    marker_payload.length = 0u;
+    marker_order.length = 0u;
+    marker.action = 1u;
+    if (ok)
+    {
+        ok = rdp_gdi_write_frame_marker_order(&marker_payload, &marker) == LIBRDP_STATUS_OK &&
+             rdp_gdi_write_altsec_order(&marker_order,
+                                        RDP_GDI_ALTSEC_FRAME_MARKER,
+                                        marker_payload.data,
+                                        marker_payload.length) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(&orders, marker_order.data, marker_order.length) == LIBRDP_STATUS_OK &&
+             build_gdi_update_packet_from_orders(out, orders.data, orders.length, 3u);
+    }
+
+    rdp_buffer_free(&opaque_payload);
+    rdp_buffer_free(&marker_order);
+    rdp_buffer_free(&marker_payload);
+    rdp_buffer_free(&orders);
     return ok;
 }
 
@@ -3190,6 +3336,95 @@ static int read_client_display_control_layout_fd(int fd,
     return 0;
 }
 
+static int read_client_reactivation_sequence_fd(int fd,
+                                                uint8_t* input,
+                                                size_t capacity)
+{
+    size_t input_len = 0u;
+    size_t pdu_index = 0u;
+
+    if (fd < 0 || !input || capacity == 0u)
+        return 0;
+    for (pdu_index = 0u; pdu_index < 6u; pdu_index++)
+    {
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (pdu_index == 0u && !validate_confirm_active(input, input_len))
+            return 0;
+    }
+    return 1;
+}
+
+/*
+ * Exercise repeated Display Control changes through complete RDP reactivation
+ * epochs. The peer does not advance until it has received the requested
+ * layout and all client finalization PDUs for the preceding Demand Active.
+ */
+static int run_display_control_resize_server_scenario(int fd,
+                                                      uint8_t* input,
+                                                      size_t capacity)
+{
+    rdp_buffer caps;
+    rdp_buffer deactivate;
+    rdp_buffer demand;
+    rdp_buffer frame;
+    size_t stage_index = 0u;
+    int ok = 0;
+
+    if (fd < 0 || !input || capacity == 0u)
+        return 0;
+
+    rdp_buffer_init(&caps);
+    rdp_buffer_init(&deactivate);
+    rdp_buffer_init(&demand);
+    rdp_buffer_init(&frame);
+    ok = read_client_dynamic_create_response_fd(fd, input, capacity, 1004u, 7u) &&
+         build_dynamic_channel_display_control_caps_packet_ex(&caps, 1u, 8192u, 8192u) &&
+         write_exact_fd(fd, caps.data, caps.length);
+    for (stage_index = 0u;
+         ok && stage_index < CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT;
+         stage_index++)
+    {
+        const core_test_display_resize_stage* stage =
+            &core_test_display_resize_stages[stage_index];
+
+        deactivate.length = 0u;
+        demand.length = 0u;
+        frame.length = 0u;
+        ok = read_client_display_control_layout_fd(fd,
+                                                   input,
+                                                   capacity,
+                                                   1004u,
+                                                   7u,
+                                                   1u,
+                                                   stage->width,
+                                                   stage->height) &&
+             build_display_resize_deactivate_packet(&deactivate) &&
+             build_display_resize_demand_packet(&demand, stage->width, stage->height) &&
+             write_exact_fd(fd, deactivate.data, deactivate.length) &&
+             write_exact_fd(fd, demand.data, demand.length) &&
+             read_client_reactivation_sequence_fd(fd, input, capacity) &&
+             build_display_resize_frame_packet(&frame, stage) &&
+             write_exact_fd(fd, frame.data, frame.length);
+    }
+    if (ok)
+    {
+        ssize_t received = 0;
+
+        do
+        {
+            received = read(fd, input, capacity);
+        } while (received > 0 || (received < 0 && errno == EINTR));
+        ok = received == 0;
+    }
+
+    rdp_buffer_free(&frame);
+    rdp_buffer_free(&demand);
+    rdp_buffer_free(&deactivate);
+    rdp_buffer_free(&caps);
+    return ok;
+}
+
 /*
  * Fixture: reads one client device-redirection PDU from a static virtual
  * channel and copies it out of the stack-backed TPKT buffer. It lets RDPDR
@@ -4178,7 +4413,8 @@ int start_handshake_server_full(uint16_t* port,
                         }
                     }
 	                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_CAPS_REJECT_LAYOUT ||
-	                             dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT)
+	                             dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT ||
+	                             dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_RESIZE_STRESS)
 	                    {
 	                        if (!build_dynamic_channel_create_display_control_packet(&dvc_create) ||
 	                            !write_exact_fd(client, dvc_create.data, dvc_create.length))
@@ -4313,6 +4549,15 @@ int start_handshake_server_full(uint16_t* port,
                             !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
                             !read_client_display_control_layout_fd(client, input, sizeof(input), 1004, 7, 2u, 1440u, 600u) ||
                             !read_client_display_control_layout_fd(client, input, sizeof(input), 1004, 7, 1u, 1024u, 768u))
+                        {
+                            _exit(5);
+                        }
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_RESIZE_STRESS)
+                    {
+                        if (!run_display_control_resize_server_scenario(client,
+                                                                        input,
+                                                                        sizeof(input)))
                         {
                             _exit(5);
                         }

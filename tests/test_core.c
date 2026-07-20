@@ -70,6 +70,7 @@ static int run_channels(void)
     if (test_display_control_caps_reject_pending_layout() != 0 ||
         test_display_control_dvc_rejects_unrequested_feature() != 0 ||
         test_display_control_accept_pending_and_resize() != 0 ||
+        test_display_control_resize_frame_stability() != 0 ||
         test_dynamic_channel_data_before_create() != 0 ||
         test_dynamic_channel_public_fragment_send() != 0 ||
         test_server_redirection_state() != 0)
@@ -190,6 +191,8 @@ int test_client_core_named(const char* name)
         return test_video_geometry_runtime_lifecycle();
     if (strcmp(name, "channels") == 0)
         return run_channels();
+    if (strcmp(name, "display-resize-smoke") == 0)
+        return test_display_control_resize_frame_stability();
     if (strcmp(name, "storage") == 0)
         return run_storage();
     if (strcmp(name, "graphics") == 0)
@@ -247,6 +250,7 @@ int test_client_core(void)
     if (test_display_control_caps_reject_pending_layout() != 0 ||
         test_display_control_dvc_rejects_unrequested_feature() != 0 ||
         test_display_control_accept_pending_and_resize() != 0 ||
+        test_display_control_resize_frame_stability() != 0 ||
         test_dynamic_channel_data_before_create() != 0 ||
         test_dynamic_channel_public_fragment_send() != 0 ||
         test_server_redirection_state() != 0 ||
