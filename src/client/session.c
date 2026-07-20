@@ -2894,6 +2894,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             rdp_buffer response;
             uint32_t tunnels[2];
             uint32_t tunnel_count = 0;
+            uint8_t reliable_selected = 0;
+            uint8_t lossy_selected = 0;
 
             rdp_buffer_init(&response);
             memset(tunnels, 0, sizeof(tunnels));
@@ -2905,25 +2907,50 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 for (uint16_t i = 0; i < request.tunnel_count && tunnel_count < 2u; i++)
                 {
                     rdp_dynamic_channel_soft_sync_channel_list list;
+                    uint8_t eligible = 1;
 
                     status = rdp_dynamic_channel_soft_sync_request_get_list(&request, i, &list);
                     if (status != LIBRDP_STATUS_OK)
                         break;
-                    if (list.tunnel_type == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE &&
+                    for (uint16_t j = 0; j < list.channel_count; j++)
+                    {
+                        uint32_t channel_id = 0;
+
+                        status = rdp_dynamic_channel_soft_sync_channel_list_get_id(
+                            &list,
+                            j,
+                            &channel_id);
+                        if (status != LIBRDP_STATUS_OK)
+                            break;
+                        if (!rdp_session_dynamic_channel_find(session,
+                                                              channel_id))
+                            eligible = 0;
+                    }
+                    if (status != LIBRDP_STATUS_OK)
+                        break;
+                    eligible =
+                        eligible &&
                         rdp_session_multitransport_runtime_supported() &&
                         session->multitransport_negotiated &&
                         session->multitransport_flags != 0 &&
-                        rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_UDP_TRANSPORT))
+                        rdp_session_feature_ready_for_negotiation(
+                            session,
+                            LIBRDP_FEATURE_UDP_TRANSPORT);
+                    if (eligible &&
+                        list.tunnel_type ==
+                            RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE &&
+                        !reliable_selected)
                     {
                         tunnels[tunnel_count++] = list.tunnel_type;
+                        reliable_selected = 1;
                     }
-                    else if (list.tunnel_type == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY &&
-                             rdp_session_multitransport_runtime_supported() &&
-                             session->multitransport_negotiated &&
-                             session->multitransport_flags != 0 &&
-                             rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_UDP_TRANSPORT))
+                    else if (eligible &&
+                             list.tunnel_type ==
+                                 RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY &&
+                             !lossy_selected)
                     {
                         tunnels[tunnel_count++] = list.tunnel_type;
+                        lossy_selected = 1;
                     }
                 }
             }
@@ -2940,6 +2967,13 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             {
                 session->multitransport_udp_active = 1;
                 session->multitransport_soft_sync_count++;
+                session->multitransport_udp_reliable_selected =
+                    reliable_selected;
+                session->multitransport_udp_lossy_selected =
+                    lossy_selected;
+                rdp_session_metric_add(
+                    &session->multitransport_metrics.soft_syncs,
+                    1u);
             }
             rdp_buffer_free(&response);
             if (status != LIBRDP_STATUS_OK)
@@ -3317,8 +3351,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
-    session->multitransport_negotiated = 0;
-    session->multitransport_flags = 0;
+    rdp_session_multitransport_reset(session, 1);
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
@@ -4409,8 +4442,7 @@ fail:
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
-    session->multitransport_negotiated = 0;
-    session->multitransport_flags = 0;
+    rdp_session_multitransport_reset(session, 0);
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
@@ -6140,103 +6172,6 @@ librdp_status librdp_session_dispatch_pending(librdp_session* session)
         return LIBRDP_STATUS_OK;
     }
     return librdp_session_run_once(session, 0);
-}
-
-/*
- * Processes one caller-supplied UDP2 datagram after multitransport negotiation.
- * The function is deliberately session-owned and side-effect limited: malformed
- * packets fail before activation state changes, DATA packets produce bounded
- * ACK bytes in the caller buffer, and no payload bytes are exposed through trace.
- */
-librdp_status librdp_session_process_udp2_datagram(librdp_session* session,
-                                                   const void* datagram,
-                                                   size_t datagram_len,
-                                                   void* response,
-                                                   size_t response_capacity,
-                                                   size_t* response_len)
-{
-    rdp_buffer packet_bytes;
-    rdp_buffer ack_packet;
-    rdp_buffer ack_wire;
-    rdp_udp2_prefix prefix;
-    rdp_udp2_packet packet;
-    rdp_udp2_packet_kind kind = RDP_UDP2_PACKET_KIND_CONTROL;
-    librdp_status status = LIBRDP_STATUS_OK;
-
-    if (!session || !datagram || datagram_len == 0 || !response_len ||
-        (!response && response_capacity > 0))
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    *response_len = 0;
-    status = rdp_session_require_owner(session, "client.udp2.datagram.owner");
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    if (session->state != LIBRDP_SESSION_ACTIVE)
-        return LIBRDP_STATUS_STATE;
-    if (!rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_UDP2_TRANSPORT) ||
-        !session->multitransport_negotiated)
-        return LIBRDP_STATUS_UNSUPPORTED;
-
-    rdp_buffer_init(&packet_bytes);
-    rdp_buffer_init(&ack_packet);
-    rdp_buffer_init(&ack_wire);
-    memset(&prefix, 0, sizeof(prefix));
-    memset(&packet, 0, sizeof(packet));
-
-    status = rdp_udp2_unwrap_packet(&packet_bytes, datagram, datagram_len, &prefix);
-    if (status == LIBRDP_STATUS_OK && prefix.packet_type == RDP_UDP2_PACKET_TYPE_DATA)
-        status = rdp_udp2_parse_packet(packet_bytes.data, packet_bytes.length, &packet);
-    if (status == LIBRDP_STATUS_OK && prefix.packet_type == RDP_UDP2_PACKET_TYPE_DATA)
-        status = rdp_udp2_classify_packet(&packet, &kind);
-    if (status == LIBRDP_STATUS_OK &&
-        (kind == RDP_UDP2_PACKET_KIND_DATA || kind == RDP_UDP2_PACKET_KIND_DATA_WITH_ACK))
-    {
-        status = rdp_udp2_write_ack_packet(&ack_packet,
-                                           packet.header.log_window_size,
-                                           packet.data_sequence_number,
-                                           0,
-                                           0,
-                                           NULL,
-                                           0,
-                                           0);
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_udp2_wrap_packet(&ack_wire,
-                                          ack_packet.data,
-                                          ack_packet.length,
-                                          RDP_UDP2_PACKET_TYPE_DATA);
-    }
-    if (status == LIBRDP_STATUS_OK && ack_wire.length > response_capacity)
-    {
-        *response_len = ack_wire.length;
-        status = LIBRDP_STATUS_LIMIT_EXCEEDED;
-    }
-    if (status == LIBRDP_STATUS_OK)
-    {
-        if (ack_wire.length > 0)
-            memcpy(response, ack_wire.data, ack_wire.length);
-        *response_len = ack_wire.length;
-        session->multitransport_udp2_active = 1;
-        rdp_session_metric_add(&session->metrics.pdu_in, 1u);
-        if (ack_wire.length > 0)
-            rdp_session_metric_add(&session->metrics.pdu_out, 1u);
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.udp2.datagram",
-                        "wire_len=%u ack_len=%u kind=%u",
-                        (unsigned)datagram_len,
-                        (unsigned)ack_wire.length,
-                        (unsigned)kind);
-    }
-    if (status != LIBRDP_STATUS_OK)
-        rdp_session_set_last_error(session,
-                                   status,
-                                   0,
-                                   LIBRDP_ERROR_COMPONENT_TRANSPORT,
-                                   "client.udp2.datagram",
-                                   "UDP2 datagram processing failed");
-
-    rdp_buffer_free(&ack_wire);
-    rdp_buffer_free(&ack_packet);
-    rdp_buffer_free(&packet_bytes);
-    return status;
 }
 
 librdp_status librdp_session_get_next_timeout(const librdp_session* session, int* timeout_ms)

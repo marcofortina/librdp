@@ -995,14 +995,19 @@ librdp_status librdp_session_get_metrics(const librdp_session* session, librdp_m
 
 librdp_status librdp_session_reset_metrics(librdp_session* session)
 {
+    librdp_status status = LIBRDP_STATUS_OK;
+
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    {
-        librdp_status status = rdp_session_require_owner(session, "client.metrics.reset.owner");
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-    }
-    return librdp_metrics_init(&session->metrics);
+    status = rdp_session_require_owner(session,
+                                       "client.metrics.reset.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = librdp_metrics_init(&session->metrics);
+    if (status == LIBRDP_STATUS_OK)
+        status = librdp_multitransport_metrics_init(
+            &session->multitransport_metrics);
+    return status;
 }
 
 void librdp_session_clear_last_error(librdp_session* session)

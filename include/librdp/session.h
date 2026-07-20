@@ -88,6 +88,7 @@ typedef enum librdp_session_lifecycle
 } librdp_session_lifecycle;
 
 #define LIBRDP_METRICS_VERSION 1u /**< Current librdp_metrics version. */
+#define LIBRDP_MULTITRANSPORT_METRICS_VERSION 1u /**< Current multitransport metrics version. */
 #define LIBRDP_ECHO_STATS_VERSION 1u /**< Current librdp_echo_stats version. */
 #define LIBRDP_GRAPHICS_UPDATE_VERSION 1u /**< Current librdp_graphics_update version. */
 #define LIBRDP_RECONNECT_POLICY_VERSION 1u /**< Current librdp_reconnect_policy version. */
@@ -163,6 +164,43 @@ typedef struct librdp_metrics
     uint64_t reconnects;              /**< Coordinated reconnect attempts started by public reconnect APIs. */
     uint64_t limits_rejected;         /**< Operations rejected because a configured limit was exceeded. */
 } librdp_metrics;
+
+/**
+ * @brief Versioned client multitransport metrics snapshot.
+ *
+ * Counters describe datagrams submitted through the public side-transport
+ * processing APIs. They are monotonic for one session connection and reset
+ * when a new connection starts. Overflow is saturated at UINT64_MAX.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_multitransport_metrics
+{
+    uint32_t version; /**< Struct version, LIBRDP_MULTITRANSPORT_METRICS_VERSION. */
+    uint32_t size;    /**< Size of this struct in bytes. */
+    uint64_t soft_syncs; /**< Soft-sync requests that selected at least one UDP tunnel. */
+    uint64_t udp_datagrams_in; /**< Accepted RDPEUDP datagrams. */
+    uint64_t udp_datagrams_out; /**< RDPEUDP ACK-vector datagrams emitted. */
+    uint64_t udp_bytes_in; /**< Accepted RDPEUDP wire bytes. */
+    uint64_t udp_bytes_out; /**< Emitted RDPEUDP wire bytes. */
+    uint64_t udp_ack_vector_in; /**< RDPEUDP ACK vectors accepted from the peer. */
+    uint64_t udp_ack_vector_out; /**< RDPEUDP ACK vectors emitted. */
+    uint64_t udp_pending_packets; /**< Reliable RDPEUDP receive gaps reported as pending. */
+    uint64_t udp_dropped_packets; /**< Lossy RDPEUDP gaps or stale datagrams intentionally dropped. */
+    uint64_t udp_reordered_packets; /**< Duplicate or reordered RDPEUDP datagrams observed. */
+    uint64_t udp_tcp_fallbacks; /**< Reliable RDPEUDP gaps that forced TCP fallback. */
+    uint64_t udp2_datagrams_in; /**< Accepted UDP2 datagrams. */
+    uint64_t udp2_datagrams_out; /**< UDP2 ACK or ACK-vector datagrams emitted. */
+    uint64_t udp2_bytes_in; /**< Accepted UDP2 wire bytes. */
+    uint64_t udp2_bytes_out; /**< Emitted UDP2 wire bytes. */
+    uint64_t udp2_ack_in; /**< UDP2 ACK packets accepted from the peer. */
+    uint64_t udp2_ack_out; /**< UDP2 ACK packets emitted. */
+    uint64_t udp2_ack_vector_in; /**< UDP2 ACK-vector packets accepted from the peer. */
+    uint64_t udp2_ack_vector_out; /**< UDP2 ACK-vector packets emitted for receive gaps. */
+    uint64_t udp2_lost_packets; /**< UDP2 receive gaps and peer-reported losses. */
+    uint64_t udp2_reordered_packets; /**< Duplicate or reordered UDP2 data packets observed. */
+    uint64_t udp2_tcp_fallbacks; /**< UDP2 gaps that exceeded the negotiated window. */
+} librdp_multitransport_metrics;
 
 /**
  * @brief Versioned Echo diagnostic statistics snapshot.
@@ -472,6 +510,20 @@ LIBRDP_API librdp_status librdp_trace_policy_init(librdp_trace_policy* policy);
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_metrics_init(librdp_metrics* metrics);
+
+/**
+ * @brief Initialize a client multitransport metrics snapshot.
+ *
+ * @param[out] metrics Caller-owned object to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success or LIBRDP_STATUS_INVALID_ARGUMENT when
+ * metrics is NULL.
+ *
+ * @note Thread-safety: the object must not be concurrently accessed.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_multitransport_metrics_init(
+    librdp_multitransport_metrics* metrics);
 
 /**
  * @brief Initialize an Echo statistics descriptor.
@@ -935,6 +987,46 @@ LIBRDP_API librdp_status librdp_session_notify_poll(librdp_session* session,
 LIBRDP_API librdp_status librdp_session_dispatch_pending(librdp_session* session);
 
 /**
+ * @brief Process one RDPEUDP side-transport datagram.
+ *
+ * The application owns the UDP socket and any TLS or DTLS protection. It
+ * submits a decrypted RDPEUDP record after multitransport negotiation and
+ * soft-sync selection. Reliable mode tracks receive gaps and emits a bounded
+ * SACK vector; lossy mode accepts gaps without retransmission and accounts
+ * them as dropped packets.
+ *
+ * @param[in,out] session Active session that negotiated multitransport and
+ * selected UDP; must not be NULL.
+ * @param[in] reliable Non-zero for reliable RDPEUDP, zero for lossy RDPEUDP.
+ * @param[in] datagram Borrowed RDPEUDP bytes; must not be NULL.
+ * @param[in] datagram_len Number of bytes in datagram; must be non-zero.
+ * @param[out] response Caller-owned response buffer. May be NULL only when
+ * response_capacity is zero.
+ * @param[in] response_capacity Number of bytes available in response.
+ * @param[out] response_len Number of response bytes written, or required bytes
+ * when the response buffer is too small; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK when accepted; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments; LIBRDP_STATUS_STATE when the session is not ACTIVE or the
+ * owner-thread contract is violated; LIBRDP_STATUS_UNSUPPORTED when the
+ * negotiated side transport is unavailable; LIBRDP_STATUS_LIMIT_EXCEEDED when
+ * response is too small; LIBRDP_STATUS_PROTOCOL_ERROR for malformed or
+ * out-of-window reliable datagrams.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @warning The datagram can contain redirected channel traffic. Do not log its
+ * body outside the redacted trace path.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_process_udp_datagram(librdp_session* session,
+                                                             int reliable,
+                                                             const void* datagram,
+                                                             size_t datagram_len,
+                                                             void* response,
+                                                             size_t response_capacity,
+                                                             size_t* response_len);
+
+/**
  * @brief Process one UDP2 side-transport datagram for an active client session.
  *
  * The application owns the UDP socket, gateway tunnel, or platform transport
@@ -1275,10 +1367,32 @@ LIBRDP_API librdp_status librdp_session_get_metrics(const librdp_session* sessio
                                                     librdp_metrics* metrics);
 
 /**
- * @brief Reset all counters in the session metrics snapshot.
+ * @brief Copy current client multitransport metrics.
+ *
+ * The destination must be initialized with
+ * librdp_multitransport_metrics_init(). No packet payload is retained or
+ * exposed by this query.
+ *
+ * @param[in] session Session to query; must not be NULL.
+ * @param[out] metrics Caller-owned initialized destination; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid pointers or metadata; LIBRDP_STATUS_STATE from an owner-thread
+ * violation.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_get_multitransport_metrics(
+    const librdp_session* session,
+    librdp_multitransport_metrics* metrics);
+
+/**
+ * @brief Reset all counters in the session metrics snapshots.
  *
  * The metrics version and size remain LIBRDP_METRICS_VERSION and
- * sizeof(librdp_metrics). Active protocol/channel state is not changed.
+ * sizeof(librdp_metrics). Multitransport counters are also reset while active
+ * protocol, receive-window, and channel state remain unchanged.
  *
  * @param[in,out] session Session whose metrics are reset; must not be NULL.
  *

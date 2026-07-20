@@ -579,28 +579,120 @@ int test_dynamic_channel_empty_compressed_fragments(void)
 }
 
 /*
+ * Build a decrypted RDPEUDP DATA record with one source payload. The fixture
+ * controls sequence and receive-window values while preserving the production
+ * writer layout used by the transport parser.
+ */
+static librdp_status build_test_udp_data(rdp_buffer* datagram,
+                                         uint32_t sequence,
+                                         uint16_t receive_window,
+                                         const void* data,
+                                         size_t data_len)
+{
+    rdp_udp_fec_header header;
+    rdp_udp_source_payload_header source;
+    size_t payload_size = 8u + data_len;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!datagram || (!data && data_len > 0) ||
+        payload_size > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    datagram->length = 0;
+    memset(&header, 0, sizeof(header));
+    memset(&source, 0, sizeof(source));
+    header.source_ack = sequence;
+    header.receive_window_size = receive_window;
+    header.flags = RDP_UDP_FLAG_DATA;
+    source.coded_sequence = sequence;
+    source.source_start = sequence;
+    status = rdp_udp_write_fec_header(datagram, &header);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_udp_write_payload_prefix(
+            datagram,
+            (uint16_t)payload_size);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_udp_write_source_payload_header(datagram, &source);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(datagram, data, data_len);
+    if (status != LIBRDP_STATUS_OK)
+        datagram->length = 0;
+    return status;
+}
+
+/*
+ * Build a framed UDP2 DATA datagram for receive-window tests. Both buffers are
+ * reusable and remain owned by the test.
+ */
+static librdp_status build_test_udp2_data(rdp_buffer* packet,
+                                          rdp_buffer* wire,
+                                          uint16_t sequence,
+                                          const void* data,
+                                          size_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!packet || !wire)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    packet->length = 0;
+    wire->length = 0;
+    status = rdp_udp2_write_data_packet(packet,
+                                        4u,
+                                        sequence,
+                                        data,
+                                        data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_udp2_wrap_packet(wire,
+                                      packet->data,
+                                      packet->length,
+                                      RDP_UDP2_PACKET_TYPE_DATA);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        packet->length = 0;
+        wire->length = 0;
+    }
+    return status;
+}
+
+/*
  * Coverage: validates that a DVC soft-sync tunnel request selects UDP only
- * when multitransport and UDP are explicitly requested. It also exercises the
- * app-owned UDP2 datagram path so feature status reflects real runtime wiring,
- * not packet helpers alone.
+ * when multitransport and UDP are explicitly requested. Independent reliable,
+ * lossy, and UDP2 windows catch non-atomic retries, sequence wrap mistakes,
+ * loss/reorder accounting, stale state after reconnect, and oversized gaps
+ * that must force a bounded TCP fallback.
  */
 int test_dynamic_channel_soft_sync_runtime(void)
 {
+    static const uint8_t payload[] = {'u', 'd', 'p'};
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     librdp_feature_status feature_status;
+    librdp_multitransport_metrics metrics;
+    rdp_buffer udp_datagram;
     rdp_buffer udp2_packet;
     rdp_buffer udp2_wire;
-    uint8_t udp2_response[64];
-    size_t udp2_response_len = 0;
+    rdp_udp_fec_header udp_response_header;
+    rdp_udp_ack_vector udp_ack_vector;
+    uint8_t response[256];
+    size_t response_len = 0;
+    uint32_t received = 0;
+    uint32_t pending = 0;
     uint16_t test_port = 0;
     pid_t server_pid = -1;
     int child_status = 0;
     librdp_status status = LIBRDP_STATUS_OK;
     size_t i = 0;
 
+    rdp_buffer_init(&udp_datagram);
     rdp_buffer_init(&udp2_packet);
     rdp_buffer_init(&udp2_wire);
+    memset(&metrics, 0, sizeof(metrics));
+    memset(&udp_response_header, 0, sizeof(udp_response_header));
+    memset(&udp_ack_vector, 0, sizeof(udp_ack_vector));
+    memset(response, 0, sizeof(response));
+    CHECK(librdp_multitransport_metrics_init(NULL) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_multitransport_metrics_init(&metrics) ==
+          LIBRDP_STATUS_OK);
     settings = librdp_settings_new();
     CHECK(settings != NULL);
     CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
@@ -614,7 +706,7 @@ int test_dynamic_channel_soft_sync_runtime(void)
                                        0,
                                        0,
                                        0,
-                                       1,
+                                       2,
                                        DVC_SCENARIO_SOFT_SYNC_TUNNEL_REQUEST,
                                        0,
                                        CLIPBOARD_SCENARIO_NONE));
@@ -623,7 +715,7 @@ int test_dynamic_channel_soft_sync_runtime(void)
     CHECK(session != NULL);
 
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
-    for (i = 0; i < 4u && status == LIBRDP_STATUS_OK; i++)
+    for (i = 0; i < 5u && status == LIBRDP_STATUS_OK; i++)
         status = librdp_session_run_once(session, 1000);
     CHECK(status == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_feature_status(session,
@@ -639,18 +731,208 @@ int test_dynamic_channel_soft_sync_runtime(void)
     CHECK(feature_status.negotiated && feature_status.active);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
 
-    CHECK(rdp_udp2_write_data_packet(&udp2_packet, 4u, 7u, "abc", 3u) == LIBRDP_STATUS_OK);
-    CHECK(rdp_udp2_wrap_packet(&udp2_wire,
-                               udp2_packet.data,
-                               udp2_packet.length,
-                               RDP_UDP2_PACKET_TYPE_DATA) == LIBRDP_STATUS_OK);
+    CHECK(build_test_udp_data(&udp_datagram,
+                              10u,
+                              4u,
+                              payload,
+                              sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              1,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              1u,
+                                              &response_len) ==
+          LIBRDP_STATUS_LIMIT_EXCEEDED);
+    CHECK(response_len > 1u);
+    CHECK(librdp_session_get_multitransport_metrics(session, &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.soft_syncs == 1u && metrics.udp_datagrams_in == 0u);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              1,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(response_len > 8u);
+
+    CHECK(build_test_udp_data(&udp_datagram,
+                              12u,
+                              4u,
+                              payload,
+                              sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              1,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_udp_parse_fec_header(response,
+                                   response_len,
+                                   &udp_response_header) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_udp_parse_ack_vector(response + 8u,
+                                  response_len - 8u,
+                                  &udp_ack_vector) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_udp_ack_vector_count(&udp_ack_vector,
+                                   &received,
+                                   &pending) ==
+          LIBRDP_STATUS_OK);
+    CHECK(received == 1u && pending == 1u);
+
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              1,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(build_test_udp_data(&udp_datagram,
+                              11u,
+                              4u,
+                              payload,
+                              sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              1,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_OK);
+
+    CHECK(build_test_udp_data(&udp_datagram,
+                              30u,
+                              4u,
+                              payload,
+                              sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              0,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(build_test_udp_data(&udp_datagram,
+                              33u,
+                              4u,
+                              payload,
+                              sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              0,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(build_test_udp_data(&udp_datagram,
+                              32u,
+                              4u,
+                              payload,
+                              sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              0,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_OK);
+
+    CHECK(build_test_udp_data(&udp_datagram,
+                              100u,
+                              4u,
+                              payload,
+                              sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              1,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              1,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_UNSUPPORTED);
+
+    CHECK(build_test_udp2_data(&udp2_packet,
+                               &udp2_wire,
+                               7u,
+                               payload,
+                               sizeof(payload)) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_process_udp2_datagram(session,
                                                udp2_wire.data,
                                                udp2_wire.length,
-                                               udp2_response,
-                                               sizeof(udp2_response),
-                                               &udp2_response_len) == LIBRDP_STATUS_OK);
-    CHECK(udp2_response_len > 0);
+                                               response,
+                                               1u,
+                                               &response_len) ==
+          LIBRDP_STATUS_LIMIT_EXCEEDED);
+    CHECK(response_len > 1u);
+    CHECK(librdp_session_process_udp2_datagram(session,
+                                               udp2_wire.data,
+                                               udp2_wire.length,
+                                               response,
+                                               sizeof(response),
+                                               &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(response_len > 0);
+    CHECK(build_test_udp2_data(&udp2_packet,
+                               &udp2_wire,
+                               9u,
+                               payload,
+                               sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp2_datagram(session,
+                                               udp2_wire.data,
+                                               udp2_wire.length,
+                                               response,
+                                               sizeof(response),
+                                               &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(build_test_udp2_data(&udp2_packet,
+                               &udp2_wire,
+                               8u,
+                               payload,
+                               sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp2_datagram(session,
+                                               udp2_wire.data,
+                                               udp2_wire.length,
+                                               response,
+                                               sizeof(response),
+                                               &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(build_test_udp2_data(&udp2_packet,
+                               &udp2_wire,
+                               1000u,
+                               payload,
+                               sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp2_datagram(session,
+                                               udp2_wire.data,
+                                               udp2_wire.length,
+                                               response,
+                                               sizeof(response),
+                                               &response_len) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(librdp_session_process_udp2_datagram(session,
+                                               udp2_wire.data,
+                                               udp2_wire.length,
+                                               response,
+                                               sizeof(response),
+                                               &response_len) ==
+          LIBRDP_STATUS_UNSUPPORTED);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_UDP2_TRANSPORT,
                                             &feature_status) == LIBRDP_STATUS_OK);
@@ -658,6 +940,67 @@ int test_dynamic_channel_soft_sync_runtime(void)
     CHECK(feature_status.negotiated && feature_status.active);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
 
+    CHECK(librdp_multitransport_metrics_init(&metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_multitransport_metrics(session, &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.soft_syncs == 1u);
+    CHECK(metrics.udp_datagrams_in == 7u &&
+          metrics.udp_datagrams_out == 7u);
+    CHECK(metrics.udp_pending_packets == 1u);
+    CHECK(metrics.udp_dropped_packets == 3u);
+    CHECK(metrics.udp_reordered_packets == 3u);
+    CHECK(metrics.udp_tcp_fallbacks == 1u);
+    CHECK(metrics.udp2_datagrams_in == 3u &&
+          metrics.udp2_datagrams_out == 3u);
+    CHECK(metrics.udp2_ack_out == 2u &&
+          metrics.udp2_ack_vector_out == 1u);
+    CHECK(metrics.udp2_lost_packets == 1u);
+    CHECK(metrics.udp2_reordered_packets == 1u);
+    CHECK(metrics.udp2_tcp_fallbacks == 1u);
+
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp2_datagram(session,
+                                               udp2_wire.data,
+                                               udp2_wire.length,
+                                               response,
+                                               sizeof(response),
+                                               &response_len) ==
+          LIBRDP_STATUS_STATE);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    status = LIBRDP_STATUS_OK;
+    for (i = 0; i < 5u && status == LIBRDP_STATUS_OK; i++)
+        status = librdp_session_run_once(session, 1000);
+    CHECK(status == LIBRDP_STATUS_OK);
+    CHECK(librdp_multitransport_metrics_init(&metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_multitransport_metrics(session, &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.soft_syncs == 1u && metrics.udp_datagrams_in == 0u &&
+          metrics.udp2_datagrams_in == 0u);
+    CHECK(build_test_udp_data(&udp_datagram,
+                              500u,
+                              4u,
+                              payload,
+                              sizeof(payload)) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp_datagram(session,
+                                              1,
+                                              udp_datagram.data,
+                                              udp_datagram.length,
+                                              response,
+                                              sizeof(response),
+                                              &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_reset_metrics(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_multitransport_metrics_init(&metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_multitransport_metrics(session, &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.soft_syncs == 0u && metrics.udp_datagrams_in == 0u &&
+          metrics.udp2_datagrams_in == 0u);
+
+    rdp_buffer_free(&udp_datagram);
     rdp_buffer_free(&udp2_wire);
     rdp_buffer_free(&udp2_packet);
     librdp_session_free(session);

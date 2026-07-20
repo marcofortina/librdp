@@ -114,6 +114,7 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_session_state", librdp_session_state, ",");
     ABI_TYPE_ENTRY("librdp_session_lifecycle", librdp_session_lifecycle, ",");
     ABI_TYPE_ENTRY("librdp_metrics", librdp_metrics, ",");
+    ABI_TYPE_ENTRY("librdp_multitransport_metrics", librdp_multitransport_metrics, ",");
     ABI_TYPE_ENTRY("librdp_echo_stats", librdp_echo_stats, ",");
     ABI_TYPE_ENTRY("librdp_reconnect_policy", librdp_reconnect_policy, ",");
     ABI_TYPE_ENTRY("librdp_graphics_update_type", librdp_graphics_update_type, ",");

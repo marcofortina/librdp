@@ -836,6 +836,20 @@ struct librdp_session
     uint8_t multitransport_udp_active;
     uint8_t multitransport_udp2_active;
     uint32_t multitransport_soft_sync_count;
+    uint8_t multitransport_udp_reliable_selected;
+    uint8_t multitransport_udp_lossy_selected;
+    uint8_t multitransport_udp_window_started[2];
+    uint8_t multitransport_udp_fallback_tcp[2];
+    uint16_t multitransport_udp_receive_window[2];
+    uint32_t multitransport_udp_next_receive_sequence[2];
+    uint32_t multitransport_udp_last_receive_sequence[2];
+    uint8_t multitransport_udp2_window_started;
+    uint8_t multitransport_udp2_fallback_tcp;
+    uint8_t multitransport_udp2_log_window_size;
+    uint16_t multitransport_udp2_next_receive_sequence;
+    uint16_t multitransport_udp2_last_receive_sequence;
+    uint16_t multitransport_udp2_last_peer_ack_sequence;
+    librdp_multitransport_metrics multitransport_metrics;
     rdp_graphics_decompressor graphics_decompressor;
     rdp_graphics_decompressor bulk_rdp8_decompressor;
     rdp_bulk_decompressor bulk_decompressor;
@@ -969,6 +983,7 @@ struct librdp_session
 
 
 #include "client/session_runtime.h"
+#include "client/session_multitransport.h"
 #include "client/session_lifecycle.h"
 #include "client/session_device.h"
 #include "client/session_filesystem.h"

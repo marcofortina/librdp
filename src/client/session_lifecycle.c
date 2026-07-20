@@ -136,6 +136,8 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     }
     limits = rdp_settings_limits_internal(session->settings);
     if (!limits || librdp_metrics_init(&session->metrics) != LIBRDP_STATUS_OK ||
+        librdp_multitransport_metrics_init(
+            &session->multitransport_metrics) != LIBRDP_STATUS_OK ||
         librdp_echo_stats_init(&session->echo_stats) != LIBRDP_STATUS_OK)
     {
         librdp_settings_free(session->settings);
@@ -477,8 +479,7 @@ librdp_status rdp_session_disconnect_inner(librdp_session* session)
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
-    session->multitransport_negotiated = 0;
-    session->multitransport_flags = 0;
+    rdp_session_multitransport_reset(session, 0);
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);

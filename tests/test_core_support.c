@@ -2477,15 +2477,17 @@ static int build_dynamic_channel_soft_sync_tunnel_request_packet(rdp_buffer* out
     ok = rdp_buffer_append_u8(&payload,
                               (uint8_t)(RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_REQUEST << 4)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u8(&payload, 0) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u32_le(&payload, 22u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&payload, 28u) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u16_le(&payload,
                                   RDP_DYNAMIC_CHANNEL_SOFT_SYNC_TCP_FLUSHED |
                                       RDP_DYNAMIC_CHANNEL_SOFT_SYNC_CHANNEL_LIST_PRESENT) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u16_le(&payload, 1u) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u32_le(&payload, RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u16_le(&payload, 2u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&payload, RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 1u) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u32_le(&payload, 7u) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u32_le(&payload, 0x1234u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&payload, RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 1u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&payload, 7u) == LIBRDP_STATUS_OK &&
          build_static_channel_packet(out, &payload, 1004);
     rdp_buffer_free(&payload);
     return ok;
@@ -2756,15 +2758,14 @@ static int read_soft_sync_response_fd(int fd,
                                       uint8_t* input,
                                       size_t capacity,
                                       uint16_t expected_channel_id,
-                                      uint32_t expected_tunnel_count,
-                                      uint32_t expected_tunnel_type)
+                                      const uint32_t* expected_tunnel_types,
+                                      uint32_t expected_tunnel_count)
 {
     for (size_t attempt = 0; attempt < 8u; attempt++)
     {
         size_t input_len = 0;
         rdp_virtual_channel_packet response_packet;
         rdp_dynamic_channel_soft_sync_response soft_sync_response;
-        uint32_t tunnel_type = 0;
 
         if (!read_tpkt_fd(fd, input, capacity, &input_len))
             return 0;
@@ -2779,12 +2780,19 @@ static int read_soft_sync_response_fd(int fd,
         {
             if (soft_sync_response.tunnel_count != expected_tunnel_count)
                 return 0;
-            if (expected_tunnel_count == 0)
-                return 1;
-            return rdp_dynamic_channel_soft_sync_response_get_tunnel(&soft_sync_response,
-                                                                     0,
-                                                                     &tunnel_type) == LIBRDP_STATUS_OK &&
-                   tunnel_type == expected_tunnel_type;
+            for (uint32_t i = 0; i < expected_tunnel_count; i++)
+            {
+                uint32_t tunnel_type = 0;
+
+                if (rdp_dynamic_channel_soft_sync_response_get_tunnel(
+                        &soft_sync_response,
+                        i,
+                        &tunnel_type) != LIBRDP_STATUS_OK ||
+                    !expected_tunnel_types ||
+                    tunnel_type != expected_tunnel_types[i])
+                    return 0;
+            }
+            return 1;
         }
     }
     return 0;
@@ -5058,14 +5066,28 @@ int start_handshake_server_full(uint16_t* port,
                     }
                     else if (dynamic_channel_scenario == DVC_SCENARIO_SOFT_SYNC_TUNNEL_REQUEST)
                     {
-                        if (!build_dynamic_channel_soft_sync_tunnel_request_packet(&dvc_soft_sync) ||
+                        static const uint32_t expected_tunnels[] = {
+                            RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE,
+                            RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY
+                        };
+
+                        if (!build_dynamic_channel_create_packet(&dvc_create) ||
+                            !write_exact_fd(client,
+                                            dvc_create.data,
+                                            dvc_create.length) ||
+                            !read_client_dynamic_create_response_fd(client,
+                                                                    input,
+                                                                    sizeof(input),
+                                                                    1004,
+                                                                    7) ||
+                            !build_dynamic_channel_soft_sync_tunnel_request_packet(&dvc_soft_sync) ||
                             !write_exact_fd(client, dvc_soft_sync.data, dvc_soft_sync.length) ||
                             !read_soft_sync_response_fd(client,
                                                         input,
                                                         sizeof(input),
                                                         1004,
-                                                        1u,
-                                                        RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE))
+                                                        expected_tunnels,
+                                                        2u))
                         {
                             _exit(5);
                         }
