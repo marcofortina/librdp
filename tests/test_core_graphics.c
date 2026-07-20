@@ -14,6 +14,7 @@
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
+#include <stdlib.h>
 
 #include "graphics/gdi_image.h"
 
@@ -73,6 +74,17 @@ static int append_gdiplus_float(rdp_buffer* payload, float value)
 
     memcpy(&bits, &value, sizeof(bits));
     return rdp_buffer_append_u32_le(payload, bits) == LIBRDP_STATUS_OK;
+}
+
+static rdp_gdi_backend_kind gdiplus_test_backend(void)
+{
+    const char* name = getenv("LIBRDP_TEST_GDIPLUS_BACKEND");
+
+    if (name && strcmp(name, "cairo") == 0)
+        return RDP_GDI_BACKEND_CAIRO;
+    if (name && strcmp(name, "quartz") == 0)
+        return RDP_GDI_BACKEND_QUARTZ;
+    return RDP_GDI_BACKEND_SOFTWARE;
 }
 
 /*
@@ -153,7 +165,7 @@ int test_gdiplus_object_table_solid_brush_and_pen(void)
     CHECK(rdp_buffer_append_u32_le(&payload, 0x41400000u) == LIBRDP_STATUS_OK);
     CHECK(append_gdiplus_record(&stream, 0x400du, 0x0000u, &payload));
 
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -429,7 +441,7 @@ int test_gdiplus_known_record_families_render_visuals(void)
     rdp_buffer_free(&payload);
     rdp_buffer_init(&payload);
 
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -454,7 +466,7 @@ int test_gdiplus_known_record_families_render_visuals(void)
           pixels[(8u * stride) + (2u * 4u) + 2u] == 0xccu);
 
     stream.data[1] = 0x7fu;
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -541,7 +553,7 @@ int test_gdiplus_compressed_images_render_pixels(void)
     CHECK(append_gdiplus_float(&payload, 4.0f));
     CHECK(append_gdiplus_record(&stream, 0x401bu, 0x0005u, &payload));
 
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -600,7 +612,7 @@ int test_gdiplus_compressed_images_render_pixels(void)
     CHECK(append_gdiplus_float(&payload, 2.0f));
     CHECK(append_gdiplus_compressed_rect(&payload, 0u, 0u, 2u, 2u));
     CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -640,7 +652,7 @@ int test_gdiplus_compressed_images_render_pixels(void)
     CHECK(append_gdiplus_float(&payload, 1.0f));
     CHECK(append_gdiplus_compressed_rect(&payload, 0u, 0u, 2u, 2u));
     CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -734,7 +746,7 @@ int test_gdiplus_image_failure_accounting(void)
     CHECK(append_gdiplus_float(&payload, 1.0f));
     CHECK(append_gdiplus_compressed_rect(&payload, 0u, 0u, 2u, 2u));
     CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -771,7 +783,7 @@ int test_gdiplus_image_failure_accounting(void)
     CHECK(append_gdiplus_compressed_rect(&payload, 0u, 0u, 2u, 2u));
     CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
 #if defined(RDP_HAVE_PNG) || defined(RDP_HAVE_QUARTZ)
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -779,7 +791,7 @@ int test_gdiplus_image_failure_accounting(void)
                                                 &rasterized,
                                                 &unsupported) == LIBRDP_STATUS_PROTOCOL_ERROR);
 #else
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -855,7 +867,7 @@ int test_gdiplus_graphics_state_affects_rendering(void)
     CHECK(append_gdiplus_compressed_rect(&payload, 2, 2, 1, 1));
     CHECK(append_gdiplus_record(&stream, 0x400au, 0xc000u, &payload));
 
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -981,7 +993,7 @@ int test_gdiplus_complex_brushes_sample_pixels(void)
     CHECK(append_gdiplus_compressed_rect(&payload, 4, 7, 4, 2));
     CHECK(append_gdiplus_record(&stream, 0x400au, 0x4000u, &payload));
 
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -1089,7 +1101,7 @@ int test_gdiplus_interpolation_and_metadata_objects(void)
     CHECK(append_gdiplus_compressed_rect(&payload, 4, 0, 4, 4));
     CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
 
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -1143,7 +1155,7 @@ int test_gdiplus_antialias_affects_line_edges(void)
     CHECK(append_gdiplus_compressed_point(&payload, 6, 1));
     CHECK(append_gdiplus_record(&stream, 0x400du, 0xc000u, &payload));
 
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -1197,7 +1209,7 @@ int test_gdiplus_clip_limits_visual_output(void)
     CHECK(append_gdiplus_compressed_rect(&payload, 0, 0, 5, 5));
     CHECK(append_gdiplus_record(&stream, 0x400au, 0xc000u, &payload));
 
-    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
                                                 surface,
                                                 stream.data,
                                                 stream.length,
@@ -1218,6 +1230,177 @@ int test_gdiplus_clip_limits_visual_output(void)
     rdp_buffer_free(&stream);
     librdp_surface_free(surface);
     return 0;
+}
+
+static int gdiplus_pixels_match(const librdp_surface* reference,
+                                const librdp_surface* candidate,
+                                uint8_t channel_tolerance,
+                                uint32_t differing_channel_limit_per_mille,
+                                uint32_t absolute_error_limit_per_mille)
+{
+    const uint8_t* reference_pixels = librdp_surface_pixels(reference);
+    const uint8_t* candidate_pixels = librdp_surface_pixels(candidate);
+    size_t reference_stride = librdp_surface_stride(reference);
+    size_t candidate_stride = librdp_surface_stride(candidate);
+    uint32_t width = librdp_surface_width(reference);
+    uint32_t height = librdp_surface_height(reference);
+    uint32_t y = 0u;
+    uint32_t differing_channels = 0u;
+    uint64_t absolute_error = 0u;
+    uint64_t channel_count = (uint64_t)width * height * 4u;
+    uint8_t maximum_error = 0u;
+
+    if (!reference_pixels || !candidate_pixels ||
+        width != librdp_surface_width(candidate) ||
+        height != librdp_surface_height(candidate))
+        return 0;
+    for (y = 0u; y < height; y++)
+    {
+        uint32_t x = 0u;
+
+        for (x = 0u; x < width * 4u; x++)
+        {
+            uint8_t a = reference_pixels[((size_t)y * reference_stride) + x];
+            uint8_t b = candidate_pixels[((size_t)y * candidate_stride) + x];
+            uint8_t difference = a > b ? (uint8_t)(a - b) : (uint8_t)(b - a);
+
+            absolute_error += difference;
+            if (difference > maximum_error)
+                maximum_error = difference;
+            if (difference > channel_tolerance)
+                differing_channels++;
+        }
+    }
+    if (((uint64_t)differing_channels * 1000u >
+         channel_count * differing_channel_limit_per_mille) ||
+        (absolute_error * 1000u >
+         channel_count * 255u * absolute_error_limit_per_mille))
+    {
+        fprintf(stderr,
+                "GDI+ backend difference channels=%u absolute_error=%llu maximum_error=%u channel_tolerance=%u\n",
+                differing_channels,
+                (unsigned long long)absolute_error,
+                maximum_error,
+                channel_tolerance);
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * Coverage: compares opaque GDI+ primitives rendered by the software and
+ * requested native backends. Per-channel rounding and a bounded aggregate
+ * raster difference account for native edge coverage while still detecting
+ * geometry, clipping, channel-order and alpha regressions.
+ */
+static int test_gdiplus_native_pixel_parity(void)
+{
+    rdp_buffer stream;
+    rdp_buffer payload;
+    librdp_surface* reference = NULL;
+    librdp_surface* candidate = NULL;
+    uint32_t reference_records = 0u;
+    uint32_t candidate_records = 0u;
+    uint32_t reference_rasterized = 0u;
+    uint32_t candidate_rasterized = 0u;
+    uint32_t reference_unsupported = 0u;
+    uint32_t candidate_unsupported = 0u;
+
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    reference = librdp_surface_new(16u, 16u, LIBRDP_PIXEL_FORMAT_BGRA32);
+    candidate = librdp_surface_new(16u, 16u, LIBRDP_PIXEL_FORMAT_BGRA32);
+    CHECK(reference != NULL && candidate != NULL);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff102030u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4009u, 0u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff204080u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_rect(&payload, 1u, 1u, 6u, 4u));
+    CHECK(append_gdiplus_record(&stream, 0x400au, 0xc000u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff80c020u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 3u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_point(&payload, 1u, 7u));
+    CHECK(append_gdiplus_compressed_point(&payload, 7u, 7u));
+    CHECK(append_gdiplus_compressed_point(&payload, 7u, 12u));
+    CHECK(append_gdiplus_record(&stream, 0x400du, 0xc000u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xffc04080u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_rect(&payload, 9u, 1u, 5u, 5u));
+    CHECK(append_gdiplus_record(&stream, 0x400eu, 0xc000u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xfff0e0d0u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_rect(&payload, 9u, 8u, 5u, 5u));
+    CHECK(append_gdiplus_record(&stream, 0x400fu, 0xc000u, &payload));
+
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                reference,
+                                                stream.data,
+                                                stream.length,
+                                                &reference_records,
+                                                &reference_rasterized,
+                                                &reference_unsupported) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(gdiplus_test_backend(),
+                                                candidate,
+                                                stream.data,
+                                                stream.length,
+                                                &candidate_records,
+                                                &candidate_rasterized,
+                                                &candidate_unsupported) ==
+          LIBRDP_STATUS_OK);
+    CHECK(reference_records == 5u && candidate_records == reference_records);
+    CHECK(reference_rasterized == 5u &&
+          candidate_rasterized == reference_rasterized);
+    CHECK(reference_unsupported == 0u && candidate_unsupported == 0u);
+    CHECK(gdiplus_pixels_match(reference, candidate, 1u, 150u, 100u));
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
+    librdp_surface_free(candidate);
+    librdp_surface_free(reference);
+    return 0;
+}
+
+/*
+ * Coverage: replays the complete GDI+ graphics suite through a requested
+ * native raster backend. CTest selects Cairo or Quartz explicitly so backend
+ * discovery cannot silently fall back to the software renderer.
+ */
+int test_gdiplus_native_backend(void)
+{
+    const char* requested = getenv("LIBRDP_TEST_GDIPLUS_BACKEND");
+    rdp_gdi_backend_kind backend = gdiplus_test_backend();
+    rdp_gdi_backend_caps caps;
+
+    CHECK(requested != NULL);
+    CHECK((strcmp(requested, "cairo") == 0 && backend == RDP_GDI_BACKEND_CAIRO) ||
+          (strcmp(requested, "quartz") == 0 && backend == RDP_GDI_BACKEND_QUARTZ));
+    CHECK(rdp_gdi_backend_query(backend, &caps) == LIBRDP_STATUS_OK);
+    CHECK(caps.name != NULL && strcmp(caps.name, requested) == 0);
+    CHECK((caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM) != 0u);
+    if (test_gdiplus_native_pixel_parity() != 0 ||
+        test_gdiplus_object_table_solid_brush_and_pen() != 0 ||
+        test_gdiplus_known_record_families_render_visuals() != 0 ||
+        test_gdiplus_compressed_images_render_pixels() != 0 ||
+        test_gdiplus_compressed_image_pixel_contract() != 0 ||
+        test_gdiplus_image_failure_accounting() != 0 ||
+        test_gdiplus_graphics_state_affects_rendering() != 0 ||
+        test_gdiplus_complex_brushes_sample_pixels() != 0 ||
+        test_gdiplus_interpolation_and_metadata_objects() != 0 ||
+        test_gdiplus_antialias_affects_line_edges() != 0)
+        return 1;
+    return test_gdiplus_clip_limits_visual_output();
 }
 
 static int append_cache_bitmap_v1_payload(rdp_buffer* payload,

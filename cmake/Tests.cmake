@@ -369,6 +369,22 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME core_storage_devices COMMAND test_core storage)
     add_test(NAME core_graphics COMMAND test_core graphics)
     add_test(NAME smoke_gdi_orders COMMAND test_core gdi-orders-smoke)
+    if(LIBRDP_CAIRO_FOUND)
+        add_test(NAME smoke_gdiplus_cairo
+            COMMAND test_core gdiplus-native-smoke)
+        set_tests_properties(smoke_gdiplus_cairo PROPERTIES
+            ENVIRONMENT "LIBRDP_TEST_GDIPLUS_BACKEND=cairo"
+            TIMEOUT 60
+        )
+    endif()
+    if(LIBRDP_QUARTZ_FOUND)
+        add_test(NAME smoke_gdiplus_quartz
+            COMMAND test_core gdiplus-native-smoke)
+        set_tests_properties(smoke_gdiplus_quartz PROPERTIES
+            ENVIRONMENT "LIBRDP_TEST_GDIPLUS_BACKEND=quartz"
+            TIMEOUT 60
+        )
+    endif()
     add_test(NAME core_reactivation COMMAND test_core reactivation)
     add_test(NAME core_licensing COMMAND test_core licensing)
     add_test(NAME core_workspace_admin COMMAND test_core enterprise)

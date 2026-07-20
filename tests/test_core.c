@@ -105,6 +105,11 @@ static int run_graphics(void)
     return test_graphics_update_before_activation();
 }
 
+static int run_gdiplus_native(void)
+{
+    return test_gdiplus_native_backend();
+}
+
 static int run_licensing(void)
 {
     if (test_licensing_new_before_activation() != 0 ||
@@ -183,6 +188,8 @@ int test_client_core_named(const char* name)
         return run_graphics();
     if (strcmp(name, "gdi-orders-smoke") == 0)
         return test_gdi_orders_runtime_golden();
+    if (strcmp(name, "gdiplus-native-smoke") == 0)
+        return run_gdiplus_native();
     if (strcmp(name, "reactivation") == 0)
         return test_activation_epoch_reset();
     if (strcmp(name, "licensing") == 0)
