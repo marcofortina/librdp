@@ -254,6 +254,28 @@ if(LIBRDP_BUILD_TESTS)
     )
     librdp_configure_test_executable(test_server_client_smoke)
 
+    if(TARGET librdp-workspace AND
+       LIBRDP_CURL_FOUND AND
+       LIBRDP_LIBXML2_FOUND)
+        add_executable(test_workspace_launch_smoke
+            tests/test_workspace_launch_smoke.c
+        )
+        target_include_directories(test_workspace_launch_smoke PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+        )
+        target_link_libraries(test_workspace_launch_smoke PRIVATE
+            "$<TARGET_FILE:librdp_server_common>"
+            "$<TARGET_FILE:librdp_viewer_common>"
+        )
+        add_dependencies(test_workspace_launch_smoke
+            librdp-workspace
+            librdp_server_common
+            librdp_viewer_common
+        )
+        librdp_configure_test_executable(test_workspace_launch_smoke)
+    endif()
+
     add_executable(test_abi_probe tests/abi_probe.c)
     target_include_directories(test_abi_probe PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -277,6 +299,9 @@ if(LIBRDP_BUILD_TESTS)
         test_server_client_smoke
         test_abi_probe
     )
+    if(TARGET test_workspace_launch_smoke)
+        add_dependencies(librdp_tests test_workspace_launch_smoke)
+    endif()
     foreach(LIBRDP_NATIVE_TEST_TARGET IN ITEMS
         test_x11_viewer_render
         test_x11_viewer_audio
@@ -357,6 +382,25 @@ if(LIBRDP_BUILD_TESTS)
         COMMAND test_server_client_smoke tls)
     add_test(NAME server_client_smoke_nla
              COMMAND test_server_client_smoke nla)
+    if(TARGET test_workspace_launch_smoke)
+        add_test(NAME workspace_desktop_launch_smoke
+            COMMAND test_workspace_launch_smoke
+                desktop
+                $<TARGET_FILE:librdp-workspace>
+                $<TARGET_FILE:test_workspace_launch_smoke>
+        )
+        add_test(NAME workspace_remoteapp_launch_smoke
+            COMMAND test_workspace_launch_smoke
+                remoteapp
+                $<TARGET_FILE:librdp-workspace>
+                $<TARGET_FILE:test_workspace_launch_smoke>
+        )
+        set_tests_properties(
+            workspace_desktop_launch_smoke
+            workspace_remoteapp_launch_smoke
+            PROPERTIES TIMEOUT 30
+        )
+    endif()
     add_test(NAME server_client_smoke_nla_invalid
              COMMAND test_server_client_smoke nla-invalid)
     add_test(NAME server_client_smoke_nla_expired

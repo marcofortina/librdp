@@ -319,6 +319,34 @@ int workspace_resource_target(const librdp_workspace_resource* resource,
                                   output_size);
 }
 
+/*
+ * Read and normalize the optional server port carried by an embedded RDP
+ * file. Invalid or out-of-range values are rejected instead of falling back
+ * to a different endpoint than the published resource describes.
+ */
+static int workspace_resource_port(const librdp_workspace_resource* resource,
+                                   char* output,
+                                   size_t output_size)
+{
+    char parsed[16];
+    uint32_t value = 0;
+    int written = 0;
+
+    if (!resource || !output || output_size == 0)
+        return 0;
+    output[0] = '\0';
+    if (!workspace_rdp_file_get(resource->rdp_file_contents,
+                                "server port",
+                                parsed,
+                                sizeof(parsed)))
+        return 0;
+    if (!workspace_options_parse_u32(parsed, &value) ||
+        value == 0u || value > UINT16_MAX)
+        return -1;
+    written = snprintf(output, output_size, "%u", (unsigned int)value);
+    return written > 0 && (size_t)written < output_size ? 1 : -1;
+}
+
 int workspace_resource_remote_app(const librdp_workspace_resource* resource,
                                   char* output,
                                   size_t output_size)
@@ -447,6 +475,7 @@ int workspace_launch_plan_build(const workspace_options* options,
                                 FILE* error_stream)
 {
     int written = 0;
+    int port_status = 0;
 
     if (!options || !resource || !plan || !options->viewer ||
         options->viewer[0] == '\0' || !workspace_options_valid_security(options->security))
@@ -465,6 +494,20 @@ int workspace_launch_plan_build(const workspace_options* options,
         !workspace_launch_add(plan, plan->target) ||
         !workspace_launch_add(plan, "--security") ||
         !workspace_launch_add(plan, options->security))
+        return 0;
+    port_status = workspace_resource_port(resource,
+                                          plan->port,
+                                          sizeof(plan->port));
+    if (port_status < 0)
+    {
+        workspace_options_error(error_stream,
+                                "selected resource contains an invalid server port\n",
+                                NULL);
+        return 0;
+    }
+    if (port_status > 0 &&
+        (!workspace_launch_add(plan, "--port") ||
+         !workspace_launch_add(plan, plan->port)))
         return 0;
     if (options->config.username &&
         (!workspace_launch_add(plan, "--user") ||

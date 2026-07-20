@@ -216,7 +216,13 @@ def admin_source_options() -> set[str]:
 
 
 def workspace_source_options() -> set[str]:
-    forwarded_viewer_options = {"--target", "--rail", "--gateway", "--gateway-mode"}
+    forwarded_viewer_options = {
+        "--target",
+        "--port",
+        "--rail",
+        "--gateway",
+        "--gateway-mode",
+    }
     return set(VIEWER_OPTION_RE.findall(read("apps/workspace/workspace_options.c"))) - forwarded_viewer_options
 
 

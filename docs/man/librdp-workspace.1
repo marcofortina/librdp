@@ -42,7 +42,8 @@ loads a workspace feed through the public librdp workspace API, prints the publi
 .BR librdp-viewer (1)
 for one selected entry.
 .P
-When an embedded RDP file contains a gateway host, the launcher passes it to the viewer as Microsoft RD Gateway HTTP transport.
+The launcher passes the target port and gateway host from an embedded RDP file
+to the viewer. Gateway hosts use Microsoft RD Gateway HTTP transport.
 .P
 The native window displays the fetched resources and launches the selected
 entry. The X11 frontend supports keyboard selection and the Cocoa frontend uses

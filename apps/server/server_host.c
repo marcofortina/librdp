@@ -218,6 +218,8 @@ server_host* server_host_new(const server_host_config* config)
     host->input_policy = config->input_policy;
     host->trace_callback = config->trace_callback;
     host->trace_user_data = config->trace_user_data;
+    host->extension_callback = config->extension_callback;
+    host->extension_user_data = config->extension_user_data;
     host->state = SERVER_HOST_NEW;
     host->next_peer_id = 1u;
     atomic_init(&host->cancellation_requested, 0);
@@ -2016,6 +2018,13 @@ static librdp_status server_host_prepare_peer_slot(
     status = librdp_server_peer_set_input_callback(peer,
                                                    server_host_peer_input,
                                                    slot);
+    if (status == LIBRDP_STATUS_OK && host->extension_callback)
+    {
+        status = librdp_server_peer_set_extension_callback(
+            peer,
+            host->extension_callback,
+            host->extension_user_data);
+    }
     if (status == LIBRDP_STATUS_OK)
     {
         status = librdp_server_peer_set_event_callback(peer,

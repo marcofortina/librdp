@@ -210,6 +210,7 @@ static int test_workspace_launch_policy(void)
     resource.type = LIBRDP_WORKSPACE_RESOURCE_REMOTE_APP;
     resource.rdp_file_contents =
       "full address:s:desktop.example.test\n"
+      "server port:i:3391\n"
       "remoteapplicationprogram:s:||published\n"
       "gatewayhostname:s:gateway.example.test\n";
     CHECK(workspace_options_parse((int)(sizeof(args) / sizeof(args[0])),
@@ -221,11 +222,16 @@ static int test_workspace_launch_policy(void)
     CHECK(strcmp(plan.executable, "/opt/librdp-viewer") == 0);
     CHECK(plan.arguments[plan.argument_count] == NULL);
     CHECK(launch_plan_has_pair(&plan, "--target", "desktop.example.test"));
+    CHECK(launch_plan_has_pair(&plan, "--port", "3391"));
     CHECK(launch_plan_has_pair(&plan, "--security", "nla"));
     CHECK(launch_plan_has_pair(&plan, "--rail", "app=||published"));
     CHECK(launch_plan_has_pair(&plan, "--gateway", "https://gateway.example.test/"));
     CHECK(launch_plan_has_pair(&plan, "--gateway-mode", "rdg-http"));
 
+    resource.rdp_file_contents =
+      "full address:s:desktop.example.test\n"
+      "server port:i:70000\n";
+    CHECK(workspace_launch_plan_build(&options, &resource, &plan, errors) == 0);
     resource.rdp_file_contents = "remoteapplicationprogram:s:||published\n";
     CHECK(workspace_launch_plan_build(&options, &resource, &plan, errors) == 0);
     memset(oversized_field, 'a', sizeof(oversized_field));

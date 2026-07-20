@@ -41,6 +41,7 @@ typedef struct workspace_launch_plan
     const char* arguments[WORKSPACE_LAUNCH_ARGUMENT_CAPACITY];
     size_t argument_count;
     char target[WORKSPACE_FIELD_CAPACITY];
+    char port[6];
     char remote_app[WORKSPACE_FIELD_CAPACITY];
     char gateway[WORKSPACE_FIELD_CAPACITY];
     char rail_argument[WORKSPACE_FIELD_CAPACITY + 5u];
