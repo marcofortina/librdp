@@ -4609,6 +4609,29 @@ static librdp_status rdp_session_fail_activation_timeout(
 }
 
 /*
+ * Reject an encrypted packet before any decoded content reaches a domain
+ * dispatcher. Closing the transport first prevents an integrity failure from
+ * leaving a failed session attached to an attacker-controlled peer.
+ */
+static librdp_status rdp_session_fail_security_integrity(
+    librdp_session* session,
+    const char* phase)
+{
+    rdp_session_set_last_error(session,
+                               LIBRDP_STATUS_PROTOCOL_ERROR,
+                               0,
+                               LIBRDP_ERROR_COMPONENT_PROTOCOL,
+                               phase,
+                               "encrypted packet integrity verification failed");
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "rdp.security.integrity.failed",
+                    "phase=%s",
+                    phase);
+    (void)rdp_session_disconnect_inner(session);
+    return rdp_session_fail(session, LIBRDP_STATUS_PROTOCOL_ERROR);
+}
+
+/*
  * Run one iteration of the active session loop. Transport readiness, PDU
  * decoding, channel dispatch, framebuffer events, and disconnect conditions
  * are processed without re-entering callbacks concurrently.
@@ -4799,6 +4822,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         }
         if (first_byte != 3)
         {
+            int encrypted_fastpath = 0;
+
             status = rdp_session_read_fastpath_packet(session, &packet);
             if (status == LIBRDP_STATUS_CLOSED)
             {
@@ -4806,10 +4831,26 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 return librdp_session_disconnect(session);
             }
             if (status == LIBRDP_STATUS_OK)
+            {
+                rdp_fastpath_header fastpath_header;
+
+                if (rdp_fastpath_parse_header(packet.data,
+                                              packet.length,
+                                              &fastpath_header) ==
+                        LIBRDP_STATUS_OK &&
+                    (fastpath_header.security_flags &
+                     RDP_FASTPATH_OUTPUT_ENCRYPTED) != 0u)
+                    encrypted_fastpath = 1;
                 status = rdp_session_process_fastpath_packet(session, &packet);
+            }
             if (status != LIBRDP_STATUS_OK)
             {
                 rdp_buffer_free(&packet);
+                if (status == LIBRDP_STATUS_PROTOCOL_ERROR &&
+                    encrypted_fastpath)
+                    return rdp_session_fail_security_integrity(
+                        session,
+                        "rdp.fastpath.security");
                 return rdp_session_fail(session, status);
             }
             return rdp_session_run_once_idle(&packet);
@@ -4858,6 +4899,10 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             {
                 rdp_buffer_free(&security_payload);
                 rdp_buffer_free(&packet);
+                if (status == LIBRDP_STATUS_PROTOCOL_ERROR)
+                    return rdp_session_fail_security_integrity(
+                        session,
+                        "rdp.slowpath.security");
                 return rdp_session_fail(session, status);
             }
             indication_payload = security_payload.data;

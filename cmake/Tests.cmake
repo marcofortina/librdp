@@ -371,6 +371,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke nla-utf8)
     add_test(NAME server_client_smoke_credssp_timeout
              COMMAND test_server_client_smoke timeout-credssp)
+    add_test(NAME server_client_smoke_standard_integrity
+             COMMAND test_server_client_smoke standard-integrity)
     set_tests_properties(
         common
         transport
@@ -394,6 +396,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_nla_upn
         server_client_smoke_nla_utf8
         server_client_smoke_credssp_timeout
+        server_client_smoke_standard_integrity
         PROPERTIES TIMEOUT 60
     )
     set_tests_properties(
