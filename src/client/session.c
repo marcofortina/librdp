@@ -5472,11 +5472,13 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         if (status != LIBRDP_STATUS_OK)
         {
             uint8_t license_message_type = 0;
+            int have_license_message = 0;
             librdp_status license_status = rdp_license_classify_message(indication_payload,
                                                                         indication_payload_len,
                                                                         &license_message_type);
             if (license_status == LIBRDP_STATUS_OK)
             {
+                have_license_message = 1;
                 if (license_message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT)
                 {
                     rdp_license_error_alert alert;
@@ -5619,10 +5621,33 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                     rdp_buffer_free(&response);
                 }
             }
-            if (license_status == LIBRDP_STATUS_OK)
+            if (have_license_message)
             {
+                if (license_status != LIBRDP_STATUS_OK)
+                    status = license_status;
                 if (status != LIBRDP_STATUS_OK)
                 {
+                    const char* phase =
+                        license_message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT ?
+                            "rdp.licensing.error_alert" :
+                            "rdp.licensing.process";
+                    const char* message =
+                        license_message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT ?
+                            "server rejected licensing exchange" :
+                            "licensing message processing failed";
+
+                    rdp_session_set_last_error(session,
+                                               status,
+                                               0,
+                                               LIBRDP_ERROR_COMPONENT_PROTOCOL,
+                                               phase,
+                                               message);
+                    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                    "rdp.licensing.failed",
+                                    "type=%u status=%s client_state=%u",
+                                    license_message_type,
+                                    librdp_status_string(status),
+                                    (unsigned)session->license_state.state);
                     rdp_buffer_free(&security_payload);
                     rdp_buffer_free(&packet);
                     return rdp_session_fail(session, status);

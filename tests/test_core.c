@@ -106,9 +106,12 @@ static int run_graphics(void)
 static int run_licensing(void)
 {
     if (test_licensing_new_before_activation() != 0 ||
-        test_licensing_valid_client_alert_before_activation() != 0)
+        test_licensing_valid_client_alert_before_activation() != 0 ||
+        test_licensing_request_before_activation() != 0 ||
+        test_licensing_challenge_before_activation() != 0 ||
+        test_licensing_reconnect() != 0)
         return 1;
-    return test_licensing_request_before_activation();
+    return test_licensing_error_alert();
 }
 
 static int run_enterprise(void)

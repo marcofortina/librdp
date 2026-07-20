@@ -105,6 +105,8 @@
 #define LICENSE_SCENARIO_NEW 1
 #define LICENSE_SCENARIO_REQUEST 2
 #define LICENSE_SCENARIO_VALID_CLIENT_ALERT 3
+#define LICENSE_SCENARIO_CHALLENGE 4
+#define LICENSE_SCENARIO_ERROR_ALERT 5
 
 #define CLIPBOARD_SCENARIO_NONE 0
 #define CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES 1
@@ -455,6 +457,12 @@ int test_licensing_new_before_activation(void);
 int test_licensing_valid_client_alert_before_activation(void);
 
 int test_licensing_request_before_activation(void);
+
+int test_licensing_challenge_before_activation(void);
+
+int test_licensing_reconnect(void);
+
+int test_licensing_error_alert(void);
 
 int test_workspace_lifecycle(void);
 

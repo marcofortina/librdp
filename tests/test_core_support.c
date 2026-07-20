@@ -12,6 +12,9 @@
 #include "test_core_support.h"
 #include "test_core_suites.h"
 
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+
 const uint8_t core_test_server_random[32] = {
     0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
     0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
@@ -800,17 +803,47 @@ static int build_demand_active_packet(rdp_buffer* out)
     return ok;
 }
 
+/*
+ * Wrap one licensing message in the global-channel MCS and TPKT framing used
+ * by the loopback handshake fixture.
+ */
+static int build_license_transport_packet(rdp_buffer* out, const rdp_buffer* license)
+{
+    rdp_buffer mcs;
+    size_t total = 0;
+    int ok = 0;
+
+    if (!out || !license)
+        return 0;
+    rdp_buffer_init(&mcs);
+    ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_be(&mcs, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u8(&mcs, 0x70) == LIBRDP_STATUS_OK &&
+         append_per_length(&mcs, license->length) &&
+         rdp_buffer_append(&mcs, license->data, license->length) == LIBRDP_STATUS_OK;
+    total = mcs.length + 7u;
+    if (ok)
+        ok = total <= UINT16_MAX &&
+             rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+    rdp_buffer_free(&mcs);
+    return ok;
+}
+
 static int build_license_new_packet(rdp_buffer* out)
 {
     static const uint8_t license_data[] = {0x11, 0x22, 0x33, 0x44};
     static const uint8_t license_mac[16] = {0};
     rdp_buffer license;
-    rdp_buffer mcs;
-    size_t total = 0;
     int ok = 0;
 
     rdp_buffer_init(&license);
-    rdp_buffer_init(&mcs);
     ok = rdp_license_write_preamble(&license,
                                     RDP_LICENSE_MESSAGE_NEW_LICENSE,
                                     RDP_LICENSE_VERSION_3,
@@ -821,23 +854,8 @@ static int build_license_new_packet(rdp_buffer* out)
                                        (uint16_t)sizeof(license_data)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&license, license_mac, sizeof(license_mac)) == LIBRDP_STATUS_OK;
     if (ok)
-        ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(&mcs, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(&mcs, 0x70) == LIBRDP_STATUS_OK &&
-             append_per_length(&mcs, license.length) &&
-             rdp_buffer_append(&mcs, license.data, license.length) == LIBRDP_STATUS_OK;
-    total = mcs.length + 7u;
-    if (ok)
-        ok = rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+        ok = build_license_transport_packet(out, &license);
 
-    rdp_buffer_free(&mcs);
     rdp_buffer_free(&license);
     return ok;
 }
@@ -845,12 +863,9 @@ static int build_license_new_packet(rdp_buffer* out)
 static int build_license_valid_client_alert_packet(rdp_buffer* out)
 {
     rdp_buffer license;
-    rdp_buffer mcs;
-    size_t total = 0;
     int ok = 0;
 
     rdp_buffer_init(&license);
-    rdp_buffer_init(&mcs);
     ok = rdp_license_write_error_alert(&license,
                                        RDP_LICENSE_VERSION_3,
                                        RDP_LICENSE_ERROR_STATUS_VALID_CLIENT,
@@ -859,28 +874,34 @@ static int build_license_valid_client_alert_packet(rdp_buffer* out)
                                        NULL,
                                        0) == LIBRDP_STATUS_OK;
     if (ok)
-        ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(&mcs, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(&mcs, 0x70) == LIBRDP_STATUS_OK &&
-             append_per_length(&mcs, license.length) &&
-             rdp_buffer_append(&mcs, license.data, license.length) == LIBRDP_STATUS_OK;
-    total = mcs.length + 7u;
-    if (ok)
-        ok = rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+        ok = build_license_transport_packet(out, &license);
 
-    rdp_buffer_free(&mcs);
     rdp_buffer_free(&license);
     return ok;
 }
 
-static int build_license_request_packet(rdp_buffer* out)
+static int build_license_error_alert_packet(rdp_buffer* out)
+{
+    rdp_buffer license;
+    int ok = 0;
+
+    rdp_buffer_init(&license);
+    ok = rdp_license_write_error_alert(&license,
+                                       RDP_LICENSE_VERSION_3,
+                                       RDP_LICENSE_ERROR_INVALID_CLIENT,
+                                       RDP_LICENSE_STATE_TRANSITION_TOTAL_ABORT,
+                                       RDP_LICENSE_BLOB_ERROR,
+                                       NULL,
+                                       0) == LIBRDP_STATUS_OK;
+    if (ok)
+        ok = build_license_transport_packet(out, &license);
+    rdp_buffer_free(&license);
+    return ok;
+}
+
+static int build_license_request_packet_ex(rdp_buffer* out,
+                                           const void* certificate,
+                                           size_t certificate_len)
 {
     static const uint8_t company[] = {'L', 0, 'a', 0, 'b', 0, 0, 0};
     static const uint8_t product[] = {'T', 0, 'e', 0, 's', 0, 't', 0, 0, 0};
@@ -888,13 +909,12 @@ static int build_license_request_packet(rdp_buffer* out)
     static const uint8_t scope[] = {'s', 'c', 'o', 'p', 'e', 0};
     rdp_buffer payload;
     rdp_buffer license;
-    rdp_buffer mcs;
-    size_t total = 0;
     int ok = 0;
 
+    if (!out || !certificate || certificate_len == 0 || certificate_len > UINT16_MAX)
+        return 0;
     rdp_buffer_init(&payload);
     rdp_buffer_init(&license);
-    rdp_buffer_init(&mcs);
     ok = rdp_buffer_append(&payload, core_test_server_random, sizeof(core_test_server_random)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u32_le(&payload, 0x00060002u) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u32_le(&payload, (uint32_t)sizeof(company)) == LIBRDP_STATUS_OK &&
@@ -907,8 +927,8 @@ static int build_license_request_packet(rdp_buffer* out)
                                        (uint16_t)sizeof(key_exchange)) == LIBRDP_STATUS_OK &&
          rdp_license_write_binary_blob(&payload,
                                        RDP_LICENSE_BLOB_CERTIFICATE,
-                                       core_test_server_certificate,
-                                       (uint16_t)sizeof(core_test_server_certificate)) == LIBRDP_STATUS_OK &&
+                                       certificate,
+                                       (uint16_t)certificate_len) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK &&
          rdp_license_write_binary_blob(&payload,
                                        RDP_LICENSE_BLOB_SCOPE,
@@ -920,25 +940,195 @@ static int build_license_request_packet(rdp_buffer* out)
                                     (uint16_t)payload.length) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&license, payload.data, payload.length) == LIBRDP_STATUS_OK;
     if (ok)
-        ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(&mcs, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(&mcs, 0x70) == LIBRDP_STATUS_OK &&
-             append_per_length(&mcs, license.length) &&
-             rdp_buffer_append(&mcs, license.data, license.length) == LIBRDP_STATUS_OK;
-    total = mcs.length + 7u;
-    if (ok)
-        ok = rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+        ok = build_license_transport_packet(out, &license);
 
-    rdp_buffer_free(&mcs);
     rdp_buffer_free(&license);
     rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int build_license_request_packet(rdp_buffer* out)
+{
+    return build_license_request_packet_ex(out,
+                                           core_test_server_certificate,
+                                           sizeof(core_test_server_certificate));
+}
+
+/*
+ * Derive the server view of the transient licensing keys from the client's
+ * RSA-encrypted premaster secret. This keeps the challenge fixture on the same
+ * cryptographic path as an actual licensing exchange.
+ */
+static int initialize_license_server_crypto(const uint8_t* input,
+                                            size_t input_len,
+                                            EVP_PKEY* private_key,
+                                            rdp_license_crypto_context* context)
+{
+    const uint8_t* payload = NULL;
+    size_t payload_len = 0;
+    rdp_license_client_new_license_request request;
+    uint8_t premaster[RDP_LICENSE_PREMASTER_SECRET_LEN];
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!input || !private_key || !context)
+        return 0;
+    memset(&request, 0, sizeof(request));
+    memset(premaster, 0, sizeof(premaster));
+    if (read_security_payload(input, input_len, &payload, &payload_len) &&
+        rdp_license_parse_client_new_license_request(payload, payload_len, &request) ==
+            LIBRDP_STATUS_OK &&
+        request.preferred_key_exchange_alg == RDP_LICENSE_KEY_EXCHANGE_RSA &&
+        request.platform_id == RDP_LICENSE_PLATFORM_ID_CLIENT)
+    {
+        status = rdp_security_decrypt_private_secret(private_key,
+                                                     request.encrypted_pre_master.data,
+                                                     request.encrypted_pre_master.length,
+                                                     premaster,
+                                                     sizeof(premaster));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_security_license_keys(premaster,
+                                               request.client_random,
+                                               core_test_server_random,
+                                               context->mac_salt_key,
+                                               context->encryption_key);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            memcpy(context->premaster_secret, premaster, sizeof(premaster));
+            memcpy(context->client_random,
+                   request.client_random,
+                   sizeof(context->client_random));
+            memcpy(context->server_random,
+                   core_test_server_random,
+                   sizeof(context->server_random));
+            context->ready = 1;
+        }
+    }
+    OPENSSL_cleanse(premaster, sizeof(premaster));
+    if (status != LIBRDP_STATUS_OK)
+        rdp_license_crypto_context_clear(context);
+    return status == LIBRDP_STATUS_OK;
+}
+
+static int build_license_platform_challenge_packet(rdp_buffer* out,
+                                                   const rdp_license_crypto_context* context,
+                                                   const void* challenge,
+                                                   size_t challenge_len)
+{
+    rdp_buffer encrypted;
+    rdp_buffer payload;
+    rdp_buffer license;
+    uint8_t mac[RDP_LICENSE_MAC_LEN];
+    int ok = 0;
+
+    if (!out || !context || !context->ready || (!challenge && challenge_len > 0) ||
+        challenge_len > UINT16_MAX)
+        return 0;
+    rdp_buffer_init(&encrypted);
+    rdp_buffer_init(&payload);
+    rdp_buffer_init(&license);
+    memset(mac, 0, sizeof(mac));
+    ok = rdp_security_license_crypt(context->encryption_key,
+                                    challenge,
+                                    challenge_len,
+                                    &encrypted) == LIBRDP_STATUS_OK &&
+         rdp_security_license_mac(context->mac_salt_key,
+                                  challenge,
+                                  challenge_len,
+                                  mac) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK &&
+         rdp_license_write_binary_blob(&payload,
+                                       RDP_LICENSE_BLOB_ENCRYPTED_DATA,
+                                       encrypted.data,
+                                       (uint16_t)encrypted.length) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&payload, mac, sizeof(mac)) == LIBRDP_STATUS_OK &&
+         rdp_license_write_preamble(&license,
+                                    RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE,
+                                    RDP_LICENSE_VERSION_3,
+                                    (uint16_t)payload.length) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&license, payload.data, payload.length) == LIBRDP_STATUS_OK &&
+         build_license_transport_packet(out, &license);
+    OPENSSL_cleanse(mac, sizeof(mac));
+    if (encrypted.data)
+        OPENSSL_cleanse(encrypted.data, encrypted.length);
+    rdp_buffer_free(&license);
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&encrypted);
+    return ok;
+}
+
+/*
+ * Validate the complete platform response, including both decrypted blobs and
+ * the MAC over the response data plus the client hardware identifier.
+ */
+static int validate_license_platform_challenge_response(
+    const uint8_t* input,
+    size_t input_len,
+    const rdp_license_crypto_context* context,
+    const void* expected_challenge,
+    size_t expected_challenge_len)
+{
+    const uint8_t* payload = NULL;
+    size_t payload_len = 0;
+    rdp_license_platform_challenge_response response;
+    rdp_license_platform_challenge_response_data response_data;
+    rdp_buffer plain_response;
+    rdp_buffer plain_hardware;
+    rdp_buffer mac_input;
+    uint8_t expected_mac[RDP_LICENSE_MAC_LEN];
+    int ok = 0;
+
+    if (!input || !context || !context->ready ||
+        (!expected_challenge && expected_challenge_len > 0))
+        return 0;
+    memset(&response, 0, sizeof(response));
+    memset(&response_data, 0, sizeof(response_data));
+    memset(expected_mac, 0, sizeof(expected_mac));
+    rdp_buffer_init(&plain_response);
+    rdp_buffer_init(&plain_hardware);
+    rdp_buffer_init(&mac_input);
+    ok = read_security_payload(input, input_len, &payload, &payload_len) &&
+         rdp_license_parse_platform_challenge_response(payload,
+                                                       payload_len,
+                                                       &response) == LIBRDP_STATUS_OK &&
+         rdp_security_license_crypt(context->encryption_key,
+                                    response.encrypted_response.data,
+                                    response.encrypted_response.length,
+                                    &plain_response) == LIBRDP_STATUS_OK &&
+         rdp_security_license_crypt(context->encryption_key,
+                                    response.encrypted_hardware_id.data,
+                                    response.encrypted_hardware_id.length,
+                                    &plain_hardware) == LIBRDP_STATUS_OK &&
+         plain_hardware.length == RDP_LICENSE_HARDWARE_ID_LEN &&
+         rdp_license_parse_platform_challenge_response_data(
+             plain_response.data,
+             plain_response.length,
+             &response_data) == LIBRDP_STATUS_OK &&
+         response_data.challenge_len == expected_challenge_len &&
+         (expected_challenge_len == 0 ||
+          memcmp(response_data.challenge,
+                 expected_challenge,
+                 expected_challenge_len) == 0) &&
+         rdp_buffer_append(&mac_input,
+                           plain_response.data,
+                           plain_response.length) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&mac_input,
+                           plain_hardware.data,
+                           plain_hardware.length) == LIBRDP_STATUS_OK &&
+         rdp_security_license_mac(context->mac_salt_key,
+                                  mac_input.data,
+                                  mac_input.length,
+                                  expected_mac) == LIBRDP_STATUS_OK &&
+         CRYPTO_memcmp(expected_mac, response.mac, sizeof(expected_mac)) == 0;
+    OPENSSL_cleanse(expected_mac, sizeof(expected_mac));
+    if (mac_input.data)
+        OPENSSL_cleanse(mac_input.data, mac_input.length);
+    if (plain_hardware.data)
+        OPENSSL_cleanse(plain_hardware.data, plain_hardware.length);
+    if (plain_response.data)
+        OPENSSL_cleanse(plain_response.data, plain_response.length);
+    rdp_buffer_free(&mac_input);
+    rdp_buffer_free(&plain_hardware);
+    rdp_buffer_free(&plain_response);
     return ok;
 }
 
@@ -2776,6 +2966,13 @@ int start_handshake_server_full(uint16_t* port,
         gdi_scenario != GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION &&
         gdi_scenario != GDI_SCENARIO_DESKTOP_COMPOSITION)
         return 0;
+    if (license_scenario != LICENSE_SCENARIO_NONE &&
+        license_scenario != LICENSE_SCENARIO_NEW &&
+        license_scenario != LICENSE_SCENARIO_REQUEST &&
+        license_scenario != LICENSE_SCENARIO_VALID_CLIENT_ALERT &&
+        license_scenario != LICENSE_SCENARIO_CHALLENGE &&
+        license_scenario != LICENSE_SCENARIO_ERROR_ALERT)
+        return 0;
     if ((handshake_scenario != HANDSHAKE_SCENARIO_NORMAL &&
          handshake_scenario != HANDSHAKE_SCENARIO_STALL_ACTIVATION &&
          handshake_scenario != HANDSHAKE_SCENARIO_GRACEFUL_IDLE_EOF) ||
@@ -2852,6 +3049,8 @@ int start_handshake_server_full(uint16_t* port,
             rdp_buffer license_new;
             rdp_buffer license_request;
             rdp_buffer license_alert;
+            rdp_buffer license_challenge;
+            rdp_buffer license_certificate;
             rdp_buffer demand_active;
             rdp_buffer bitmap_update;
             rdp_buffer gdi_orders_update;
@@ -2868,12 +3067,16 @@ int start_handshake_server_full(uint16_t* port,
             rdp_buffer static_last;
             rdp_buffer multiparty_static;
             rdp_buffer error_update;
+            rdp_license_crypto_context license_crypto;
+            EVP_PKEY* license_private_key = NULL;
             int client = accept(fd, NULL, NULL);
 
             rdp_buffer_init(&mcs_response);
             rdp_buffer_init(&license_new);
             rdp_buffer_init(&license_request);
             rdp_buffer_init(&license_alert);
+            rdp_buffer_init(&license_challenge);
+            rdp_buffer_init(&license_certificate);
             rdp_buffer_init(&demand_active);
             rdp_buffer_init(&bitmap_update);
             rdp_buffer_init(&gdi_orders_update);
@@ -2890,6 +3093,7 @@ int start_handshake_server_full(uint16_t* port,
             rdp_buffer_init(&static_last);
             rdp_buffer_init(&multiparty_static);
             rdp_buffer_init(&error_update);
+            memset(&license_crypto, 0, sizeof(license_crypto));
             if (client < 0)
                 _exit(6);
             if (!build_server_connect_response(&mcs_response,
@@ -2964,6 +3168,59 @@ int start_handshake_server_full(uint16_t* port,
                         !build_license_valid_client_alert_packet(&license_alert) ||
                         !write_exact_fd(client, license_alert.data, license_alert.length))
                         _exit(4);
+                }
+                if (license_scenario == LICENSE_SCENARIO_CHALLENGE)
+                {
+                    static const uint8_t challenge[] = {
+                        0x43, 0x00, 0x48, 0x00, 0x41, 0x00, 0x4c, 0x00,
+                        0x4c, 0x00, 0x45, 0x00, 0x4e, 0x00, 0x47, 0x00
+                    };
+
+                    if (rdp_security_generate_server_certificate(&license_private_key,
+                                                                 &license_certificate) !=
+                            LIBRDP_STATUS_OK ||
+                        !build_license_request_packet_ex(&license_request,
+                                                         license_certificate.data,
+                                                         license_certificate.length) ||
+                        !write_exact_fd(client,
+                                        license_request.data,
+                                        license_request.length) ||
+                        !read_tpkt_fd(client, input, sizeof(input), &input_len) ||
+                        !initialize_license_server_crypto(input,
+                                                          input_len,
+                                                          license_private_key,
+                                                          &license_crypto) ||
+                        !build_license_platform_challenge_packet(&license_challenge,
+                                                                 &license_crypto,
+                                                                 challenge,
+                                                                 sizeof(challenge)) ||
+                        !write_exact_fd(client,
+                                        license_challenge.data,
+                                        license_challenge.length) ||
+                        !read_tpkt_fd(client, input, sizeof(input), &input_len) ||
+                        !validate_license_platform_challenge_response(input,
+                                                                      input_len,
+                                                                      &license_crypto,
+                                                                      challenge,
+                                                                      sizeof(challenge)) ||
+                        !build_license_new_packet(&license_new) ||
+                        !write_exact_fd(client,
+                                        license_new.data,
+                                        license_new.length))
+                    {
+                        _exit(4);
+                    }
+                }
+                if (license_scenario == LICENSE_SCENARIO_ERROR_ALERT)
+                {
+                    if (!build_license_error_alert_packet(&license_alert) ||
+                        !write_exact_fd(client,
+                                        license_alert.data,
+                                        license_alert.length))
+                    {
+                        _exit(4);
+                    }
+                    goto done_connection;
                 }
                 if (!build_demand_active_packet(&demand_active) ||
                     !write_exact_fd(client, demand_active.data, demand_active.length) ||
@@ -3410,6 +3667,10 @@ done_connection:
             rdp_buffer_free(&gdi_orders_update);
             rdp_buffer_free(&bitmap_update);
             rdp_buffer_free(&demand_active);
+            EVP_PKEY_free(license_private_key);
+            rdp_license_crypto_context_clear(&license_crypto);
+            rdp_buffer_free(&license_certificate);
+            rdp_buffer_free(&license_challenge);
             rdp_buffer_free(&license_alert);
             rdp_buffer_free(&license_new);
             rdp_buffer_free(&license_request);
