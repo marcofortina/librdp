@@ -7957,6 +7957,191 @@ static const smoke_gateway_profile* smoke_gateway_profile_by_name(
     return NULL;
 }
 
+static int smoke_viewer_state_write(const char* path,
+                                    uint16_t port,
+                                    int frame_ready)
+{
+    char temporary[PATH_MAX];
+    char contents[96];
+    size_t offset = 0u;
+    size_t length = 0u;
+    int temporary_length = 0;
+    int contents_length = 0;
+    int fd = -1;
+
+    if (!path || path[0] == '\0' || port == 0u)
+        return 0;
+    temporary_length = snprintf(temporary,
+                                sizeof(temporary),
+                                "%s.tmp.%ld",
+                                path,
+                                (long)getpid());
+    contents_length = snprintf(contents,
+                               sizeof(contents),
+                               "port=%u\nframe_ready=%u\n",
+                               (unsigned int)port,
+                               frame_ready ? 1u : 0u);
+    if (temporary_length <= 0 ||
+        (size_t)temporary_length >= sizeof(temporary) ||
+        contents_length <= 0 ||
+        (size_t)contents_length >= sizeof(contents))
+        return 0;
+    length = (size_t)contents_length;
+    fd = open(temporary,
+              O_WRONLY | O_CREAT | O_TRUNC,
+              S_IRUSR | S_IWUSR);
+    if (fd < 0)
+        return 0;
+    while (offset < length)
+    {
+        ssize_t written = write(fd,
+                                contents + offset,
+                                length - offset);
+
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0)
+            break;
+        offset += (size_t)written;
+    }
+    if (close(fd) != 0 || offset != length ||
+        rename(temporary, path) != 0)
+    {
+        (void)unlink(temporary);
+        return 0;
+    }
+    return 1;
+}
+
+static int smoke_viewer_graphics_mode(const char* name,
+                                      smoke_graphics_mode* mode)
+{
+    if (!name || !mode)
+        return 0;
+    if (strcmp(name, "planar") == 0)
+        *mode = SMOKE_GRAPHICS_PLANAR;
+    else if (strcmp(name, "progressive") == 0)
+        *mode = SMOKE_GRAPHICS_PROGRESSIVE;
+    else if (strcmp(name, "multi-surface") == 0)
+        *mode = SMOKE_GRAPHICS_MULTI_SURFACE;
+    else if (strcmp(name, "clearcodec") == 0)
+        *mode = SMOKE_GRAPHICS_CLEARCODEC;
+    else if (strcmp(name, "avc") == 0)
+        *mode = SMOKE_GRAPHICS_AVC;
+    else
+        return 0;
+    return 1;
+}
+
+/*
+ * Expose deterministic graphics fixtures to a separately executed viewer.
+ * State files are atomically replaced so the supervising X11 test never
+ * observes a partial port or frame-ready record.
+ */
+static int smoke_serve_viewer_graphics(const char* name,
+                                       const char* state_path)
+{
+    smoke_fastpath_peer fastpath;
+    smoke_graphics_peer graphics;
+    smoke_graphics_mode graphics_mode = SMOKE_GRAPHICS_PLANAR;
+    smoke_fastpath_send_fn fastpath_send = NULL;
+    atomic_uint* ready = NULL;
+    pthread_t* thread = NULL;
+    void* (*thread_main)(void*) = NULL;
+    void* thread_context = NULL;
+    librdp_status* fixture_status = NULL;
+    uint16_t port = 0u;
+    unsigned int attempt = 0u;
+
+    memset(&fastpath, 0, sizeof(fastpath));
+    memset(&graphics, 0, sizeof(graphics));
+    if (!name || !state_path)
+        return 2;
+    if (strcmp(name, "bitmap") == 0)
+        fastpath_send = smoke_fastpath_bitmap_send;
+    else if (strcmp(name, "nscodec") == 0)
+        fastpath_send = smoke_fastpath_nscodec_send;
+    else if (strcmp(name, "remotefx") == 0)
+        fastpath_send = smoke_fastpath_rfx_send;
+
+    if (fastpath_send)
+    {
+        atomic_init(&fastpath.port, 0u);
+        atomic_init(&fastpath.packet_sent, 0u);
+        atomic_init(&fastpath.client_closed, 0u);
+        fastpath.send = fastpath_send;
+        fastpath.status = LIBRDP_STATUS_AGAIN;
+        if (librdp_server_config_init(&fastpath.config) !=
+            LIBRDP_STATUS_OK)
+            return 1;
+        fastpath.config.bind_address = "127.0.0.1";
+        fastpath.config.security_mode = LIBRDP_SECURITY_STANDARD;
+        fastpath.config.width = SMOKE_WIDTH;
+        fastpath.config.height = SMOKE_HEIGHT;
+        ready = &fastpath.packet_sent;
+        thread = &fastpath.thread;
+        thread_main = smoke_fastpath_peer_main;
+        thread_context = &fastpath;
+        fixture_status = &fastpath.status;
+    }
+    else
+    {
+        if (!smoke_viewer_graphics_mode(name, &graphics_mode))
+            return 2;
+        atomic_init(&graphics.port, 0u);
+        atomic_init(&graphics.connections, 0u);
+        atomic_init(&graphics.caps_advertised, 0u);
+        atomic_init(&graphics.frame_acknowledged, 0u);
+        atomic_init(&graphics.frame_sent, 0u);
+        atomic_init(&graphics.client_closed, 0u);
+        graphics.progressive =
+            graphics_mode == SMOKE_GRAPHICS_PROGRESSIVE;
+        graphics.multi_surface =
+            graphics_mode == SMOKE_GRAPHICS_MULTI_SURFACE;
+        graphics.clearcodec =
+            graphics_mode == SMOKE_GRAPHICS_CLEARCODEC;
+        graphics.avc = graphics_mode == SMOKE_GRAPHICS_AVC;
+        graphics.status = LIBRDP_STATUS_AGAIN;
+        if (librdp_server_config_init(&graphics.config) !=
+            LIBRDP_STATUS_OK)
+            return 1;
+        graphics.config.bind_address = "127.0.0.1";
+        graphics.config.security_mode = LIBRDP_SECURITY_STANDARD;
+        graphics.config.width = SMOKE_WIDTH;
+        graphics.config.height = SMOKE_HEIGHT;
+        ready = &graphics.frame_sent;
+        thread = &graphics.thread;
+        thread_main = smoke_graphics_peer_main;
+        thread_context = &graphics;
+        fixture_status = &graphics.status;
+    }
+    if (pthread_create(thread,
+                       NULL,
+                       thread_main,
+                       thread_context) != 0)
+        return 1;
+    if (!smoke_wait_for_port(
+            fastpath_send ? &fastpath.port : &graphics.port,
+            &port) ||
+        !smoke_viewer_state_write(state_path, port, 0))
+        return 1;
+    for (attempt = 0u; attempt < 3000u; attempt++)
+    {
+        struct timespec delay = {0, 10000000L};
+
+        if (atomic_load_explicit(ready,
+                                 memory_order_acquire) > 0u)
+            break;
+        (void)nanosleep(&delay, NULL);
+    }
+    if (attempt == 3000u ||
+        !smoke_viewer_state_write(state_path, port, 1))
+        return 1;
+    if (pthread_join(*thread, NULL) != 0)
+        return 1;
+    return *fixture_status == LIBRDP_STATUS_OK ? 0 : 1;
+}
+
 int main(int argc, char** argv)
 {
     librdp_security_mode security = LIBRDP_SECURITY_AUTO;
@@ -7966,6 +8151,9 @@ int main(int argc, char** argv)
     const char* bind_address = NULL;
     const char* target = NULL;
 
+    if (argc == 4 &&
+        strcmp(argv[1], "viewer-graphics-server") == 0)
+        return smoke_serve_viewer_graphics(argv[2], argv[3]);
     if (argc == 2 && strcmp(argv[1], "timeout-credssp") == 0)
         return smoke_run_credssp_timeout();
     if (argc == 2 && strcmp(argv[1], "standard-integrity") == 0)
@@ -8153,7 +8341,8 @@ int main(int argc, char** argv)
                 "gateway-no-session-credentials|gateway-auth-failure|"
                 "gateway-timeout|gateway-malformed|gateway-refused|"
                 "gateway-rdg|gateway-rdg-drop-out|gateway-rdg-drop-in|"
-                "gateway-rdg-untrusted\n");
+                "gateway-rdg-untrusted|"
+                "viewer-graphics-server fixture state-file\n");
         return 2;
     }
     return smoke_run_profile(security,
