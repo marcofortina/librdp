@@ -582,6 +582,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke drive-enumeration)
     add_test(NAME server_client_smoke_drive_locking
              COMMAND test_server_client_smoke drive-locking)
+    add_test(NAME server_client_smoke_drive_notify
+             COMMAND test_server_client_smoke drive-notify)
     if(TARGET test_workspace_launch_smoke)
         add_test(NAME workspace_desktop_launch_smoke
             COMMAND test_workspace_launch_smoke
@@ -777,6 +779,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_clipboard_files
         server_client_smoke_drive_read_only
         server_client_smoke_drive_writable
+        server_client_smoke_drive_notify
         server_client_smoke_nla_invalid
         server_client_smoke_nla_expired
         server_client_smoke_nla_locked

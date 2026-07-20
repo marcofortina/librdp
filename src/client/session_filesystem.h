@@ -30,6 +30,8 @@ struct rdp_session_redirected_file;
 void rdp_session_redirected_file_reset(struct rdp_session_redirected_file* file);
 void rdp_session_redirected_files_clear(librdp_session* session);
 void rdp_session_drive_roots_clear(librdp_session* session);
+void rdp_session_directory_notify_clear(
+    struct rdp_session_redirected_file* file);
 uint32_t rdp_session_drive_root_fd(librdp_session* session, uint32_t drive_index, int* fd);
 struct rdp_session_redirected_file* rdp_session_redirected_file_find(librdp_session* session,
                                                                      uint32_t device_id,
@@ -89,5 +91,9 @@ uint32_t rdp_session_apply_file_locks(librdp_session* session,
 librdp_status rdp_session_handle_filesystem_io_request(librdp_session* session,
                                                        const uint8_t* data,
                                                        size_t data_len);
+int rdp_session_filesystem_notify_next_timeout_ms(
+    const librdp_session* session);
+librdp_status rdp_session_filesystem_notify_dispatch(
+    librdp_session* session);
 
 #endif

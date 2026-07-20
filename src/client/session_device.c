@@ -733,6 +733,7 @@ void rdp_session_redirected_file_reset(rdp_session_redirected_file* file)
         (void)closedir(file->directory);
     if (file->fd >= 0)
         (void)close(file->fd);
+    rdp_session_directory_notify_clear(file);
     free(file->path);
     free(file->directory_path);
     free(file->directory_pattern);

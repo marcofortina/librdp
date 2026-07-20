@@ -4129,16 +4129,516 @@ static librdp_status rdp_session_handle_filesystem_lock(librdp_session* session,
     return status;
 }
 
+typedef struct rdp_session_directory_snapshot
+{
+    rdp_session_directory_notify_entry* entries;
+    size_t count;
+    size_t capacity;
+} rdp_session_directory_snapshot;
+
+static void rdp_session_directory_snapshot_clear(
+    rdp_session_directory_snapshot* snapshot)
+{
+    size_t index = 0u;
+
+    if (!snapshot)
+        return;
+    for (index = 0u; index < snapshot->count; index++)
+        free(snapshot->entries[index].path);
+    free(snapshot->entries);
+    memset(snapshot, 0, sizeof(*snapshot));
+}
+
+void rdp_session_directory_notify_clear(
+    rdp_session_redirected_file* file)
+{
+    size_t index = 0u;
+
+    if (!file)
+        return;
+    for (index = 0u; index < file->notify.entry_count; index++)
+        free(file->notify.entries[index].path);
+    free(file->notify.entries);
+    memset(&file->notify, 0, sizeof(file->notify));
+}
+
+static int rdp_session_directory_notify_entry_compare(
+    const void* left,
+    const void* right)
+{
+    const rdp_session_directory_notify_entry* left_entry =
+        (const rdp_session_directory_notify_entry*)left;
+    const rdp_session_directory_notify_entry* right_entry =
+        (const rdp_session_directory_notify_entry*)right;
+
+    return strcmp(left_entry->path, right_entry->path);
+}
+
+static librdp_status rdp_session_directory_snapshot_append(
+    rdp_session_directory_snapshot* snapshot,
+    const char* path,
+    const struct stat* st)
+{
+    rdp_session_directory_notify_entry* resized = NULL;
+    rdp_session_directory_notify_entry* entry = NULL;
+    size_t next_capacity = 0u;
+
+    if (!snapshot || !path || !st)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (snapshot->count >= RDP_SESSION_DIRECTORY_NOTIFY_MAX_ENTRIES)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    if (snapshot->count == snapshot->capacity)
+    {
+        next_capacity = snapshot->capacity == 0u
+                            ? 32u
+                            : snapshot->capacity * 2u;
+        if (next_capacity >
+            RDP_SESSION_DIRECTORY_NOTIFY_MAX_ENTRIES)
+            next_capacity =
+                RDP_SESSION_DIRECTORY_NOTIFY_MAX_ENTRIES;
+        resized = (rdp_session_directory_notify_entry*)realloc(
+            snapshot->entries,
+            next_capacity * sizeof(*resized));
+        if (!resized)
+            return LIBRDP_STATUS_NO_MEMORY;
+        snapshot->entries = resized;
+        snapshot->capacity = next_capacity;
+    }
+    entry = &snapshot->entries[snapshot->count];
+    memset(entry, 0, sizeof(*entry));
+    entry->path = strdup(path);
+    if (!entry->path)
+        return LIBRDP_STATUS_NO_MEMORY;
+    entry->size = rdp_session_stat_size(st);
+    entry->allocation_size =
+        rdp_session_stat_allocation_size(st);
+    entry->access_time = rdp_session_stat_atime(st);
+    entry->write_time = rdp_session_stat_mtime(st);
+    entry->change_time = rdp_session_stat_ctime(st);
+    entry->owner_id = (uint64_t)st->st_uid;
+    entry->group_id = (uint64_t)st->st_gid;
+    entry->attributes = rdp_session_stat_attributes(st);
+    entry->directory = S_ISDIR(st->st_mode) ? 1u : 0u;
+    snapshot->count++;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_directory_notify_join_path(
+    const char* prefix,
+    const char* name,
+    char** path)
+{
+    size_t prefix_len = prefix ? strlen(prefix) : 0u;
+    size_t name_len = name ? strlen(name) : 0u;
+    size_t length = 0u;
+    char* joined = NULL;
+
+    if (!name || !path || name_len == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (prefix_len >
+            SIZE_MAX - name_len - (prefix_len > 0u ? 2u : 1u))
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    length = prefix_len + name_len +
+             (prefix_len > 0u ? 1u : 0u);
+    if (length > RDP_SESSION_MAX_FILE_IO_BYTES)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    joined = (char*)malloc(length + 1u);
+    if (!joined)
+        return LIBRDP_STATUS_NO_MEMORY;
+    if (prefix_len > 0u)
+    {
+        memcpy(joined, prefix, prefix_len);
+        joined[prefix_len] = '/';
+        memcpy(joined + prefix_len + 1u,
+               name,
+               name_len + 1u);
+    }
+    else
+    {
+        memcpy(joined, name, name_len + 1u);
+    }
+    *path = joined;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Build a bounded, sorted snapshot from a directory handle. Recursion opens
+ * children relative to trusted dirfds and never follows symbolic links, so a
+ * remote watch request cannot escape the redirected root.
+ */
+static librdp_status rdp_session_directory_snapshot_scan(
+    const rdp_session_redirected_file* file,
+    int source_fd,
+    const char* prefix,
+    uint32_t depth,
+    rdp_session_directory_snapshot* snapshot)
+{
+    DIR* directory = NULL;
+    struct dirent* directory_entry = NULL;
+    int scan_fd = -1;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!file || source_fd < 0 || !snapshot)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    scan_fd = openat(source_fd,
+                     ".",
+                     O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (scan_fd < 0)
+        return LIBRDP_STATUS_STATE;
+    directory = fdopendir(scan_fd);
+    if (!directory)
+    {
+        (void)close(scan_fd);
+        return LIBRDP_STATUS_STATE;
+    }
+    errno = 0;
+    while ((directory_entry = readdir(directory)) != NULL)
+    {
+        struct stat st;
+        char* relative_path = NULL;
+
+        if (strcmp(directory_entry->d_name, ".") == 0 ||
+            strcmp(directory_entry->d_name, "..") == 0)
+            continue;
+        if (file->drive_policy.deny_dotfiles &&
+            directory_entry->d_name[0] == '.')
+            continue;
+        memset(&st, 0, sizeof(st));
+        if (fstatat(dirfd(directory),
+                    directory_entry->d_name,
+                    &st,
+                    AT_SYMLINK_NOFOLLOW) != 0)
+        {
+            if (errno == ENOENT)
+            {
+                errno = 0;
+                continue;
+            }
+            status = LIBRDP_STATUS_STATE;
+            break;
+        }
+        if (file->drive_policy.deny_device_files &&
+            !S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
+            continue;
+        status = rdp_session_directory_notify_join_path(
+            prefix,
+            directory_entry->d_name,
+            &relative_path);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            status = rdp_session_directory_snapshot_append(
+                snapshot,
+                relative_path,
+                &st);
+        }
+        if (status == LIBRDP_STATUS_OK &&
+            file->notify.watch_tree && S_ISDIR(st.st_mode))
+        {
+            int child_fd = -1;
+
+            if (depth >= RDP_SESSION_DIRECTORY_NOTIFY_MAX_DEPTH)
+                status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+            else
+            {
+                child_fd = openat(dirfd(directory),
+                                  directory_entry->d_name,
+                                  O_RDONLY | O_DIRECTORY |
+                                      O_CLOEXEC | O_NOFOLLOW);
+                if (child_fd < 0)
+                {
+                    if (errno == ENOENT)
+                        errno = 0;
+                    else
+                        status = LIBRDP_STATUS_STATE;
+                }
+                else
+                {
+                    status =
+                        rdp_session_directory_snapshot_scan(
+                            file,
+                            child_fd,
+                            relative_path,
+                            depth + 1u,
+                            snapshot);
+                    (void)close(child_fd);
+                }
+            }
+        }
+        free(relative_path);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+        errno = 0;
+    }
+    if (status == LIBRDP_STATUS_OK && errno != 0)
+        status = LIBRDP_STATUS_STATE;
+    (void)closedir(directory);
+    return status;
+}
+
+static librdp_status rdp_session_directory_snapshot_build(
+    const rdp_session_redirected_file* file,
+    rdp_session_directory_snapshot* snapshot)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!file || file->fd < 0 || !snapshot)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(snapshot, 0, sizeof(*snapshot));
+    status = rdp_session_directory_snapshot_scan(file,
+                                                 file->fd,
+                                                 "",
+                                                 0u,
+                                                 snapshot);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_session_directory_snapshot_clear(snapshot);
+        return status;
+    }
+    if (snapshot->count > 1u)
+    {
+        qsort(snapshot->entries,
+              snapshot->count,
+              sizeof(*snapshot->entries),
+              rdp_session_directory_notify_entry_compare);
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static uint32_t rdp_session_directory_notify_name_filter(
+    const rdp_session_directory_notify_entry* entry)
+{
+    return entry && entry->directory
+               ? RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_DIRECTORY_NAME
+               : RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_FILE_NAME;
+}
+
+static uint32_t rdp_session_directory_notify_metadata_filter(
+    const rdp_session_directory_notify_entry* before,
+    const rdp_session_directory_notify_entry* after)
+{
+    uint32_t filter = 0u;
+
+    if (!before || !after)
+        return 0u;
+    if (before->attributes != after->attributes ||
+        before->directory != after->directory)
+        filter |=
+            RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_ATTRIBUTES;
+    if (before->size != after->size ||
+        before->allocation_size != after->allocation_size)
+        filter |= RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_SIZE;
+    if (before->write_time != after->write_time)
+        filter |=
+            RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_LAST_WRITE;
+    if (before->access_time != after->access_time)
+        filter |=
+            RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_LAST_ACCESS;
+    if (before->change_time != after->change_time)
+        filter |=
+            RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_CREATION;
+    if (before->owner_id != after->owner_id ||
+        before->group_id != after->group_id)
+        filter |= RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_SECURITY;
+    return filter;
+}
+
+static int rdp_session_directory_notify_find_change(
+    const rdp_session_redirected_file* file,
+    const rdp_session_directory_snapshot* after,
+    uint32_t* action,
+    const char** path)
+{
+    size_t before_index = 0u;
+    size_t after_index = 0u;
+
+    if (!file || !after || !action || !path)
+        return 0;
+    while (before_index < file->notify.entry_count ||
+           after_index < after->count)
+    {
+        const rdp_session_directory_notify_entry* before =
+            before_index < file->notify.entry_count
+                ? &file->notify.entries[before_index]
+                : NULL;
+        const rdp_session_directory_notify_entry* current =
+            after_index < after->count
+                ? &after->entries[after_index]
+                : NULL;
+        int comparison = 0;
+
+        if (!before)
+            comparison = 1;
+        else if (!current)
+            comparison = -1;
+        else
+            comparison = strcmp(before->path, current->path);
+        if (comparison < 0)
+        {
+            if ((file->notify.completion_filter &
+                 rdp_session_directory_notify_name_filter(before)) !=
+                0u)
+            {
+                *action =
+                    RDP_FILESYSTEM_REDIRECTION_NOTIFY_ACTION_REMOVED;
+                *path = before->path;
+                return 1;
+            }
+            before_index++;
+        }
+        else if (comparison > 0)
+        {
+            if ((file->notify.completion_filter &
+                 rdp_session_directory_notify_name_filter(current)) !=
+                0u)
+            {
+                *action =
+                    RDP_FILESYSTEM_REDIRECTION_NOTIFY_ACTION_ADDED;
+                *path = current->path;
+                return 1;
+            }
+            after_index++;
+        }
+        else
+        {
+            uint32_t changed =
+                rdp_session_directory_notify_metadata_filter(
+                    before,
+                    current);
+
+            if ((file->notify.completion_filter & changed) != 0u)
+            {
+                *action =
+                    RDP_FILESYSTEM_REDIRECTION_NOTIFY_ACTION_MODIFIED;
+                *path = current->path;
+                return 1;
+            }
+            before_index++;
+            after_index++;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Serialize one bounded FILE_NOTIFY_INFORMATION record. The path is copied,
+ * converted to wire separators and encoded before the response is sent; no
+ * snapshot-owned pointer survives this call. Failure commits no partial PDU.
+ */
+static librdp_status rdp_session_send_directory_notify_response(
+    librdp_session* session,
+    uint32_t device_id,
+    uint32_t completion_id,
+    uint32_t io_status,
+    uint32_t action,
+    const char* path)
+{
+    rdp_buffer utf16;
+    rdp_buffer payload;
+    rdp_buffer response;
+    char* wire_path = NULL;
+    size_t path_index = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&utf16);
+    rdp_buffer_init(&payload);
+    rdp_buffer_init(&response);
+    if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+    {
+        if (!path)
+            status = LIBRDP_STATUS_INVALID_ARGUMENT;
+        else
+            wire_path = strdup(path);
+        if (status == LIBRDP_STATUS_OK && !wire_path)
+            status = LIBRDP_STATUS_NO_MEMORY;
+        if (status == LIBRDP_STATUS_OK)
+        {
+            for (path_index = 0u;
+                 wire_path[path_index] != '\0';
+                 path_index++)
+            {
+                if (wire_path[path_index] == '/')
+                    wire_path[path_index] = '\\';
+            }
+            status = rdp_session_utf8_to_utf16le(wire_path,
+                                                 &utf16,
+                                                 0);
+        }
+        if (status == LIBRDP_STATUS_OK &&
+            utf16.length > UINT32_MAX)
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(&payload, 0u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(&payload, action);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(
+                &payload,
+                (uint32_t)utf16.length);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append(&payload,
+                                       utf16.data,
+                                       utf16.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_filesystem_redirection_write_buffer_response(
+            &response,
+            device_id,
+            completion_id,
+            io_status,
+            io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS
+                ? payload.data
+                : NULL,
+            io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS
+                ? (uint32_t)payload.length
+                : 0u);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_session_send_device_redirection_packet(
+            session,
+            &response,
+            "client.rdpdr.file.notify_change.response");
+    }
+    rdp_buffer_free(&response);
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&utf16);
+    free(wire_path);
+    return status;
+}
+
+static int rdp_session_directory_notify_filter_supported(
+    uint32_t completion_filter)
+{
+    const uint32_t supported =
+        RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_FILE_NAME |
+        RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_DIRECTORY_NAME |
+        RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_ATTRIBUTES |
+        RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_SIZE |
+        RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_LAST_WRITE |
+        RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_LAST_ACCESS |
+        RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_CREATION |
+        RDP_FILESYSTEM_REDIRECTION_NOTIFY_CHANGE_SECURITY;
+
+    return (completion_filter & ~supported) == 0u;
+}
+
+/*
+ * Install one watch only after validating the directory handle and supported
+ * filter set. The initial snapshot becomes request-owned state; invalid or
+ * duplicate watches receive an immediate bounded error response.
+ */
 static librdp_status rdp_session_handle_filesystem_notify_change(librdp_session* session,
                                                                  const uint8_t* data,
                                                                  size_t data_len)
 {
     rdp_filesystem_redirection_notify_change_request request;
     rdp_session_redirected_file* file = NULL;
-    rdp_buffer response;
+    rdp_session_directory_snapshot snapshot;
     struct stat st;
     uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
-    uint8_t is_directory = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !data)
@@ -4146,6 +4646,7 @@ static librdp_status rdp_session_handle_filesystem_notify_change(librdp_session*
     status = rdp_filesystem_redirection_parse_notify_change_request(data, data_len, &request);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    memset(&snapshot, 0, sizeof(snapshot));
     memset(&st, 0, sizeof(st));
     file = rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id);
     if (!file || file->fd < 0)
@@ -4154,33 +4655,191 @@ static librdp_status rdp_session_handle_filesystem_notify_change(librdp_session*
         io_status = rdp_session_errno_to_device_status(errno);
     else if (!S_ISDIR(st.st_mode))
         io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    else if (file->notify.active)
+        io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    else if (!rdp_session_directory_notify_filter_supported(
+                 request.completion_filter))
+        io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
     else
-        is_directory = 1;
-
-    rdp_buffer_init(&response);
-    status = rdp_filesystem_redirection_write_buffer_response(&response,
-                                                              request.io.device_id,
-                                                              request.io.completion_id,
-                                                              io_status,
-                                                              NULL,
-                                                              0);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_session_send_device_redirection_packet(session,
-                                                            &response,
-                                                            "client.rdpdr.file.notify_change.response");
-    rdp_buffer_free(&response);
+    {
+        file->notify.watch_tree = request.watch_tree;
+        status = rdp_session_directory_snapshot_build(file,
+                                                      &snapshot);
+        if (status != LIBRDP_STATUS_OK)
+            io_status =
+                rdp_session_filesystem_error_from_status(status);
+    }
+    if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+    {
+        file->notify.active = 1u;
+        file->notify.completion_id =
+            request.io.completion_id;
+        file->notify.completion_filter =
+            request.completion_filter;
+        file->notify.next_check_ns =
+            rdp_session_monotonic_ns() +
+            RDP_SESSION_DIRECTORY_NOTIFY_POLL_NS;
+        file->notify.entries = snapshot.entries;
+        file->notify.entry_count = snapshot.count;
+        memset(&snapshot, 0, sizeof(snapshot));
+    }
+    else
+    {
+        status = rdp_session_send_directory_notify_response(
+            session,
+            request.io.device_id,
+            request.io.completion_id,
+            io_status,
+            0u,
+            NULL);
+        if (file && !file->notify.active)
+            rdp_session_directory_notify_clear(file);
+    }
+    rdp_session_directory_snapshot_clear(&snapshot);
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpdr.file.notify_change",
-                        "device_id=%u file_id=%u completion_id=%u watch_tree=%u filter=%u is_directory=%u status=%u",
+                        "device_id=%u file_id=%u completion_id=%u watch_tree=%u filter=%u pending=%u status=%u",
                         request.io.device_id,
                         request.io.file_id,
                         request.io.completion_id,
                         request.watch_tree,
                         request.completion_filter,
-                        is_directory,
+                        io_status ==
+                                RDP_DEVICE_REDIRECTION_STATUS_SUCCESS
+                            ? 1u
+                            : 0u,
                         io_status);
     return status;
+}
+
+int rdp_session_filesystem_notify_next_timeout_ms(
+    const librdp_session* session)
+{
+    uint64_t now_ns = 0u;
+    uint64_t minimum_ns = UINT64_MAX;
+    size_t index = 0u;
+
+    if (!session)
+        return -1;
+    now_ns = rdp_session_monotonic_ns();
+    for (index = 0u; index < session->limits.file_handles; index++)
+    {
+        const rdp_session_redirected_file* file =
+            &session->redirected_files[index];
+
+        if (!file->active || !file->notify.active)
+            continue;
+        if (file->notify.next_check_ns <= now_ns)
+            return 0;
+        if (file->notify.next_check_ns - now_ns < minimum_ns)
+            minimum_ns = file->notify.next_check_ns - now_ns;
+    }
+    if (minimum_ns == UINT64_MAX)
+        return -1;
+    minimum_ns =
+        (minimum_ns + UINT64_C(999999)) / UINT64_C(1000000);
+    return minimum_ns > (uint64_t)INT_MAX
+               ? INT_MAX
+               : (int)minimum_ns;
+}
+
+/*
+ * Poll every active watch whose monotonic deadline has expired. A changed
+ * snapshot emits exactly one response and releases all retained names; an
+ * unchanged snapshot atomically replaces the old baseline. Scanner or send
+ * failures terminate only the affected request unless transport output fails.
+ */
+librdp_status rdp_session_filesystem_notify_dispatch(
+    librdp_session* session)
+{
+    uint64_t now_ns = 0u;
+    size_t index = 0u;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    now_ns = rdp_session_monotonic_ns();
+    for (index = 0u; index < session->limits.file_handles; index++)
+    {
+        rdp_session_redirected_file* file =
+            &session->redirected_files[index];
+        rdp_session_directory_snapshot snapshot;
+        const char* changed_path = NULL;
+        uint32_t action = 0u;
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (!file->active || !file->notify.active ||
+            file->notify.next_check_ns > now_ns)
+            continue;
+        memset(&snapshot, 0, sizeof(snapshot));
+        status = rdp_session_directory_snapshot_build(file,
+                                                      &snapshot);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            uint32_t io_status =
+                rdp_session_filesystem_error_from_status(status);
+
+            status = rdp_session_send_directory_notify_response(
+                session,
+                file->device_id,
+                file->notify.completion_id,
+                io_status,
+                0u,
+                NULL);
+            rdp_session_directory_notify_clear(file);
+            rdp_session_directory_snapshot_clear(&snapshot);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            continue;
+        }
+        if (rdp_session_directory_notify_find_change(
+                file,
+                &snapshot,
+                &action,
+                &changed_path))
+        {
+            status = rdp_session_send_directory_notify_response(
+                session,
+                file->device_id,
+                file->notify.completion_id,
+                RDP_DEVICE_REDIRECTION_STATUS_SUCCESS,
+                action,
+                changed_path);
+            rdp_trace_event(
+                RDP_TRACE_CLIENT,
+                "client.rdpdr.file.notify_change.completed",
+                "device_id=%u file_id=%u action=%u name_bytes=%u",
+                file->device_id,
+                file->file_id,
+                action,
+                (unsigned int)strlen(changed_path));
+            rdp_session_directory_notify_clear(file);
+            rdp_session_directory_snapshot_clear(&snapshot);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            continue;
+        }
+        {
+            uint8_t watch_tree = file->notify.watch_tree;
+            uint32_t completion_id =
+                file->notify.completion_id;
+            uint32_t completion_filter =
+                file->notify.completion_filter;
+
+            rdp_session_directory_notify_clear(file);
+            file->notify.active = 1u;
+            file->notify.watch_tree = watch_tree;
+            file->notify.completion_id = completion_id;
+            file->notify.completion_filter =
+                completion_filter;
+        }
+        file->notify.next_check_ns =
+            now_ns + RDP_SESSION_DIRECTORY_NOTIFY_POLL_NS;
+        file->notify.entries = snapshot.entries;
+        file->notify.entry_count = snapshot.count;
+        memset(&snapshot, 0, sizeof(snapshot));
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 /*

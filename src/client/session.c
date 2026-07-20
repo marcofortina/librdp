@@ -4795,6 +4795,9 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
     status = rdp_session_printer_dispatch_completions(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    status = rdp_session_filesystem_notify_dispatch(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (!rdp_session_transport_input_ready_now(session))
         rdp_session_echo_check_timeout(session);
     {
@@ -4802,6 +4805,14 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
 
         if (echo_timeout_ms >= 0 && echo_timeout_ms < timeout_ms)
             timeout_ms = echo_timeout_ms;
+    }
+    {
+        int notify_timeout_ms =
+            rdp_session_filesystem_notify_next_timeout_ms(session);
+
+        if (notify_timeout_ms >= 0 &&
+            notify_timeout_ms < timeout_ms)
+            timeout_ms = notify_timeout_ms;
     }
 
     rdp_buffer_init(&packet);
@@ -4917,6 +4928,12 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
     }
     if (status == LIBRDP_STATUS_TIMEOUT)
     {
+        status = rdp_session_filesystem_notify_dispatch(session);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_buffer_free(&packet);
+            return status;
+        }
         rdp_session_echo_check_timeout(session);
         (void)rdp_session_activation_timeout_ms(session,
                                                 &activation_expired);
@@ -6167,6 +6184,8 @@ librdp_status librdp_session_dispatch_pending(librdp_session* session)
     if (!session->pending_poll &&
         atomic_load_explicit(&session->cancel_requested, memory_order_acquire) == 0u)
     {
+        if (rdp_session_filesystem_notify_next_timeout_ms(session) == 0)
+            return librdp_session_run_once(session, 0);
         if (rdp_session_echo_next_timeout_ms(session) == 0)
             rdp_session_echo_check_timeout(session);
         return LIBRDP_STATUS_OK;
@@ -6196,6 +6215,15 @@ librdp_status librdp_session_get_next_timeout(const librdp_session* session, int
         if (echo_timeout_ms >= 0 &&
             (*timeout_ms < 0 || echo_timeout_ms < *timeout_ms))
             *timeout_ms = echo_timeout_ms;
+    }
+    {
+        int notify_timeout_ms =
+            rdp_session_filesystem_notify_next_timeout_ms(session);
+
+        if (notify_timeout_ms >= 0 &&
+            (*timeout_ms < 0 ||
+             notify_timeout_ms < *timeout_ms))
+            *timeout_ms = notify_timeout_ms;
     }
     {
         int activation_expired = 0;

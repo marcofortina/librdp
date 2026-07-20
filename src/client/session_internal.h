@@ -185,6 +185,9 @@ typedef struct rdp_session_usb_worker rdp_session_usb_worker;
 #define RDP_SESSION_MAX_REDIRECTED_FILES 256u
 #define RDP_SESSION_MAX_FILE_LOCKS RDP_FILESYSTEM_REDIRECTION_MAX_LOCKS
 #define RDP_SESSION_MAX_FILE_IO_BYTES (4u * 1024u * 1024u)
+#define RDP_SESSION_DIRECTORY_NOTIFY_MAX_ENTRIES 4096u
+#define RDP_SESSION_DIRECTORY_NOTIFY_MAX_DEPTH 32u
+#define RDP_SESSION_DIRECTORY_NOTIFY_POLL_NS UINT64_C(50000000)
 #define RDP_SESSION_MAX_PNP_READ_BYTES 65536u
 #define RDP_SESSION_FILE_DIRECTORY_FILE 0x00000001u
 #define RDP_SESSION_FILE_DIRECTORY_INFORMATION 1u
@@ -277,6 +280,31 @@ typedef struct rdp_session_file_lock_range
     uint64_t length;
 } rdp_session_file_lock_range;
 
+typedef struct rdp_session_directory_notify_entry
+{
+    char* path;
+    uint64_t size;
+    uint64_t allocation_size;
+    uint64_t access_time;
+    uint64_t write_time;
+    uint64_t change_time;
+    uint64_t owner_id;
+    uint64_t group_id;
+    uint32_t attributes;
+    uint8_t directory;
+} rdp_session_directory_notify_entry;
+
+typedef struct rdp_session_directory_notify
+{
+    uint8_t active;
+    uint8_t watch_tree;
+    uint32_t completion_id;
+    uint32_t completion_filter;
+    uint64_t next_check_ns;
+    rdp_session_directory_notify_entry* entries;
+    size_t entry_count;
+} rdp_session_directory_notify;
+
 typedef struct rdp_session_redirected_file
 {
     uint8_t active;
@@ -293,6 +321,7 @@ typedef struct rdp_session_redirected_file
     librdp_drive_policy drive_policy;
     uint32_t lock_count;
     rdp_session_file_lock_range locks[RDP_SESSION_MAX_FILE_LOCKS];
+    rdp_session_directory_notify notify;
     uint8_t port_type;
     uint8_t printer_backend;
     uint32_t printer_index;
