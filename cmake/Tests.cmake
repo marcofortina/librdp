@@ -258,6 +258,12 @@ if(LIBRDP_BUILD_TESTS)
         librdp_viewer_common
     )
     librdp_configure_test_executable(test_server_client_smoke)
+    add_executable(test_server_client_input_smoke
+        tests/test_server_client_input_smoke.c
+    )
+    librdp_configure_test_executable(
+        test_server_client_input_smoke
+    )
     if(TARGET librdp-viewer AND
        LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         find_program(LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE NAMES Xvfb)
@@ -547,6 +553,10 @@ if(LIBRDP_BUILD_TESTS)
         COMMAND test_server_client_smoke tls)
     add_test(NAME server_client_smoke_nla
              COMMAND test_server_client_smoke nla)
+    add_test(NAME server_client_smoke_input_touch
+             COMMAND test_server_client_input_smoke touch)
+    add_test(NAME server_client_smoke_input_touch_fallback
+             COMMAND test_server_client_input_smoke touch-fallback)
     if(TARGET test_workspace_launch_smoke)
         add_test(NAME workspace_desktop_launch_smoke
             COMMAND test_workspace_launch_smoke
@@ -731,6 +741,8 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_standard_ipv6
         server_client_smoke_tls
         server_client_smoke_nla
+        server_client_smoke_input_touch
+        server_client_smoke_input_touch_fallback
         server_client_smoke_nla_invalid
         server_client_smoke_nla_expired
         server_client_smoke_nla_locked

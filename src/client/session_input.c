@@ -352,10 +352,11 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
     return status;
 }
 
-librdp_status librdp_session_send_touch(librdp_session* session,
-                                        uint32_t encode_time,
-                                        const librdp_touch_frame* frames,
-                                        uint16_t frame_count)
+static librdp_status rdp_session_send_touch_inner(
+    librdp_session* session,
+    uint32_t encode_time,
+    const librdp_touch_frame* frames,
+    uint16_t frame_count)
 {
     rdp_input_channel_touch_frame* internal_frames = NULL;
     rdp_buffer* contact_buffers = NULL;
@@ -365,9 +366,6 @@ librdp_status librdp_session_send_touch(librdp_session* session,
 
     if (!session || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_session_require_owner(session, "client.input.touch.owner");
-    if (status != LIBRDP_STATUS_OK)
-        return status;
     status = rdp_session_validate_touch_frames(frames,
                                                frame_count,
                                                RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS);
@@ -431,10 +429,38 @@ librdp_status librdp_session_send_touch(librdp_session* session,
     return status;
 }
 
-librdp_status librdp_session_send_pen(librdp_session* session,
-                                      uint32_t encode_time,
-                                      const librdp_pen_frame* frames,
-                                      uint16_t frame_count)
+librdp_status librdp_session_send_touch(librdp_session* session,
+                                        uint32_t encode_time,
+                                        const librdp_touch_frame* frames,
+                                        uint16_t frame_count)
+{
+    rdp_trace_session_scope trace_scope;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return rdp_session_send_touch_inner(session,
+                                            encode_time,
+                                            frames,
+                                            frame_count);
+    status = rdp_session_require_owner(
+        session,
+        "client.input.touch.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_session_trace_scope_begin(session, &trace_scope);
+    status = rdp_session_send_touch_inner(session,
+                                          encode_time,
+                                          frames,
+                                          frame_count);
+    rdp_session_trace_scope_end(session, &trace_scope);
+    return status;
+}
+
+static librdp_status rdp_session_send_pen_inner(
+    librdp_session* session,
+    uint32_t encode_time,
+    const librdp_pen_frame* frames,
+    uint16_t frame_count)
 {
     rdp_input_channel_pen_frame* internal_frames = NULL;
     rdp_buffer* contact_buffers = NULL;
@@ -444,9 +470,6 @@ librdp_status librdp_session_send_pen(librdp_session* session,
 
     if (!session || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_session_require_owner(session, "client.input.pen.owner");
-    if (status != LIBRDP_STATUS_OK)
-        return status;
     status = rdp_session_validate_pen_frames(frames, frame_count);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -505,13 +528,41 @@ librdp_status librdp_session_send_pen(librdp_session* session,
     return status;
 }
 
-librdp_status librdp_session_dismiss_touch(librdp_session* session, uint8_t contact_id)
+librdp_status librdp_session_send_pen(librdp_session* session,
+                                      uint32_t encode_time,
+                                      const librdp_pen_frame* frames,
+                                      uint16_t frame_count)
+{
+    rdp_trace_session_scope trace_scope;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return rdp_session_send_pen_inner(session,
+                                          encode_time,
+                                          frames,
+                                          frame_count);
+    status = rdp_session_require_owner(
+        session,
+        "client.input.pen.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_session_trace_scope_begin(session, &trace_scope);
+    status = rdp_session_send_pen_inner(session,
+                                        encode_time,
+                                        frames,
+                                        frame_count);
+    rdp_session_trace_scope_end(session, &trace_scope);
+    return status;
+}
+
+static librdp_status rdp_session_dismiss_touch_inner(
+    librdp_session* session,
+    uint8_t contact_id)
 {
     rdp_buffer input;
-    librdp_status status = rdp_session_require_owner(session, "client.input.dismiss_touch.owner");
+    librdp_status status =
+        rdp_session_require_input_channel(session);
 
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_session_require_input_channel(session);
     rdp_buffer_init(&input);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_input_channel_write_dismiss_hovering(&input, contact_id);
@@ -531,3 +582,23 @@ librdp_status librdp_session_dismiss_touch(librdp_session* session, uint8_t cont
     return status;
 }
 
+librdp_status librdp_session_dismiss_touch(librdp_session* session,
+                                           uint8_t contact_id)
+{
+    rdp_trace_session_scope trace_scope;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return rdp_session_dismiss_touch_inner(session,
+                                               contact_id);
+    status = rdp_session_require_owner(
+        session,
+        "client.input.dismiss_touch.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_session_trace_scope_begin(session, &trace_scope);
+    status = rdp_session_dismiss_touch_inner(session,
+                                             contact_id);
+    rdp_session_trace_scope_end(session, &trace_scope);
+    return status;
+}
