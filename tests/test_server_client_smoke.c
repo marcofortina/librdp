@@ -49,6 +49,7 @@
 #define SMOKE_CAPTURE_HEIGHT 60u
 #define SMOKE_PIXEL_BYTES (SMOKE_CAPTURE_WIDTH * SMOKE_CAPTURE_HEIGHT * 4u)
 #define SMOKE_PUMP_LIMIT 500u
+#define SMOKE_LIFECYCLE_CAPACITY 32u
 
 typedef struct smoke_nla_identity
 {
@@ -340,6 +341,9 @@ typedef struct smoke_trace_capture
     unsigned int rdg_tunnels;
     unsigned int rdg_authentications;
     unsigned int rdg_channels;
+    librdp_session_lifecycle lifecycle[SMOKE_LIFECYCLE_CAPACITY];
+    size_t lifecycle_count;
+    int lifecycle_overflow;
     int leaked;
     int address_matched;
     const smoke_nla_identity* identity;
@@ -485,6 +489,31 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event,
                     "transport.gateway.rdg.channel.done") == 0)
         capture->rdg_channels++;
+    else if (record->event &&
+             strcmp(record->event, "client.lifecycle") == 0 &&
+             record->message)
+    {
+        unsigned long phase = 0ul;
+        char* end = NULL;
+
+        errno = 0;
+        if (strncmp(record->message, "phase=", 6u) == 0)
+        {
+            phase = strtoul(record->message + 6u, &end, 10);
+            if (errno == 0 && end && *end == '\0' &&
+                phase <= (unsigned long)LIBRDP_LIFECYCLE_FAILED)
+            {
+                if (capture->lifecycle_count <
+                    SMOKE_LIFECYCLE_CAPACITY)
+                {
+                    capture->lifecycle[capture->lifecycle_count++] =
+                        (librdp_session_lifecycle)phase;
+                }
+                else
+                    capture->lifecycle_overflow = 1;
+            }
+        }
+    }
     {
         const smoke_nla_identity* identities[2] = {
             capture->identity,
@@ -507,6 +536,99 @@ static void smoke_trace_callback(librdp_session* session,
                 capture->leaked = 1;
         }
     }
+}
+
+/*
+ * Validate the complete lifecycle observed through the per-session trace.
+ * Negotiation and authentication may alternate while Standard Security or NLA
+ * exchanges are in progress, but terminal and transport phases remain strict.
+ */
+static int smoke_validate_lifecycle(
+    const smoke_trace_capture* capture,
+    librdp_security_mode security)
+{
+    size_t index = 0u;
+    size_t connecting_index = SIZE_MAX;
+    size_t tls_index = SIZE_MAX;
+    size_t authenticating_index = SIZE_MAX;
+    size_t activating_index = SIZE_MAX;
+    size_t active_index = SIZE_MAX;
+    size_t disconnecting_index = SIZE_MAX;
+    size_t disconnected_index = SIZE_MAX;
+    unsigned int connecting_count = 0u;
+    unsigned int tls_count = 0u;
+    unsigned int activating_count = 0u;
+    unsigned int active_count = 0u;
+    unsigned int disconnecting_count = 0u;
+    unsigned int disconnected_count = 0u;
+
+    if (!capture || capture->lifecycle_overflow ||
+        capture->lifecycle_count < 7u ||
+        capture->lifecycle[0] != LIBRDP_LIFECYCLE_NEW)
+        return 0;
+    for (index = 1u; index < capture->lifecycle_count; index++)
+    {
+        librdp_session_lifecycle phase = capture->lifecycle[index];
+
+        if (phase == capture->lifecycle[index - 1u] ||
+            phase == LIBRDP_LIFECYCLE_FAILED ||
+            phase == LIBRDP_LIFECYCLE_RECONNECTING)
+            return 0;
+        switch (phase)
+        {
+            case LIBRDP_LIFECYCLE_RESOLVING:
+                if (connecting_index != SIZE_MAX)
+                    return 0;
+                break;
+            case LIBRDP_LIFECYCLE_CONNECTING:
+                connecting_count++;
+                connecting_index = index;
+                break;
+            case LIBRDP_LIFECYCLE_TLS_HANDSHAKE:
+                tls_count++;
+                tls_index = index;
+                break;
+            case LIBRDP_LIFECYCLE_AUTHENTICATING:
+                if (authenticating_index == SIZE_MAX)
+                    authenticating_index = index;
+                break;
+            case LIBRDP_LIFECYCLE_NEGOTIATING:
+                break;
+            case LIBRDP_LIFECYCLE_ACTIVATING:
+                activating_count++;
+                activating_index = index;
+                break;
+            case LIBRDP_LIFECYCLE_ACTIVE:
+                active_count++;
+                active_index = index;
+                break;
+            case LIBRDP_LIFECYCLE_DISCONNECTING:
+                disconnecting_count++;
+                disconnecting_index = index;
+                break;
+            case LIBRDP_LIFECYCLE_DISCONNECTED:
+                disconnected_count++;
+                disconnected_index = index;
+                break;
+            default:
+                return 0;
+        }
+    }
+    if (connecting_count != 1u || activating_count != 1u ||
+        active_count != 1u || disconnecting_count != 1u ||
+        disconnected_count != 1u ||
+        authenticating_index == SIZE_MAX ||
+        !(connecting_index < authenticating_index &&
+          authenticating_index < activating_index &&
+          activating_index < active_index &&
+          active_index < disconnecting_index &&
+          disconnecting_index < disconnected_index) ||
+        disconnected_index + 1u != capture->lifecycle_count)
+        return 0;
+    if (security == LIBRDP_SECURITY_STANDARD)
+        return tls_count == 0u;
+    return tls_count == 1u && connecting_index < tls_index &&
+           tls_index < authenticating_index;
 }
 
 static librdp_status smoke_capture_start(
@@ -1910,6 +2032,8 @@ static int smoke_run_profile(librdp_security_mode security,
 
     session = librdp_session_new(settings);
     REQUIRE(session != NULL);
+    trace_capture.lifecycle[trace_capture.lifecycle_count++] =
+        librdp_session_get_lifecycle(session);
     librdp_session_set_event_callback(session, smoke_client_event, &events);
     REQUIRE(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
     trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
@@ -2268,6 +2392,7 @@ static int smoke_run_profile(librdp_security_mode security,
         goto cleanup;
     }
     REQUIRE(client_runtime_disconnect(&runtime) == LIBRDP_STATUS_OK);
+    REQUIRE(smoke_validate_lifecycle(&trace_capture, security));
     if (rdg_started)
     {
         REQUIRE(atomic_load_explicit(&rdg_gateway.closed,
