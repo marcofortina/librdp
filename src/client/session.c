@@ -4821,6 +4821,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             rdp_buffer_free(&packet);
             return librdp_session_disconnect(session);
         }
+        if (status == LIBRDP_STATUS_AGAIN)
+            return rdp_session_run_once_idle(&packet);
         if (status != LIBRDP_STATUS_OK || peeked != 1)
         {
             rdp_buffer_free(&packet);

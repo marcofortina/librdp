@@ -108,6 +108,7 @@ typedef struct rdp_rdg_http_context
     unsigned long out_http_status;
     int control_pipe[2];
     int event_pipe[2];
+    int read_pipe[2];
     librdp_status error;
     rdp_buffer incoming;
     rdp_rdg_bounded_queue outbound;
@@ -695,6 +696,7 @@ static void rdp_rdg_set_error_locked(rdp_rdg_http_context* context, librdp_statu
         context->error = status;
     pthread_cond_broadcast(&context->cond);
     rdp_rdg_signal_pipe(context->event_pipe[1]);
+    rdp_rdg_signal_pipe(context->read_pipe[1]);
     rdp_rdg_signal_pipe(context->control_pipe[1]);
 }
 
@@ -752,6 +754,7 @@ static librdp_status rdp_rdg_parse_incoming_locked(rdp_rdg_http_context* context
                     return status;
                 }
                 rdp_rdg_signal_pipe(context->event_pipe[1]);
+                rdp_rdg_signal_pipe(context->read_pipe[1]);
             }
         }
         else if (packet.type == RDP_RDG_PKT_KEEPALIVE)
@@ -1205,6 +1208,22 @@ static void rdp_rdg_worker_set_error(rdp_rdg_http_context* context, librdp_statu
     pthread_mutex_unlock(&context->mutex);
 }
 
+#ifdef RDP_HAVE_CURL
+static librdp_status rdp_rdg_curl_status(CURLcode code)
+{
+    if (code == CURLE_OK)
+        return LIBRDP_STATUS_OK;
+    if (code == CURLE_OPERATION_TIMEDOUT)
+        return LIBRDP_STATUS_TIMEOUT;
+    if (code == CURLE_UNSUPPORTED_PROTOCOL)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (code == CURLE_PEER_FAILED_VERIFICATION ||
+        code == CURLE_SSL_CACERT_BADFILE)
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    return LIBRDP_STATUS_IO_ERROR;
+}
+#endif
+
 static void rdp_rdg_worker_update_pauses(rdp_rdg_http_context* context)
 {
     int resume_send = 0;
@@ -1296,7 +1315,9 @@ static void* rdp_rdg_worker_main(void* user_data)
                                 "transport.gateway.rdg.curl_failed",
                                 "curl_code=%u",
                                 (unsigned)message->data.result);
-                rdp_rdg_worker_set_error(context, LIBRDP_STATUS_IO_ERROR);
+                rdp_rdg_worker_set_error(
+                    context,
+                    rdp_rdg_curl_status(message->data.result));
                 break;
             }
         }
@@ -1354,10 +1375,12 @@ static librdp_status rdp_rdg_configure_easy(rdp_rdg_http_context* context,
                                             struct curl_slist* headers,
                                             int upload)
 {
+    const char* ca_bundle = NULL;
     CURLcode code = CURLE_OK;
 
     if (!context || !easy || !method)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    ca_bundle = getenv("CURL_CA_BUNDLE");
     code = curl_easy_setopt(easy, CURLOPT_URL, context->url);
     if (code == CURLE_OK)
         code = curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method);
@@ -1375,6 +1398,8 @@ static librdp_status rdp_rdg_configure_easy(rdp_rdg_http_context* context,
         code = curl_easy_setopt(easy, CURLOPT_FAILONERROR, 1L);
     if (code == CURLE_OK)
         code = curl_easy_setopt(easy, CURLOPT_HTTPAUTH, (long)CURLAUTH_ANYSAFE);
+    if (code == CURLE_OK && ca_bundle && ca_bundle[0] != '\0')
+        code = curl_easy_setopt(easy, CURLOPT_CAINFO, ca_bundle);
 #if LIBCURL_VERSION_NUM >= 0x075500
     if (code == CURLE_OK)
         code = curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
@@ -1490,6 +1515,8 @@ static rdp_rdg_http_context* rdp_rdg_context_new(void)
     context->control_pipe[1] = -1;
     context->event_pipe[0] = -1;
     context->event_pipe[1] = -1;
+    context->read_pipe[0] = -1;
+    context->read_pipe[1] = -1;
     context->error = LIBRDP_STATUS_OK;
     rdp_buffer_init(&context->incoming);
     rdp_rdg_bounded_queue_init(&context->outbound,
@@ -1501,8 +1528,20 @@ static rdp_rdg_http_context* rdp_rdg_context_new(void)
     rdp_rdg_bounded_queue_init(&context->control,
                                RDP_RDG_DEFAULT_QUEUE_BYTES,
                                RDP_RDG_DEFAULT_QUEUE_NODES);
-    if (pthread_mutex_init(&context->mutex, NULL) != 0 || pthread_cond_init(&context->cond, NULL) != 0 ||
-        !rdp_rdg_make_pipe(context->control_pipe) || !rdp_rdg_make_pipe(context->event_pipe))
+    if (pthread_mutex_init(&context->mutex, NULL) != 0)
+    {
+        free(context);
+        return NULL;
+    }
+    if (pthread_cond_init(&context->cond, NULL) != 0)
+    {
+        pthread_mutex_destroy(&context->mutex);
+        free(context);
+        return NULL;
+    }
+    if (!rdp_rdg_make_pipe(context->control_pipe) ||
+        !rdp_rdg_make_pipe(context->event_pipe) ||
+        !rdp_rdg_make_pipe(context->read_pipe))
     {
         if (context->control_pipe[0] >= 0)
             close(context->control_pipe[0]);
@@ -1512,6 +1551,10 @@ static rdp_rdg_http_context* rdp_rdg_context_new(void)
             close(context->event_pipe[0]);
         if (context->event_pipe[1] >= 0)
             close(context->event_pipe[1]);
+        if (context->read_pipe[0] >= 0)
+            close(context->read_pipe[0]);
+        if (context->read_pipe[1] >= 0)
+            close(context->read_pipe[1]);
         pthread_cond_destroy(&context->cond);
         pthread_mutex_destroy(&context->mutex);
         free(context);
@@ -1529,6 +1572,7 @@ static void rdp_rdg_context_stop(rdp_rdg_http_context* context)
     pthread_cond_broadcast(&context->cond);
     pthread_mutex_unlock(&context->mutex);
     rdp_rdg_signal_pipe(context->control_pipe[1]);
+    rdp_rdg_signal_pipe(context->read_pipe[1]);
     if (context->worker_started)
     {
         (void)pthread_join(context->worker, NULL);
@@ -1568,6 +1612,10 @@ static void rdp_rdg_context_free(rdp_rdg_http_context* context)
         close(context->event_pipe[0]);
     if (context->event_pipe[1] >= 0)
         close(context->event_pipe[1]);
+    if (context->read_pipe[0] >= 0)
+        close(context->read_pipe[0]);
+    if (context->read_pipe[1] >= 0)
+        close(context->read_pipe[1]);
     pthread_cond_destroy(&context->cond);
     pthread_mutex_destroy(&context->mutex);
     free(context);
@@ -1747,6 +1795,14 @@ static librdp_status rdp_rdg_backend_wait(void* user_data, int timeout_ms, short
     }
 }
 
+static int rdp_rdg_backend_poll_fd(void* user_data)
+{
+    const rdp_rdg_http_context* context =
+        (const rdp_rdg_http_context*)user_data;
+
+    return context ? context->read_pipe[0] : -1;
+}
+
 static librdp_status rdp_rdg_backend_peek(void* user_data, void* data, size_t length, size_t* read_len)
 {
     rdp_rdg_http_context* context = (rdp_rdg_http_context*)user_data;
@@ -1763,6 +1819,8 @@ static librdp_status rdp_rdg_backend_peek(void* user_data, void* data, size_t le
         return status;
     }
     copied = rdp_rdg_bounded_queue_peek(&context->inbound, data, length);
+    if (copied == 0u)
+        rdp_rdg_drain_pipe(context->read_pipe[0]);
     pthread_mutex_unlock(&context->mutex);
     if (read_len)
         *read_len = copied;
@@ -1777,9 +1835,6 @@ static librdp_status rdp_rdg_backend_read(void* user_data, void* data, size_t le
     if (!context || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     pthread_mutex_lock(&context->mutex);
-    while (!rdp_rdg_bounded_queue_has_bytes(&context->inbound) &&
-           context->error == LIBRDP_STATUS_OK && !context->closing)
-        (void)pthread_cond_wait(&context->cond, &context->mutex);
     if (context->error != LIBRDP_STATUS_OK)
     {
         librdp_status status = context->error;
@@ -1792,9 +1847,17 @@ static librdp_status rdp_rdg_backend_read(void* user_data, void* data, size_t le
         pthread_mutex_unlock(&context->mutex);
         return LIBRDP_STATUS_CLOSED;
     }
+    if (!rdp_rdg_bounded_queue_has_bytes(&context->inbound))
+    {
+        pthread_mutex_unlock(&context->mutex);
+        return LIBRDP_STATUS_AGAIN;
+    }
     copied = rdp_rdg_bounded_queue_read(&context->inbound, data, length);
     if (!rdp_rdg_bounded_queue_has_bytes(&context->inbound))
+    {
         rdp_rdg_drain_pipe(context->event_pipe[0]);
+        rdp_rdg_drain_pipe(context->read_pipe[0]);
+    }
     pthread_cond_broadcast(&context->cond);
     rdp_rdg_signal_pipe(context->control_pipe[1]);
     pthread_mutex_unlock(&context->mutex);
@@ -1867,25 +1930,47 @@ static void rdp_rdg_backend_close(void* user_data)
 {
     rdp_rdg_http_context* context = (rdp_rdg_http_context*)user_data;
     rdp_buffer body;
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int active = 0;
 
     if (!context)
         return;
     pthread_mutex_lock(&context->mutex);
-    if (context->active && !context->closing)
+    active = context->active && !context->closing;
+    pthread_mutex_unlock(&context->mutex);
+    if (active &&
+        rdp_rdg_build_close_packet(&body) == LIBRDP_STATUS_OK)
     {
-        pthread_mutex_unlock(&context->mutex);
-        if (rdp_rdg_build_close_packet(&body) == LIBRDP_STATUS_OK)
+        status = rdp_rdg_queue_packet(
+            context,
+            RDP_RDG_PKT_CLOSE_CHANNEL,
+            &body);
+        rdp_buffer_free(&body);
+        if (status == LIBRDP_STATUS_OK)
         {
-            (void)rdp_rdg_queue_packet(context, RDP_RDG_PKT_CLOSE_CHANNEL, &body);
-            rdp_buffer_free(&body);
+            status = rdp_rdg_receive_control(
+                context,
+                RDP_RDG_PKT_CLOSE_CHANNEL_RESPONSE,
+                &response);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                if (response.length < 4u ||
+                    rdp_rdg_read_u32_le(response.data) != 0u)
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                rdp_buffer_free(&response);
+            }
         }
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.gateway.rdg.channel.close",
+                        "status=%s",
+                        librdp_status_name(status));
     }
-    else
-        pthread_mutex_unlock(&context->mutex);
     rdp_rdg_context_free(context);
 }
 
 static const rdp_transport_backend_ops rdp_rdg_backend_ops = {
+    rdp_rdg_backend_poll_fd,
     rdp_rdg_backend_wait,
     rdp_rdg_backend_peek,
     rdp_rdg_backend_read,

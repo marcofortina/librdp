@@ -45,6 +45,7 @@ typedef struct rdp_transport_tls_config
 
 typedef struct rdp_transport_backend_ops
 {
+    int (*poll_fd)(void* context);
     librdp_status (*wait)(void* context, int timeout_ms, short events, short* revents);
     librdp_status (*peek)(void* context, void* data, size_t length, size_t* read_len);
     librdp_status (*read)(void* context, void* data, size_t length, size_t* read_len);

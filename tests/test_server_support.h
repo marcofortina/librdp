@@ -144,9 +144,15 @@ int test_server_set_nonblocking(int fd);
 int test_server_copy_file(const char* source_path, const char* target_path);
 
 int test_server_make_tls_files(char* cert_path,
-                                      size_t cert_path_len,
-                                      char* key_path,
-                                      size_t key_path_len);
+                               size_t cert_path_len,
+                               char* key_path,
+                               size_t key_path_len);
+
+int test_server_make_tls_files_for_host(char* cert_path,
+                                        size_t cert_path_len,
+                                        char* key_path,
+                                        size_t key_path_len,
+                                        const char* host);
 
 int test_server_make_tls_files_with_policy(char* cert_path,
                                            size_t cert_path_len,

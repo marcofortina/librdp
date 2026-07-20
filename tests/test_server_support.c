@@ -20,6 +20,7 @@
 #include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -127,17 +128,51 @@ int test_server_copy_file(const char* source_path, const char* target_path)
     return ok;
 }
 
-int test_server_make_tls_files_with_policy(char* cert_path,
-                                           size_t cert_path_len,
-                                           char* key_path,
-                                           size_t key_path_len,
-                                           unsigned int key_bits,
-                                           long not_before_offset,
-                                           long not_after_offset)
+static int test_server_add_certificate_extension(X509* certificate,
+                                                 int nid,
+                                                 const char* value)
+{
+    X509V3_CTX context;
+    X509_EXTENSION* extension = NULL;
+    int result = 0;
+
+    if (!certificate || !value)
+        return 0;
+    X509V3_set_ctx(&context,
+                   certificate,
+                   certificate,
+                   NULL,
+                   NULL,
+                   0);
+    extension = X509V3_EXT_conf_nid(NULL,
+                                   &context,
+                                   nid,
+                                   (char*)value);
+    if (extension)
+        result = X509_add_ext(certificate, extension, -1) == 1;
+    X509_EXTENSION_free(extension);
+    return result;
+}
+
+/*
+ * Generate process-local TLS material with an optional DNS identity. Host-bound
+ * fixtures are self-signed trust anchors so libcurl can validate both the
+ * chain and hostname without weakening verification.
+ */
+static int test_server_make_tls_files_internal(char* cert_path,
+                                               size_t cert_path_len,
+                                               char* key_path,
+                                               size_t key_path_len,
+                                               unsigned int key_bits,
+                                               long not_before_offset,
+                                               long not_after_offset,
+                                               const char* common_name,
+                                               const char* dns_name)
 {
     EVP_PKEY* key = NULL;
     X509* cert = NULL;
     X509_NAME* name = NULL;
+    char subject_alt_name[256];
     FILE* file = NULL;
     int cert_fd = -1;
     int key_fd = -1;
@@ -153,7 +188,8 @@ int test_server_make_tls_files_with_policy(char* cert_path,
         cert = X509_new();
         if (!key || !cert)
             break;
-        if (ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) != 1 ||
+        if (!common_name ||
+            ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) != 1 ||
             X509_set_version(cert, 2) != 1 ||
             X509_set_pubkey(cert, key) != 1 ||
             !X509_gmtime_adj(X509_get_notBefore(cert),
@@ -166,12 +202,40 @@ int test_server_make_tls_files_with_policy(char* cert_path,
             X509_NAME_add_entry_by_txt(name,
                                        "CN",
                                        MBSTRING_ASC,
-                                       (const unsigned char*)"librdp-server-test",
+                                       (const unsigned char*)common_name,
                                        -1,
                                        -1,
                                        0) != 1 ||
-            X509_set_issuer_name(cert, name) != 1 ||
-            X509_sign(cert, key, EVP_sha256()) <= 0)
+            X509_set_issuer_name(cert, name) != 1)
+            break;
+        if (dns_name)
+        {
+            const int written = snprintf(subject_alt_name,
+                                         sizeof(subject_alt_name),
+                                         "DNS:%s",
+                                         dns_name);
+
+            if (written <= 0 ||
+                (size_t)written >= sizeof(subject_alt_name) ||
+                !test_server_add_certificate_extension(
+                    cert,
+                    NID_basic_constraints,
+                    "critical,CA:TRUE") ||
+                !test_server_add_certificate_extension(
+                    cert,
+                    NID_key_usage,
+                    "critical,digitalSignature,keyEncipherment,keyCertSign") ||
+                !test_server_add_certificate_extension(
+                    cert,
+                    NID_ext_key_usage,
+                    "serverAuth") ||
+                !test_server_add_certificate_extension(
+                    cert,
+                    NID_subject_alt_name,
+                    subject_alt_name))
+                break;
+        }
+        if (X509_sign(cert, key, EVP_sha256()) <= 0)
             break;
         file = fdopen(cert_fd, "w");
         if (!file)
@@ -214,6 +278,25 @@ int test_server_make_tls_files_with_policy(char* cert_path,
     return ok;
 }
 
+int test_server_make_tls_files_with_policy(char* cert_path,
+                                           size_t cert_path_len,
+                                           char* key_path,
+                                           size_t key_path_len,
+                                           unsigned int key_bits,
+                                           long not_before_offset,
+                                           long not_after_offset)
+{
+    return test_server_make_tls_files_internal(cert_path,
+                                               cert_path_len,
+                                               key_path,
+                                               key_path_len,
+                                               key_bits,
+                                               not_before_offset,
+                                               not_after_offset,
+                                               "librdp-server-test",
+                                               NULL);
+}
+
 int test_server_make_tls_files(char* cert_path,
                                size_t cert_path_len,
                                char* key_path,
@@ -226,6 +309,25 @@ int test_server_make_tls_files(char* cert_path,
                                                   2048u,
                                                   0,
                                                   3600);
+}
+
+int test_server_make_tls_files_for_host(char* cert_path,
+                                        size_t cert_path_len,
+                                        char* key_path,
+                                        size_t key_path_len,
+                                        const char* host)
+{
+    if (!host || host[0] == '\0')
+        return 0;
+    return test_server_make_tls_files_internal(cert_path,
+                                               cert_path_len,
+                                               key_path,
+                                               key_path_len,
+                                               2048u,
+                                               0,
+                                               3600,
+                                               host,
+                                               host);
 }
 
 int test_server_read_response(int fd, uint8_t* response, size_t response_len)

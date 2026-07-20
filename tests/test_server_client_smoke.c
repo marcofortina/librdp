@@ -16,6 +16,7 @@
 #include "server_host.h"
 #include "server_platform.h"
 #include "test_http_proxy.h"
+#include "test_rdg_gateway.h"
 #include "test_server_support.h"
 
 #include "protocol/fastpath.h"
@@ -186,6 +187,12 @@ typedef struct smoke_trace_capture
     unsigned int tls_verify_failures;
     unsigned int gateway_connect_starts;
     unsigned int gateway_connect_completions;
+    unsigned int rdg_connect_starts;
+    unsigned int rdg_connect_completions;
+    unsigned int rdg_handshakes;
+    unsigned int rdg_tunnels;
+    unsigned int rdg_authentications;
+    unsigned int rdg_channels;
     int leaked;
     int address_matched;
     const smoke_nla_identity* identity;
@@ -307,6 +314,30 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event,
                     "transport.gateway.connect.done") == 0)
         capture->gateway_connect_completions++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "transport.gateway.rdg.connect.start") == 0)
+        capture->rdg_connect_starts++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "transport.gateway.rdg.connect.done") == 0)
+        capture->rdg_connect_completions++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "transport.gateway.rdg.handshake.done") == 0)
+        capture->rdg_handshakes++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "transport.gateway.rdg.tunnel.done") == 0)
+        capture->rdg_tunnels++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "transport.gateway.rdg.auth.done") == 0)
+        capture->rdg_authentications++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "transport.gateway.rdg.channel.done") == 0)
+        capture->rdg_channels++;
     {
         const smoke_nla_identity* identities[2] = {
             capture->identity,
@@ -1485,13 +1516,16 @@ static int smoke_run_profile(librdp_security_mode security,
                              const smoke_nla_identity* identity,
                              const char* bind_address,
                              const char* target,
-                             int use_http_gateway)
+                             librdp_gateway_mode gateway_mode)
 {
     char cert_path[128] = {0};
     char key_path[128] = {0};
+    char gateway_cert_path[128] = {0};
+    char gateway_key_path[128] = {0};
     char drive_directory[128] = {0};
     char drive_marker[160] = {0};
     char gateway_url[128] = {0};
+    char* saved_curl_ca_bundle = NULL;
     static const uint8_t clipboard_data[] = {'s', 'm', 'o', 'k', 'e'};
     smoke_platform platform;
     smoke_host host_fixture;
@@ -1500,6 +1534,8 @@ static int smoke_run_profile(librdp_security_mode security,
     smoke_trace_capture trace_capture;
     test_http_proxy proxy;
     test_http_proxy_config proxy_config;
+    test_rdg_gateway rdg_gateway;
+    test_rdg_gateway_config rdg_config;
     server_host_config host_config;
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
@@ -1514,8 +1550,10 @@ static int smoke_run_profile(librdp_security_mode security,
     uint16_t default_port = 0u;
     unsigned int cycle = 0u;
     int clipboard_sent = 0;
+    int curl_environment_changed = 0;
     int input_sent = 0;
     int proxy_started = 0;
+    int rdg_started = 0;
     int thread_started = 0;
     int result = 1;
 
@@ -1525,9 +1563,13 @@ static int smoke_run_profile(librdp_security_mode security,
     memset(&trace_capture, 0, sizeof(trace_capture));
     memset(&proxy, 0, sizeof(proxy));
     memset(&proxy_config, 0, sizeof(proxy_config));
+    memset(&rdg_gateway, 0, sizeof(rdg_gateway));
+    memset(&rdg_config, 0, sizeof(rdg_config));
     trace_capture.identity = identity;
     trace_capture.gateway_identity =
-        use_http_gateway ? &smoke_gateway_identity : NULL;
+        gateway_mode != LIBRDP_GATEWAY_DISABLED
+            ? &smoke_gateway_identity
+            : NULL;
     memset(&runtime, 0, sizeof(runtime));
     memset(&key, 0, sizeof(key));
     memset(&mouse, 0, sizeof(mouse));
@@ -1574,7 +1616,7 @@ static int smoke_run_profile(librdp_security_mode security,
                                      cert_path,
                                      key_path,
                                      identity));
-    REQUIRE(!use_http_gateway ||
+    REQUIRE(gateway_mode == LIBRDP_GATEWAY_DISABLED ||
             expected_connect_status == LIBRDP_STATUS_OK);
     if (expected_connect_status != LIBRDP_STATUS_OK)
     {
@@ -1593,32 +1635,70 @@ static int smoke_run_profile(librdp_security_mode security,
     REQUIRE(smoke_wait_for_port(&host_fixture.port, &port));
     REQUIRE(port != default_port);
     REQUIRE(librdp_settings_set_port(settings, port) == LIBRDP_STATUS_OK);
-    if (use_http_gateway)
+    if (gateway_mode != LIBRDP_GATEWAY_DISABLED)
     {
         int written = 0;
 
-        proxy_config.target_host = target;
-        proxy_config.target_port = port;
-        proxy_config.gateway_username =
-            smoke_gateway_identity.username;
-        proxy_config.gateway_password =
-            smoke_gateway_identity.password;
-        proxy_config.gateway_domain =
-            smoke_gateway_identity.domain;
-        proxy_config.forbidden_username = identity->username;
-        proxy_config.forbidden_password = identity->password;
-        proxy_config.forbidden_domain = identity->domain;
-        REQUIRE(test_http_proxy_start(&proxy, &proxy_config));
-        proxy_started = 1;
-        written = snprintf(gateway_url,
-                           sizeof(gateway_url),
-                           "http://127.0.0.1:%u",
-                           (unsigned int)proxy.port);
+        if (gateway_mode == LIBRDP_GATEWAY_HTTP_CONNECT)
+        {
+            proxy_config.target_host = target;
+            proxy_config.target_port = port;
+            proxy_config.gateway_username =
+                smoke_gateway_identity.username;
+            proxy_config.gateway_password =
+                smoke_gateway_identity.password;
+            proxy_config.gateway_domain =
+                smoke_gateway_identity.domain;
+            proxy_config.forbidden_username = identity->username;
+            proxy_config.forbidden_password = identity->password;
+            proxy_config.forbidden_domain = identity->domain;
+            REQUIRE(test_http_proxy_start(&proxy, &proxy_config));
+            proxy_started = 1;
+            written = snprintf(gateway_url,
+                               sizeof(gateway_url),
+                               "http://127.0.0.1:%u",
+                               (unsigned int)proxy.port);
+        }
+        else
+        {
+            const char* current_curl_ca_bundle =
+                getenv("CURL_CA_BUNDLE");
+
+            REQUIRE(gateway_mode == LIBRDP_GATEWAY_RDG_HTTP);
+            REQUIRE(test_server_make_tls_files_for_host(
+                gateway_cert_path,
+                sizeof(gateway_cert_path),
+                gateway_key_path,
+                sizeof(gateway_key_path),
+                "localhost"));
+            rdg_config.target_host = target;
+            rdg_config.target_port = port;
+            rdg_config.certificate_path = gateway_cert_path;
+            rdg_config.private_key_path = gateway_key_path;
+            REQUIRE(test_rdg_gateway_start(&rdg_gateway,
+                                           &rdg_config));
+            rdg_started = 1;
+            written = snprintf(
+                gateway_url,
+                sizeof(gateway_url),
+                "https://localhost:%u/remoteDesktopGateway/",
+                (unsigned int)rdg_gateway.port);
+            if (current_curl_ca_bundle)
+            {
+                saved_curl_ca_bundle =
+                    strdup(current_curl_ca_bundle);
+                REQUIRE(saved_curl_ca_bundle != NULL);
+            }
+            REQUIRE(setenv("CURL_CA_BUNDLE",
+                           gateway_cert_path,
+                           1) == 0);
+            curl_environment_changed = 1;
+        }
         REQUIRE(written > 0 &&
                 (size_t)written < sizeof(gateway_url));
         REQUIRE(librdp_gateway_config_init(&gateway_config) ==
                 LIBRDP_STATUS_OK);
-        gateway_config.mode = LIBRDP_GATEWAY_HTTP_CONNECT;
+        gateway_config.mode = gateway_mode;
         gateway_config.url = gateway_url;
         gateway_config.username = smoke_gateway_identity.username;
         gateway_config.password = smoke_gateway_identity.password;
@@ -1647,7 +1727,7 @@ static int smoke_run_profile(librdp_security_mode security,
             LIBRDP_STATUS_OK);
     client_runtime_init(&runtime, session);
     connect_status = client_runtime_connect(&runtime);
-    if (use_http_gateway &&
+    if (gateway_mode != LIBRDP_GATEWAY_DISABLED &&
         connect_status != expected_connect_status)
     {
         const librdp_error* connect_error =
@@ -1664,10 +1744,12 @@ static int smoke_run_profile(librdp_security_mode security,
             connect_error_info.phase)
             phase = connect_error_info.phase;
         fprintf(stderr,
-                "gateway smoke connect=%s phase=%s proxy=%s authenticated=%u forwarded=%u leak=%u\n",
+                "gateway smoke mode=%u connect=%s phase=%s http_proxy=%s rdg=%s authenticated=%u forwarded=%u leak=%u\n",
+                (unsigned int)gateway_mode,
                 librdp_status_name(connect_status),
                 phase,
                 librdp_status_name(proxy.status),
+                librdp_status_name(rdg_gateway.status),
                 atomic_load_explicit(&proxy.authenticated,
                                      memory_order_acquire),
                 atomic_load_explicit(&proxy.forwarded,
@@ -1765,7 +1847,7 @@ static int smoke_run_profile(librdp_security_mode security,
     REQUIRE(events.surface_events > 0u);
     REQUIRE(events.error_events == 0u);
     REQUIRE(trace_capture.records > 0u);
-    if (use_http_gateway)
+    if (gateway_mode == LIBRDP_GATEWAY_HTTP_CONNECT)
     {
         REQUIRE(trace_capture.connect_starts == 0u);
         REQUIRE(trace_capture.connect_completions == 0u);
@@ -1777,6 +1859,37 @@ static int smoke_run_profile(librdp_security_mode security,
                                      memory_order_acquire) == 1u);
         REQUIRE(atomic_load_explicit(&proxy.credential_leak,
                                      memory_order_acquire) == 0u);
+    }
+    else if (gateway_mode == LIBRDP_GATEWAY_RDG_HTTP)
+    {
+        REQUIRE(trace_capture.connect_starts == 0u);
+        REQUIRE(trace_capture.connect_completions == 0u);
+        REQUIRE(trace_capture.gateway_connect_starts == 0u);
+        REQUIRE(trace_capture.gateway_connect_completions == 0u);
+        REQUIRE(trace_capture.rdg_connect_starts == 1u);
+        REQUIRE(trace_capture.rdg_connect_completions == 1u);
+        REQUIRE(trace_capture.rdg_handshakes == 1u);
+        REQUIRE(trace_capture.rdg_tunnels == 1u);
+        REQUIRE(trace_capture.rdg_authentications == 1u);
+        REQUIRE(trace_capture.rdg_channels == 1u);
+        REQUIRE(atomic_load_explicit(&rdg_gateway.out_stream,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(&rdg_gateway.in_stream,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(&rdg_gateway.handshake,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(&rdg_gateway.tunnel,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(&rdg_gateway.authorized,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(&rdg_gateway.channel,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(
+                    &rdg_gateway.downstream_sent,
+                    memory_order_acquire) > 0u);
+        REQUIRE(atomic_load_explicit(
+                    &rdg_gateway.downstream_received,
+                    memory_order_acquire) > 0u);
     }
     else
     {
@@ -1809,6 +1922,13 @@ static int smoke_run_profile(librdp_security_mode security,
         proxy_started = 0;
         test_http_proxy_clear(&proxy);
     }
+    if (rdg_started)
+    {
+        test_rdg_gateway_cancel(&rdg_gateway);
+        REQUIRE(test_rdg_gateway_join(&rdg_gateway));
+        rdg_started = 0;
+        test_rdg_gateway_clear(&rdg_gateway);
+    }
     REQUIRE(server_host_cancel(host_fixture.host) == LIBRDP_STATUS_OK);
     REQUIRE(pthread_join(host_fixture.thread, NULL) == 0);
     thread_started = 0;
@@ -1821,6 +1941,8 @@ static int smoke_run_profile(librdp_security_mode security,
 cleanup:
     if (proxy_started)
         test_http_proxy_clear(&proxy);
+    if (rdg_started)
+        test_rdg_gateway_clear(&rdg_gateway);
     if (thread_started)
     {
         (void)server_host_cancel(host_fixture.host);
@@ -1838,6 +1960,20 @@ cleanup:
         (void)unlink(cert_path);
     if (key_path[0] != '\0')
         (void)unlink(key_path);
+    if (gateway_cert_path[0] != '\0')
+        (void)unlink(gateway_cert_path);
+    if (gateway_key_path[0] != '\0')
+        (void)unlink(gateway_key_path);
+    if (curl_environment_changed)
+    {
+        if (saved_curl_ca_bundle)
+            (void)setenv("CURL_CA_BUNDLE",
+                         saved_curl_ca_bundle,
+                         1);
+        else
+            (void)unsetenv("CURL_CA_BUNDLE");
+    }
+    free(saved_curl_ca_bundle);
     return result;
 }
 
@@ -2421,7 +2557,21 @@ int main(int argc, char** argv)
             &smoke_nla_default_identity,
             "127.0.0.1",
             "127.0.0.1",
-            1);
+            LIBRDP_GATEWAY_HTTP_CONNECT);
+#else
+        return 77;
+#endif
+    }
+    if (argc == 2 && strcmp(argv[1], "gateway-rdg") == 0)
+    {
+#ifdef RDP_HAVE_CURL
+        return smoke_run_profile(
+            LIBRDP_SECURITY_NLA,
+            LIBRDP_STATUS_OK,
+            &smoke_nla_default_identity,
+            "127.0.0.1",
+            "127.0.0.1",
+            LIBRDP_GATEWAY_RDG_HTTP);
 #else
         return 77;
 #endif
@@ -2441,7 +2591,7 @@ int main(int argc, char** argv)
                 "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8|"
                 "timeout-credssp|standard-integrity|security-downgrade|"
                 "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake|"
-                "gateway-http-connect\n");
+                "gateway-http-connect|gateway-rdg\n");
         return 2;
     }
     return smoke_run_profile(security,
@@ -2449,5 +2599,5 @@ int main(int argc, char** argv)
                              identity,
                              bind_address,
                              target,
-                             0);
+                             LIBRDP_GATEWAY_DISABLED);
 }

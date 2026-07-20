@@ -236,6 +236,7 @@ if(LIBRDP_BUILD_TESTS)
     add_executable(test_server_client_smoke
         tests/test_server_client_smoke.c
         tests/test_http_proxy.c
+        tests/test_rdg_gateway.c
         tests/test_server_support.c
     )
     target_include_directories(test_server_client_smoke PRIVATE
@@ -387,6 +388,8 @@ if(LIBRDP_BUILD_TESTS)
     if(LIBRDP_CURL_FOUND)
         add_test(NAME server_client_smoke_gateway_http_connect
                  COMMAND test_server_client_smoke gateway-http-connect)
+        add_test(NAME server_client_smoke_gateway_rdg
+                 COMMAND test_server_client_smoke gateway-rdg)
     endif()
     set_tests_properties(
         common
@@ -422,6 +425,7 @@ if(LIBRDP_BUILD_TESTS)
     if(TEST server_client_smoke_gateway_http_connect)
         set_tests_properties(
             server_client_smoke_gateway_http_connect
+            server_client_smoke_gateway_rdg
             PROPERTIES TIMEOUT 60
         )
     endif()

@@ -24,6 +24,7 @@
 #include "transport/tcp.h"
 
 #include <openssl/err.h>
+#include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
@@ -36,6 +37,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>
+#include <pthread.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -94,6 +96,9 @@ void rdp_transport_attach_backend(rdp_transport* transport,
     rdp_transport_close(transport);
     transport->backend_context = context;
     transport->backend_ops = ops;
+    transport->fd =
+        ops && ops->poll_fd ? ops->poll_fd(context) : -1;
+    transport->owns_fd = 0;
 }
 
 librdp_status rdp_transport_connect(rdp_transport* transport, const char* host, uint16_t port, int timeout_ms)
@@ -121,6 +126,150 @@ static librdp_status rdp_transport_tls_status(SSL* tls, int rc)
     if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE)
         return LIBRDP_STATUS_AGAIN;
     return LIBRDP_STATUS_IO_ERROR;
+}
+
+/*
+ * Adapt an arbitrary transport backend to OpenSSL without exposing the
+ * backend's event pipe as a byte stream. Retry flags preserve OpenSSL's
+ * non-blocking handshake semantics; the owning transport remains alive until
+ * SSL has released both BIOs.
+ */
+static int rdp_transport_backend_bio_create(BIO* bio)
+{
+    if (!bio)
+        return 0;
+    BIO_set_data(bio, NULL);
+    BIO_set_init(bio, 1);
+    return 1;
+}
+
+static int rdp_transport_backend_bio_destroy(BIO* bio)
+{
+    if (!bio)
+        return 0;
+    BIO_set_data(bio, NULL);
+    BIO_set_init(bio, 0);
+    return 1;
+}
+
+static int rdp_transport_backend_bio_read(BIO* bio, char* data, int length)
+{
+    rdp_transport* transport = NULL;
+    size_t read_len = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!bio || !data || length <= 0)
+        return 0;
+    transport = (rdp_transport*)BIO_get_data(bio);
+    if (!transport || !transport->backend_ops ||
+        !transport->backend_ops->read)
+        return -1;
+    BIO_clear_retry_flags(bio);
+    status = transport->backend_ops->read(transport->backend_context,
+                                          data,
+                                          (size_t)length,
+                                          &read_len);
+    if (status == LIBRDP_STATUS_OK)
+        return read_len > (size_t)INT_MAX ? -1 : (int)read_len;
+    if (status == LIBRDP_STATUS_AGAIN)
+    {
+        BIO_set_retry_read(bio);
+        return -1;
+    }
+    if (status == LIBRDP_STATUS_CLOSED)
+        return 0;
+    errno = EIO;
+    return -1;
+}
+
+static int rdp_transport_backend_bio_write(BIO* bio,
+                                           const char* data,
+                                           int length)
+{
+    rdp_transport* transport = NULL;
+    size_t written_len = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!bio || !data || length <= 0)
+        return 0;
+    transport = (rdp_transport*)BIO_get_data(bio);
+    if (!transport || !transport->backend_ops ||
+        !transport->backend_ops->write)
+        return -1;
+    BIO_clear_retry_flags(bio);
+    status = transport->backend_ops->write(transport->backend_context,
+                                           data,
+                                           (size_t)length,
+                                           &written_len);
+    if (status == LIBRDP_STATUS_OK)
+        return written_len > (size_t)INT_MAX ? -1 : (int)written_len;
+    if (status == LIBRDP_STATUS_AGAIN)
+    {
+        BIO_set_retry_write(bio);
+        return -1;
+    }
+    errno = status == LIBRDP_STATUS_CLOSED ? EPIPE : EIO;
+    return -1;
+}
+
+static long rdp_transport_backend_bio_control(BIO* bio,
+                                              int command,
+                                              long argument,
+                                              void* pointer)
+{
+    (void)bio;
+    (void)argument;
+    (void)pointer;
+
+    if (command == BIO_CTRL_FLUSH || command == BIO_CTRL_DUP)
+        return 1;
+    return 0;
+}
+
+static pthread_once_t rdp_transport_backend_bio_once =
+    PTHREAD_ONCE_INIT;
+static BIO_METHOD* rdp_transport_backend_bio_method = NULL;
+
+static void rdp_transport_backend_bio_method_init(void)
+{
+    BIO_METHOD* method = BIO_meth_new(
+        BIO_TYPE_SOURCE_SINK | BIO_get_new_index(),
+        "librdp transport backend");
+
+    if (!method ||
+        BIO_meth_set_create(method,
+                            rdp_transport_backend_bio_create) != 1 ||
+        BIO_meth_set_destroy(method,
+                             rdp_transport_backend_bio_destroy) != 1 ||
+        BIO_meth_set_read(method,
+                          rdp_transport_backend_bio_read) != 1 ||
+        BIO_meth_set_write(method,
+                           rdp_transport_backend_bio_write) != 1 ||
+        BIO_meth_set_ctrl(method,
+                          rdp_transport_backend_bio_control) != 1)
+    {
+        BIO_meth_free(method);
+        return;
+    }
+    rdp_transport_backend_bio_method = method;
+}
+
+static BIO* rdp_transport_backend_bio_new(rdp_transport* transport)
+{
+    BIO* bio = NULL;
+
+    if (!transport || !transport->backend_ops)
+        return NULL;
+    if (pthread_once(&rdp_transport_backend_bio_once,
+                     rdp_transport_backend_bio_method_init) != 0 ||
+        !rdp_transport_backend_bio_method)
+        return NULL;
+    bio = BIO_new(rdp_transport_backend_bio_method);
+    if (!bio)
+        return NULL;
+    BIO_set_data(bio, transport);
+    BIO_set_init(bio, 1);
+    return bio;
 }
 
 static uint64_t rdp_transport_now_ns(void)
@@ -449,6 +598,8 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
 {
     SSL_CTX* context = NULL;
     SSL* tls = NULL;
+    BIO* read_bio = NULL;
+    BIO* write_bio = NULL;
     int rc = 0;
     int changed_nonblocking = 0;
     int timeout_ms = RDP_TRANSPORT_TLS_DEFAULT_TIMEOUT_MS;
@@ -456,7 +607,9 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
     librdp_status status = LIBRDP_STATUS_OK;
     long verify_result = X509_V_OK;
 
-    if (!transport || transport->fd < 0 || !config || !config->host || config->host[0] == '\0' ||
+    if (!transport ||
+        (transport->fd < 0 && !transport->backend_ops) ||
+        !config || !config->host || config->host[0] == '\0' ||
         config->timeout_ms < 0 || transport->tls_active)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (config->timeout_ms > 0)
@@ -479,7 +632,24 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
         SSL_CTX_free(context);
         return LIBRDP_STATUS_IO_ERROR;
     }
-    if (SSL_set_fd(tls, transport->fd) != 1)
+    if (transport->backend_ops)
+    {
+        read_bio = rdp_transport_backend_bio_new(transport);
+        write_bio = rdp_transport_backend_bio_new(transport);
+        if (!read_bio || !write_bio)
+        {
+            BIO_free(read_bio);
+            BIO_free(write_bio);
+            SSL_free(tls);
+            SSL_CTX_free(context);
+            return LIBRDP_STATUS_NO_MEMORY;
+        }
+        SSL_set0_rbio(tls, read_bio);
+        SSL_set0_wbio(tls, write_bio);
+        read_bio = NULL;
+        write_bio = NULL;
+    }
+    else if (SSL_set_fd(tls, transport->fd) != 1)
     {
         SSL_free(tls);
         SSL_CTX_free(context);
@@ -694,13 +864,40 @@ librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t le
 
     if (!transport || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    if (transport->tls_active)
+    {
+        int tls_rc = 0;
+        if (length > INT_MAX)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.peek.start",
+                              "length=%llu",
+                              (unsigned long long)length);
+        tls_rc = SSL_peek(transport->tls, data, (int)length);
+        if (tls_rc <= 0)
+            return rdp_transport_tls_status(transport->tls, tls_rc);
+        if (read_len)
+            *read_len = (size_t)tls_rc;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.peek.done",
+                              "read=%d",
+                              tls_rc);
+        return LIBRDP_STATUS_OK;
+    }
     if (transport->backend_ops && transport->backend_ops->peek)
-        return transport->backend_ops->peek(transport->backend_context, data, length, read_len);
+        return transport->backend_ops->peek(
+            transport->backend_context,
+            data,
+            length,
+            read_len);
     if (transport->fd < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
 #ifdef RDP_HAVE_CURL
-    if (transport->curl_active && !transport->tls_active)
+    if (transport->curl_active)
     {
         rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                               RDP_TRACE_LEVEL_DEBUG,
@@ -729,29 +926,6 @@ librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t le
         return LIBRDP_STATUS_OK;
     }
 #endif
-
-    if (transport->tls_active)
-    {
-        int tls_rc = 0;
-        if (length > INT_MAX)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
-                              RDP_TRACE_LEVEL_DEBUG,
-                              "transport.tls.peek.start",
-                              "length=%llu",
-                              (unsigned long long)length);
-        tls_rc = SSL_peek(transport->tls, data, (int)length);
-        if (tls_rc <= 0)
-            return rdp_transport_tls_status(transport->tls, tls_rc);
-        if (read_len)
-            *read_len = (size_t)tls_rc;
-        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
-                              RDP_TRACE_LEVEL_DEBUG,
-                              "transport.tls.peek.done",
-                              "read=%d",
-                              tls_rc);
-        return LIBRDP_STATUS_OK;
-    }
 
     rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                           RDP_TRACE_LEVEL_DEBUG,
@@ -793,13 +967,40 @@ librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t le
 
     if (!transport || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    if (transport->tls_active)
+    {
+        int tls_rc = 0;
+        if (length > INT_MAX)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.read.start",
+                              "length=%llu",
+                              (unsigned long long)length);
+        tls_rc = SSL_read(transport->tls, data, (int)length);
+        if (tls_rc <= 0)
+            return rdp_transport_tls_status(transport->tls, tls_rc);
+        if (read_len)
+            *read_len = (size_t)tls_rc;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.read.done",
+                              "read=%d",
+                              tls_rc);
+        return LIBRDP_STATUS_OK;
+    }
     if (transport->backend_ops && transport->backend_ops->read)
-        return transport->backend_ops->read(transport->backend_context, data, length, read_len);
+        return transport->backend_ops->read(
+            transport->backend_context,
+            data,
+            length,
+            read_len);
     if (transport->fd < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
 #ifdef RDP_HAVE_CURL
-    if (transport->curl_active && !transport->tls_active)
+    if (transport->curl_active)
     {
         CURLcode code = CURLE_OK;
         size_t curl_read = 0;
@@ -829,29 +1030,6 @@ librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t le
         return LIBRDP_STATUS_OK;
     }
 #endif
-
-    if (transport->tls_active)
-    {
-        int tls_rc = 0;
-        if (length > INT_MAX)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
-                              RDP_TRACE_LEVEL_DEBUG,
-                              "transport.tls.read.start",
-                              "length=%llu",
-                              (unsigned long long)length);
-        tls_rc = SSL_read(transport->tls, data, (int)length);
-        if (tls_rc <= 0)
-            return rdp_transport_tls_status(transport->tls, tls_rc);
-        if (read_len)
-            *read_len = (size_t)tls_rc;
-        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
-                              RDP_TRACE_LEVEL_DEBUG,
-                              "transport.tls.read.done",
-                              "read=%d",
-                              tls_rc);
-        return LIBRDP_STATUS_OK;
-    }
 
     rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                           RDP_TRACE_LEVEL_DEBUG,
@@ -894,37 +1072,6 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
 
     if (!transport || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (transport->backend_ops && transport->backend_ops->write)
-        return transport->backend_ops->write(transport->backend_context, data, length, written_len);
-    if (transport->fd < 0)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-
-#ifdef RDP_HAVE_CURL
-    if (transport->curl_active && !transport->tls_active)
-    {
-        CURLcode code = CURLE_OK;
-        size_t curl_written = 0;
-
-        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
-                              RDP_TRACE_LEVEL_DEBUG,
-                              "transport.gateway.write.start",
-                              "length=%llu",
-                              (unsigned long long)length);
-        code = curl_easy_send((CURL*)transport->curl_easy, data, length, &curl_written);
-        if (code == CURLE_AGAIN)
-            return LIBRDP_STATUS_AGAIN;
-        if (code != CURLE_OK)
-            return LIBRDP_STATUS_IO_ERROR;
-        if (written_len)
-            *written_len = curl_written;
-        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
-                              RDP_TRACE_LEVEL_DEBUG,
-                              "transport.gateway.write.done",
-                              "written=%llu",
-                              (unsigned long long)curl_written);
-        return LIBRDP_STATUS_OK;
-    }
-#endif
 
 #ifdef MSG_NOSIGNAL
     flags = MSG_NOSIGNAL;
@@ -951,6 +1098,41 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
                               tls_rc);
         return LIBRDP_STATUS_OK;
     }
+    if (transport->backend_ops && transport->backend_ops->write)
+        return transport->backend_ops->write(
+            transport->backend_context,
+            data,
+            length,
+            written_len);
+    if (transport->fd < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+#ifdef RDP_HAVE_CURL
+    if (transport->curl_active)
+    {
+        CURLcode code = CURLE_OK;
+        size_t curl_written = 0;
+
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.gateway.write.start",
+                              "length=%llu",
+                              (unsigned long long)length);
+        code = curl_easy_send((CURL*)transport->curl_easy, data, length, &curl_written);
+        if (code == CURLE_AGAIN)
+            return LIBRDP_STATUS_AGAIN;
+        if (code != CURLE_OK)
+            return LIBRDP_STATUS_IO_ERROR;
+        if (written_len)
+            *written_len = curl_written;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.gateway.write.done",
+                              "written=%llu",
+                              (unsigned long long)curl_written);
+        return LIBRDP_STATUS_OK;
+    }
+#endif
 
     rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                           RDP_TRACE_LEVEL_DEBUG,
@@ -1143,10 +1325,6 @@ void rdp_transport_close(rdp_transport* transport)
 {
     if (!transport)
         return;
-    if (transport->backend_ops && transport->backend_ops->close)
-        transport->backend_ops->close(transport->backend_context);
-    transport->backend_context = NULL;
-    transport->backend_ops = NULL;
     if (transport->tls)
     {
         SSL_set_quiet_shutdown(transport->tls, 1);
@@ -1158,6 +1336,10 @@ void rdp_transport_close(rdp_transport* transport)
     transport->tls = NULL;
     transport->tls_context = NULL;
     transport->tls_active = 0;
+    if (transport->backend_ops && transport->backend_ops->close)
+        transport->backend_ops->close(transport->backend_context);
+    transport->backend_context = NULL;
+    transport->backend_ops = NULL;
 #ifdef RDP_HAVE_CURL
     if (transport->curl_easy)
         curl_easy_cleanup((CURL*)transport->curl_easy);
