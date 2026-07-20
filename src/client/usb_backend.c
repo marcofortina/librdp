@@ -130,6 +130,13 @@ void rdp_usb_backend_release_device(rdp_usb_backend_device* device)
 {
     if (!device)
         return;
+    if (device->ops)
+    {
+        if (device->ops->release)
+            device->ops->release(device->ops_user_data, device);
+        memset(device, 0, sizeof(*device));
+        return;
+    }
     if (device->handle)
     {
         for (size_t i = 0; i < sizeof(device->claimed_interfaces); i++)
@@ -428,7 +435,15 @@ uint32_t rdp_usb_backend_reset_device(rdp_usb_backend_device* device)
 {
     int rc = 0;
 
-    if (!device || !device->handle)
+    if (!device)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    if (device->ops)
+    {
+        return device->ops->reset ?
+            device->ops->reset(device->ops_user_data, device) :
+            RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+    }
+    if (!device->handle)
         return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
     rc = libusb_reset_device(device->handle);
     return rc == LIBUSB_SUCCESS ? RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
@@ -446,7 +461,18 @@ uint32_t rdp_usb_backend_claim_endpoint(rdp_usb_backend_device* device,
     int type = LIBUSB_TRANSFER_TYPE_BULK;
     int rc = 0;
 
-    if (!device || !device->handle || !transfer_type)
+    if (!device || !transfer_type)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    if (device->ops)
+    {
+        return device->ops->claim_endpoint ?
+            device->ops->claim_endpoint(device->ops_user_data,
+                                        device,
+                                        endpoint,
+                                        transfer_type) :
+            RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+    }
+    if (!device->handle)
         return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
     usb_device = libusb_get_device(device->handle);
     rc = libusb_get_active_config_descriptor(usb_device, &config);
@@ -496,7 +522,18 @@ uint32_t rdp_usb_backend_select_interface(rdp_usb_backend_device* device,
 {
     int rc = 0;
 
-    if (!device || !device->handle || interface_number >= sizeof(device->claimed_interfaces))
+    if (!device || interface_number >= sizeof(device->claimed_interfaces))
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    if (device->ops)
+    {
+        return device->ops->select_interface ?
+            device->ops->select_interface(device->ops_user_data,
+                                          device,
+                                          interface_number,
+                                          alternate_setting) :
+            RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+    }
+    if (!device->handle)
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
     if (!device->claimed_interfaces[interface_number])
     {
@@ -512,6 +549,153 @@ uint32_t rdp_usb_backend_select_interface(rdp_usb_backend_device* device,
                                           alternate_setting);
     return rc == LIBUSB_SUCCESS ? RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
                                   rdp_usb_backend_libusb_status(rc);
+}
+
+uint32_t rdp_usb_backend_set_configuration(rdp_usb_backend_device* device,
+                                           uint8_t configuration)
+{
+    int rc = 0;
+
+    if (!device)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    if (device->ops)
+    {
+        return device->ops->set_configuration ?
+            device->ops->set_configuration(device->ops_user_data,
+                                           device,
+                                           configuration) :
+            RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+    }
+    if (!device->handle)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    rc = libusb_set_configuration(device->handle, configuration);
+    return rc == LIBUSB_SUCCESS || rc == LIBUSB_ERROR_BUSY ?
+        RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
+        rdp_usb_backend_libusb_status(rc);
+}
+
+uint32_t rdp_usb_backend_get_interface_info(rdp_usb_backend_device* device,
+                                            uint8_t interface_number,
+                                            uint8_t alternate_setting,
+                                            rdp_usb_backend_interface_info* info)
+{
+    libusb_device* usb_device = NULL;
+    struct libusb_config_descriptor* config = NULL;
+    const struct libusb_interface_descriptor* selected = NULL;
+    int rc = 0;
+
+    if (!device || !info)
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    memset(info, 0, sizeof(*info));
+    if (device->ops)
+    {
+        return device->ops->get_interface_info ?
+            device->ops->get_interface_info(device->ops_user_data,
+                                            device,
+                                            interface_number,
+                                            alternate_setting,
+                                            info) :
+            RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+    }
+    if (!device->handle)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    usb_device = libusb_get_device(device->handle);
+    rc = libusb_get_active_config_descriptor(usb_device, &config);
+    if (rc != LIBUSB_SUCCESS)
+        return rdp_usb_backend_libusb_status(rc);
+    for (uint8_t i = 0; i < config->bNumInterfaces && !selected; i++)
+    {
+        const struct libusb_interface* iface = &config->interface[i];
+
+        for (int j = 0; j < iface->num_altsetting; j++)
+        {
+            const struct libusb_interface_descriptor* alternate =
+                &iface->altsetting[j];
+
+            if (alternate->bInterfaceNumber == interface_number &&
+                alternate->bAlternateSetting == alternate_setting)
+            {
+                selected = alternate;
+                break;
+            }
+        }
+    }
+    if (!selected || selected->bNumEndpoints > RDP_USB_BACKEND_MAX_ENDPOINTS)
+    {
+        libusb_free_config_descriptor(config);
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    }
+    info->interface_number = selected->bInterfaceNumber;
+    info->alternate_setting = selected->bAlternateSetting;
+    info->interface_class = selected->bInterfaceClass;
+    info->interface_subclass = selected->bInterfaceSubClass;
+    info->interface_protocol = selected->bInterfaceProtocol;
+    info->endpoint_count = selected->bNumEndpoints;
+    for (uint8_t i = 0; i < selected->bNumEndpoints; i++)
+    {
+        const struct libusb_endpoint_descriptor* endpoint =
+            &selected->endpoint[i];
+
+        info->endpoints[i].max_packet_size = endpoint->wMaxPacketSize;
+        info->endpoints[i].address = endpoint->bEndpointAddress;
+        info->endpoints[i].interval = endpoint->bInterval;
+        info->endpoints[i].transfer_type =
+            (uint8_t)(endpoint->bmAttributes & LIBUSB_TRANSFER_TYPE_MASK);
+    }
+    libusb_free_config_descriptor(config);
+    return RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
+}
+
+uint32_t rdp_usb_backend_clear_halt(rdp_usb_backend_device* device,
+                                    uint8_t endpoint)
+{
+    int rc = 0;
+
+    if (!device)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    if (device->ops)
+    {
+        return device->ops->clear_halt ?
+            device->ops->clear_halt(device->ops_user_data, device, endpoint) :
+            RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+    }
+    if (!device->handle)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    rc = libusb_clear_halt(device->handle, endpoint);
+    return rc == LIBUSB_SUCCESS ? RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
+                                  rdp_usb_backend_libusb_status(rc);
+}
+
+int rdp_usb_backend_read_ascii_descriptor(rdp_usb_backend_device* device,
+                                          uint8_t descriptor_index,
+                                          char* out,
+                                          size_t out_len)
+{
+    int rc = 0;
+
+    if (!device || descriptor_index == 0 || !out ||
+        out_len == 0 || out_len > (size_t)INT_MAX)
+        return 0;
+    if (device->ops)
+    {
+        return device->ops->read_ascii_descriptor ?
+            device->ops->read_ascii_descriptor(device->ops_user_data,
+                                               device,
+                                               descriptor_index,
+                                               out,
+                                               out_len) :
+            0;
+    }
+    if (!device->handle)
+        return 0;
+    rc = libusb_get_string_descriptor_ascii(device->handle,
+                                            descriptor_index,
+                                            (unsigned char*)out,
+                                            (int)out_len - 1);
+    if (rc <= 0 || (size_t)rc >= out_len)
+        return 0;
+    out[rc] = '\0';
+    return 1;
 }
 
 static int rdp_usb_backend_transfer_ops_valid(const rdp_usb_backend_transfer_ops* ops)
@@ -647,6 +831,52 @@ uint32_t rdp_usb_backend_control_transfer(libusb_context* context,
     return status;
 }
 
+uint32_t rdp_usb_backend_device_control_transfer(
+    libusb_context* context,
+    rdp_usb_backend_device* device,
+    uint8_t request_type,
+    uint8_t request,
+    uint16_t value,
+    uint16_t index,
+    uint8_t* data,
+    uint32_t length,
+    uint32_t timeout_ms,
+    const rdp_usb_backend_wait_control* control,
+    uint32_t* actual_length)
+{
+    if (!device || (!data && length > 0) || !actual_length)
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    if (device->ops)
+    {
+        return device->ops->control_transfer ?
+            device->ops->control_transfer(device->ops_user_data,
+                                          device,
+                                          request_type,
+                                          request,
+                                          value,
+                                          index,
+                                          data,
+                                          length,
+                                          timeout_ms,
+                                          control,
+                                          actual_length) :
+            RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+    }
+    if (!device->handle)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    return rdp_usb_backend_control_transfer(context,
+                                            device->handle,
+                                            request_type,
+                                            request,
+                                            value,
+                                            index,
+                                            data,
+                                            length,
+                                            timeout_ms,
+                                            control,
+                                            actual_length);
+}
+
 uint32_t rdp_usb_backend_bulk_or_interrupt_transfer(libusb_context* context,
                                                     libusb_device_handle* handle,
                                                     uint8_t endpoint,
@@ -696,6 +926,46 @@ uint32_t rdp_usb_backend_bulk_or_interrupt_transfer(libusb_context* context,
         *actual_length = (uint32_t)state.actual_length;
     libusb_free_transfer(transfer);
     return status;
+}
+
+uint32_t rdp_usb_backend_device_bulk_or_interrupt_transfer(
+    libusb_context* context,
+    rdp_usb_backend_device* device,
+    uint8_t endpoint,
+    uint8_t transfer_type,
+    uint8_t* data,
+    uint32_t length,
+    uint32_t timeout_ms,
+    const rdp_usb_backend_wait_control* control,
+    uint32_t* actual_length)
+{
+    if (!device || (!data && length > 0) || !actual_length)
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    if (device->ops)
+    {
+        return device->ops->bulk_or_interrupt_transfer ?
+            device->ops->bulk_or_interrupt_transfer(device->ops_user_data,
+                                                    device,
+                                                    endpoint,
+                                                    transfer_type,
+                                                    data,
+                                                    length,
+                                                    timeout_ms,
+                                                    control,
+                                                    actual_length) :
+            RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+    }
+    if (!device->handle)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    return rdp_usb_backend_bulk_or_interrupt_transfer(context,
+                                                      device->handle,
+                                                      endpoint,
+                                                      transfer_type,
+                                                      data,
+                                                      length,
+                                                      timeout_ms,
+                                                      control,
+                                                      actual_length);
 }
 
 /*
@@ -800,6 +1070,50 @@ uint32_t rdp_usb_backend_iso_transfer(libusb_context* context,
     }
     libusb_free_transfer(transfer);
     return status;
+}
+
+uint32_t rdp_usb_backend_device_iso_transfer(
+    libusb_context* context,
+    rdp_usb_backend_device* device,
+    uint8_t endpoint,
+    uint8_t* data,
+    uint32_t length,
+    rdp_usb_backend_iso_packet* packets,
+    uint32_t packet_count,
+    uint32_t timeout_ms,
+    const rdp_usb_backend_wait_control* control,
+    uint32_t* actual_length)
+{
+    if (!device || (!data && length > 0) || !packets ||
+        packet_count == 0 || !actual_length)
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    if (device->ops)
+    {
+        return device->ops->iso_transfer ?
+            device->ops->iso_transfer(device->ops_user_data,
+                                      device,
+                                      endpoint,
+                                      data,
+                                      length,
+                                      packets,
+                                      packet_count,
+                                      timeout_ms,
+                                      control,
+                                      actual_length) :
+            RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+    }
+    if (!device->handle)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    return rdp_usb_backend_iso_transfer(context,
+                                        device->handle,
+                                        endpoint,
+                                        data,
+                                        length,
+                                        packets,
+                                        packet_count,
+                                        timeout_ms,
+                                        control,
+                                        actual_length);
 }
 
 #endif
