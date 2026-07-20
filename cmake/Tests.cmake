@@ -572,6 +572,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke graphics-clearcodec)
     add_test(NAME server_client_smoke_graphics_backpressure
              COMMAND test_server_client_smoke graphics-backpressure)
+    add_test(NAME server_client_smoke_graphics_motion
+             COMMAND test_server_client_smoke graphics-motion)
     if(LIBRDP_FFMPEG_AVC_FOUND OR
        LIBRDP_OPENH264_AVC_FOUND)
         add_test(NAME server_client_smoke_graphics_avc
@@ -663,6 +665,8 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_graphics_lifecycle
         server_client_smoke_graphics_multi_surface
         server_client_smoke_graphics_clearcodec
+        server_client_smoke_graphics_backpressure
+        server_client_smoke_graphics_motion
         server_client_smoke_security_downgrade
         server_client_smoke_tls_untrusted
         server_client_smoke_tls_hostname
