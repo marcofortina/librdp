@@ -58,7 +58,8 @@ static int rdp_slowpath_valid_share_control_type(uint16_t pdu_type)
     return type == RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE ||
            type == RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE ||
            type == RDP_SLOWPATH_PDU_TYPE_DEACTIVATE_ALL ||
-           type == RDP_SLOWPATH_PDU_TYPE_DATA;
+           type == RDP_SLOWPATH_PDU_TYPE_DATA ||
+           type == RDP_SLOWPATH_PDU_TYPE_SERVER_REDIRECTION;
 }
 
 #define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 18u

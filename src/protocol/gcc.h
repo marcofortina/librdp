@@ -29,6 +29,7 @@
 #define RDP_GCC_CS_CORE 0xc001u
 #define RDP_GCC_CS_SECURITY 0xc002u
 #define RDP_GCC_CS_NETWORK 0xc003u
+#define RDP_GCC_CS_CLUSTER 0xc004u
 #define RDP_GCC_CS_MULTITRANSPORT 0xc00au
 #define RDP_GCC_SC_CORE 0x0c01u
 #define RDP_GCC_SC_SECURITY 0x0c02u
@@ -52,6 +53,17 @@
 #define RDP_GCC_MULTITRANSPORT_SOFTSYNC_TCP_TO_UDP 0x00000200u
 #define RDP_GCC_MULTITRANSPORT_CLIENT_KNOWN_FLAGS 0x00000305u
 #define RDP_GCC_MULTITRANSPORT_SERVER_KNOWN_FLAGS 0x00000305u
+#define RDP_GCC_CLUSTER_REDIRECTION_SUPPORTED 0x00000001u
+#define RDP_GCC_CLUSTER_REDIRECTED_SESSION_ID_VALID 0x00000002u
+#define RDP_GCC_CLUSTER_REDIRECTION_VERSION_MASK 0x0000003cu
+#define RDP_GCC_CLUSTER_REDIRECTED_SMARTCARD 0x00000040u
+#define RDP_GCC_CLUSTER_KNOWN_FLAGS 0x0000007fu
+#define RDP_GCC_REDIRECTION_VERSION_1 1u
+#define RDP_GCC_REDIRECTION_VERSION_2 2u
+#define RDP_GCC_REDIRECTION_VERSION_3 3u
+#define RDP_GCC_REDIRECTION_VERSION_4 4u
+#define RDP_GCC_REDIRECTION_VERSION_5 5u
+#define RDP_GCC_REDIRECTION_VERSION_6 6u
 
 typedef struct rdp_gcc_user_data_block
 {
@@ -82,6 +94,11 @@ typedef struct rdp_gcc_client_config
     uint8_t enable_device_redirection;
     uint8_t enable_pnp_redirection;
     uint8_t enable_remote_programs;
+    uint8_t enable_server_redirection;
+    uint8_t server_redirection_version;
+    uint8_t redirected_session_id_valid;
+    uint8_t redirected_smartcard;
+    uint32_t redirected_session_id;
     uint8_t enable_multitransport;
     uint32_t multitransport_flags;
     const struct rdp_gcc_channel_definition* extra_channels;
@@ -108,6 +125,9 @@ typedef struct rdp_gcc_client_data_summary
     uint8_t connection_type;
     uint32_t desktop_physical_width;
     uint32_t desktop_physical_height;
+    uint8_t has_cluster;
+    uint32_t cluster_flags;
+    uint32_t redirected_session_id;
     uint16_t channel_count;
     rdp_gcc_channel_definition channels[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t has_multitransport;

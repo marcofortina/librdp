@@ -113,9 +113,33 @@ static int test_contains_bytes(const uint8_t* data, size_t data_len, const char*
     return 0;
 }
 
+/*
+ * Covers session-selection versions, server redirection field ordering,
+ * enhanced-security framing, optional padding, routing-token ownership, and
+ * Echo payload bounds. Malformed lengths and flag/field mismatches must never
+ * commit partial parser output.
+ */
 static int test_session_selection_and_echo(void)
 {
     const uint8_t text_utf16[] = {'T', 0, 'e', 0, 's', 0, 't', 0, 0, 0};
+    const uint8_t target_utf16[] = {
+        '1', 0, '2', 0, '7', 0, '.', 0, '0', 0, '.', 0, '0', 0, '.', 0,
+        '1', 0, 0, 0
+    };
+    const uint8_t user_utf16[] = {'s', 0, 'm', 0, 'o', 0, 'k', 0, 'e', 0, 0, 0};
+    const uint8_t domain_utf16[] = {'T', 0, 'E', 0, 'S', 0, 'T', 0, 0, 0};
+    const uint8_t password_utf16[] = {'s', 0, 'e', 0, 'c', 0, 'r', 0, 'e', 0, 't', 0, 0, 0};
+    const uint8_t fqdn_utf16[] = {
+        'r', 0, 'd', 0, 'p', 0, '.', 0, 'e', 0, 'x', 0, 'a', 0, 'm', 0,
+        'p', 0, 'l', 0, 'e', 0, '.', 0, 't', 0, 'e', 0, 's', 0, 't', 0,
+        0, 0
+    };
+    const uint8_t netbios_utf16[] = {'R', 0, 'D', 0, 'P', 0, 'H', 0, 'O', 0, 'S', 0, 'T', 0, 0, 0};
+    const uint8_t guid_utf16[] = {'Z', 0, '3', 0, 'V', 0, 'p', 0, 'Z', 0, 'A', 0, 0, 0};
+    const uint8_t certificate_utf16[] = {'Y', 0, '2', 0, 'V', 0, 'y', 0, 'd', 0, 'A', 0, 0, 0};
+    const uint8_t routing_token[] = {'r', 'o', 'u', 't', 'e', '-', '1'};
+    const uint8_t tsv_url[] = {'t', 's', 'v', '-', '1'};
+    const uint8_t addresses[] = {1, 0, 0, 0, 2, 0, 0, 0};
     const uint8_t echo_payload[] = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
     static uint8_t oversized_echo_payload[RDP_ECHO_CHANNEL_MAX_PAYLOAD + 1u];
     uint8_t invalid_v1[] = {
@@ -126,6 +150,8 @@ static int test_session_selection_and_echo(void)
     };
     rdp_buffer buffer;
     rdp_session_selection_pdu selection;
+    rdp_server_redirection_packet redirection;
+    rdp_server_redirection_packet parsed_redirection;
     rdp_echo_channel_pdu echo;
 
     rdp_buffer_init(&buffer);
@@ -166,6 +192,118 @@ static int test_session_selection_and_echo(void)
                LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&selection, &valid_selection, sizeof(selection)) == 0);
     }
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    memset(&redirection, 0, sizeof(redirection));
+    redirection.session_id = 0x10203040u;
+    redirection.redirection_flags =
+        RDP_SERVER_REDIRECTION_LB_TARGET_NET_ADDRESS |
+        RDP_SERVER_REDIRECTION_LB_LOAD_BALANCE_INFO |
+        RDP_SERVER_REDIRECTION_LB_USERNAME |
+        RDP_SERVER_REDIRECTION_LB_DOMAIN |
+        RDP_SERVER_REDIRECTION_LB_PASSWORD |
+        RDP_SERVER_REDIRECTION_LB_TARGET_FQDN |
+        RDP_SERVER_REDIRECTION_LB_TARGET_NETBIOS_NAME |
+        RDP_SERVER_REDIRECTION_LB_TARGET_NET_ADDRESSES |
+        RDP_SERVER_REDIRECTION_LB_CLIENT_TSV_URL |
+        RDP_SERVER_REDIRECTION_LB_REDIRECTION_GUID |
+        RDP_SERVER_REDIRECTION_LB_TARGET_CERTIFICATE;
+    redirection.target_net_address.data = target_utf16;
+    redirection.target_net_address.length = sizeof(target_utf16);
+    redirection.load_balance_info.data = routing_token;
+    redirection.load_balance_info.length = sizeof(routing_token);
+    redirection.username.data = user_utf16;
+    redirection.username.length = sizeof(user_utf16);
+    redirection.domain.data = domain_utf16;
+    redirection.domain.length = sizeof(domain_utf16);
+    redirection.password.data = password_utf16;
+    redirection.password.length = sizeof(password_utf16);
+    redirection.target_fqdn.data = fqdn_utf16;
+    redirection.target_fqdn.length = sizeof(fqdn_utf16);
+    redirection.target_netbios_name.data = netbios_utf16;
+    redirection.target_netbios_name.length = sizeof(netbios_utf16);
+    redirection.tsv_url.data = tsv_url;
+    redirection.tsv_url.length = sizeof(tsv_url);
+    redirection.redirection_guid.data = guid_utf16;
+    redirection.redirection_guid.length = sizeof(guid_utf16);
+    redirection.target_certificate.data = certificate_utf16;
+    redirection.target_certificate.length = sizeof(certificate_utf16);
+    redirection.target_net_addresses.data = addresses;
+    redirection.target_net_addresses.length = sizeof(addresses);
+    PCHECK(rdp_server_redirection_write_packet(
+               &buffer,
+               &redirection,
+               1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_server_redirection_parse_packet(
+               buffer.data,
+               buffer.length,
+               &parsed_redirection) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_redirection.flags ==
+           RDP_SERVER_REDIRECTION_PACKET_FLAGS);
+    PCHECK(parsed_redirection.length == buffer.length);
+    PCHECK(parsed_redirection.session_id == redirection.session_id);
+    PCHECK(parsed_redirection.has_pad == 1u);
+    PCHECK(parsed_redirection.target_fqdn.length == sizeof(fqdn_utf16));
+    PCHECK(memcmp(
+               parsed_redirection.target_fqdn.data,
+               fqdn_utf16,
+               sizeof(fqdn_utf16)) == 0);
+    {
+        rdp_server_redirection_packet valid = parsed_redirection;
+
+        buffer.data[2]--;
+        PCHECK(rdp_server_redirection_parse_packet(
+                   buffer.data,
+                   buffer.length,
+                   &parsed_redirection) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(
+                   &parsed_redirection,
+                   &valid,
+                   sizeof(valid)) == 0);
+        buffer.data[2]++;
+        PCHECK(rdp_server_redirection_parse_packet(
+                   buffer.data,
+                   buffer.length - 1u,
+                   &parsed_redirection) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(
+                   &parsed_redirection,
+                   &valid,
+                   sizeof(valid)) == 0);
+    }
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_server_redirection_write_enhanced(
+               &buffer,
+               1003u,
+               &redirection,
+               1,
+               1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_server_redirection_parse_enhanced(
+               buffer.data,
+               buffer.length,
+               &parsed_redirection) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_redirection.session_id == redirection.session_id);
+    PCHECK(parsed_redirection.has_pad == 1u);
+    PCHECK(rdp_server_redirection_parse_enhanced(
+               buffer.data,
+               buffer.length - 2u,
+               &parsed_redirection) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    redirection.redirection_flags |= 0x00000400u;
+    PCHECK(rdp_server_redirection_write_packet(
+               &buffer,
+               &redirection,
+               0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    redirection.redirection_flags &= ~0x00000400u;
+    redirection.password.data = NULL;
+    PCHECK(rdp_server_redirection_write_packet(
+               &buffer,
+               &redirection,
+               0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    redirection.password.data = password_utf16;
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

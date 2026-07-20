@@ -24,28 +24,55 @@
 
 librdp_status rdp_x224_build_connection_request(rdp_buffer* buffer, const char* cookie_name, uint32_t protocols)
 {
+    return rdp_x224_build_connection_request_ex(
+        buffer,
+        cookie_name,
+        NULL,
+        0u,
+        protocols);
+}
+
+/*
+ * Build a connection request with either a bounded cookie or an opaque routing
+ * token. Routing data takes precedence and suppresses the cookie during a
+ * server-directed reconnect. Validation rejects combinations that exceed the
+ * one-byte X.224 length boundary before mutating caller-owned storage.
+ */
+librdp_status rdp_x224_build_connection_request_ex(rdp_buffer* buffer,
+                                                   const char* cookie_name,
+                                                   const void* routing_data,
+                                                   size_t routing_data_len,
+                                                   uint32_t protocols)
+{
     librdp_status status = LIBRDP_STATUS_OK;
     const char prefix[] = "Cookie: mstshash=";
     const char suffix[] = "\r\n";
     size_t cookie_len = 0;
+    size_t connection_data_len = 0;
+    size_t negotiation_len =
+        protocols == RDP_X224_PROTOCOL_STANDARD ? 0u : 8u;
     size_t user_len = 0;
     uint8_t li = 0;
 
-    if (!buffer)
+    if (!buffer || (!routing_data && routing_data_len > 0u))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    if (cookie_name && cookie_name[0] != '\0')
+    if (routing_data_len > 0u)
+        connection_data_len = routing_data_len;
+    else if (cookie_name && cookie_name[0] != '\0')
     {
         user_len = strlen(cookie_name);
         if (user_len > 64)
             user_len = 64;
         cookie_len = (sizeof(prefix) - 1u) + user_len + (sizeof(suffix) - 1u);
+        connection_data_len = cookie_len;
     }
 
-    if (6u + cookie_len + (protocols == RDP_X224_PROTOCOL_STANDARD ? 0u : 8u) > 255u)
+    if (connection_data_len > 255u - 6u ||
+        negotiation_len > 255u - 6u - connection_data_len)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    li = (uint8_t)(6u + cookie_len + (protocols == RDP_X224_PROTOCOL_STANDARD ? 0u : 8u));
+    li = (uint8_t)(6u + connection_data_len + negotiation_len);
     status = rdp_buffer_append_u8(buffer, li);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -62,7 +89,16 @@ librdp_status rdp_x224_build_connection_request(rdp_buffer* buffer, const char* 
     if (status != LIBRDP_STATUS_OK)
         return status;
 
-    if (cookie_len > 0)
+    if (routing_data_len > 0u)
+    {
+        status = rdp_buffer_append(
+            buffer,
+            routing_data,
+            routing_data_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    else if (cookie_len > 0)
     {
         status = rdp_buffer_append(buffer, prefix, sizeof(prefix) - 1u);
         if (status != LIBRDP_STATUS_OK)
@@ -138,6 +174,9 @@ librdp_status rdp_x224_parse_connection_request(const void* payload,
         request->negotiation.type = neg_type;
         request->negotiation.selected_protocol = request->requested_protocols;
     }
+    request->routing_data = bytes + 7u;
+    request->routing_data_len =
+        end - 7u - (request->negotiation.present ? 8u : 0u);
     return LIBRDP_STATUS_OK;
 }
 

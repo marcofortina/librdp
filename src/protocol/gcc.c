@@ -363,6 +363,51 @@ static librdp_status rdp_gcc_write_client_security(rdp_buffer* buffer)
 }
 
 /*
+ * Advertise server redirection support and, during a redirected reconnect,
+ * bind the MCS connection to the session identifier supplied by the server.
+ */
+static librdp_status rdp_gcc_write_client_cluster(
+    rdp_buffer* buffer,
+    const rdp_gcc_client_config* config)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t version = 0u;
+    uint32_t flags = RDP_GCC_CLUSTER_REDIRECTION_SUPPORTED;
+
+    if (!buffer || !config)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    version = config->server_redirection_version;
+    if (version == 0u)
+        version = RDP_GCC_REDIRECTION_VERSION_5;
+    if (version < RDP_GCC_REDIRECTION_VERSION_1 ||
+        version > RDP_GCC_REDIRECTION_VERSION_6)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    flags |= ((uint32_t)(version - 1u) << 2u) &
+             RDP_GCC_CLUSTER_REDIRECTION_VERSION_MASK;
+    if (config->redirected_session_id_valid)
+        flags |= RDP_GCC_CLUSTER_REDIRECTED_SESSION_ID_VALID;
+    if (config->redirected_smartcard)
+        flags |= RDP_GCC_CLUSTER_REDIRECTED_SMARTCARD;
+
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(
+            &payload,
+            config->redirected_session_id_valid ?
+                config->redirected_session_id :
+                0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_block(
+            buffer,
+            RDP_GCC_CS_CLUSTER,
+            &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+/*
  * Serialize the GCC client network block from configured virtual channels.
  * Channel counts and names are bounded before writing so the MCS/GCC
  * handshake cannot emit malformed join-channel metadata.
@@ -492,6 +537,8 @@ librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc
 
     rdp_buffer_init(&out);
     status = rdp_gcc_write_client_core(&out, config);
+    if (status == LIBRDP_STATUS_OK && config->enable_server_redirection)
+        status = rdp_gcc_write_client_cluster(&out, config);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_client_security(&out);
     if (status == LIBRDP_STATUS_OK)
@@ -929,6 +976,43 @@ librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, 
                 rdp_stream_read_u32_le(&payload, &ignored32) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             summary->has_security = 1;
+        }
+        else if (block.type == RDP_GCC_CS_CLUSTER)
+        {
+            uint32_t version = 0u;
+
+            if (summary->has_cluster ||
+                rdp_stream_read_u32_le(
+                    &payload,
+                    &summary->cluster_flags) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u32_le(
+                    &payload,
+                    &summary->redirected_session_id) !=
+                    LIBRDP_STATUS_OK ||
+                rdp_stream_remaining(&payload) != 0u ||
+                (summary->cluster_flags &
+                 ~RDP_GCC_CLUSTER_KNOWN_FLAGS) != 0u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            version =
+                (summary->cluster_flags &
+                 RDP_GCC_CLUSTER_REDIRECTION_VERSION_MASK) >>
+                2u;
+            if ((summary->cluster_flags &
+                 RDP_GCC_CLUSTER_REDIRECTION_SUPPORTED) == 0u)
+            {
+                if (version != 0u ||
+                    (summary->cluster_flags &
+                     RDP_GCC_CLUSTER_REDIRECTED_SESSION_ID_VALID) != 0u)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            else if (version >
+                     RDP_GCC_REDIRECTION_VERSION_6 - 1u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            if ((summary->cluster_flags &
+                 RDP_GCC_CLUSTER_REDIRECTED_SESSION_ID_VALID) == 0u &&
+                summary->redirected_session_id != 0u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            summary->has_cluster = 1u;
         }
         else if (block.type == RDP_GCC_CS_NETWORK)
         {

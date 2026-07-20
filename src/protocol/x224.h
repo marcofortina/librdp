@@ -56,9 +56,16 @@ typedef struct rdp_x224_connection_request
     uint8_t class_option;
     rdp_x224_negotiation negotiation;
     uint32_t requested_protocols;
+    const uint8_t* routing_data;
+    size_t routing_data_len;
 } rdp_x224_connection_request;
 
 librdp_status rdp_x224_build_connection_request(rdp_buffer* buffer, const char* cookie_name, uint32_t protocols);
+librdp_status rdp_x224_build_connection_request_ex(rdp_buffer* buffer,
+                                                   const char* cookie_name,
+                                                   const void* routing_data,
+                                                   size_t routing_data_len,
+                                                   uint32_t protocols);
 librdp_status rdp_x224_parse_connection_request(const void* payload,
                                                 size_t payload_len,
                                                 rdp_x224_connection_request* request);

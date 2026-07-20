@@ -136,6 +136,9 @@ static int test_tpkt_x224(void)
         0x01, 0x00, 0x08, 0x00,
         0x00, 0x00, 0x00, 0x00
     };
+    const uint8_t routing_data[] = {
+        'r', 'o', 'u', 't', 'i', 'n', 'g', '-', 't', 'o', 'k', 'e', 'n'
+    };
     const uint8_t bad_tpkt[] = {0x03, 0x00, 0x00, 0x03};
 
     rdp_buffer_init(&x224);
@@ -171,6 +174,37 @@ static int test_tpkt_x224(void)
     PCHECK(rdp_tpkt_parse(packet.data, packet.length, &parsed) == LIBRDP_STATUS_OK);
     PCHECK(parsed.payload_len == x224.length);
     PCHECK(memcmp(parsed.payload, x224.data, x224.length) == 0);
+    rdp_buffer_free(&x224);
+    rdp_buffer_init(&x224);
+    PCHECK(rdp_x224_build_connection_request_ex(
+               &x224,
+               "ignored-cookie",
+               routing_data,
+               sizeof(routing_data),
+               RDP_X224_PROTOCOL_TLS) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_x224_parse_connection_request(
+               x224.data,
+               x224.length,
+               &request) == LIBRDP_STATUS_OK);
+    PCHECK(request.negotiation.present);
+    PCHECK(request.requested_protocols == RDP_X224_PROTOCOL_TLS);
+    PCHECK(request.routing_data_len == sizeof(routing_data));
+    PCHECK(memcmp(
+               request.routing_data,
+               routing_data,
+               sizeof(routing_data)) == 0);
+    PCHECK(!test_contains_bytes(
+        x224.data,
+        x224.length,
+        "ignored-cookie",
+        strlen("ignored-cookie")));
+    PCHECK(rdp_x224_build_connection_request_ex(
+               &x224,
+               NULL,
+               NULL,
+               1u,
+               RDP_X224_PROTOCOL_TLS) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_tpkt_parse(bad_tpkt, sizeof(bad_tpkt), &parsed) == LIBRDP_STATUS_PROTOCOL_ERROR);
 
     PCHECK(rdp_x224_parse_connection_confirm(cc_payload, sizeof(cc_payload), &confirm) == LIBRDP_STATUS_OK);
@@ -573,6 +607,10 @@ static int test_mcs_gcc_capabilities(void)
     config.enable_device_redirection = 1;
     config.enable_pnp_redirection = 1;
     config.enable_remote_programs = 1;
+    config.enable_server_redirection = 1;
+    config.server_redirection_version = RDP_GCC_REDIRECTION_VERSION_6;
+    config.redirected_session_id_valid = 1;
+    config.redirected_session_id = 0x10203040u;
     config.enable_multitransport = 1;
     config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
                                   RDP_GCC_MULTITRANSPORT_UDP_FECL |
@@ -580,6 +618,18 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) == LIBRDP_STATUS_OK);
     PCHECK(summary.channel_count == 6);
+    PCHECK(summary.has_cluster);
+    PCHECK(
+        (summary.cluster_flags &
+         RDP_GCC_CLUSTER_REDIRECTION_SUPPORTED) != 0u);
+    PCHECK(
+        (summary.cluster_flags &
+         RDP_GCC_CLUSTER_REDIRECTED_SESSION_ID_VALID) != 0u);
+    PCHECK(
+        ((summary.cluster_flags &
+          RDP_GCC_CLUSTER_REDIRECTION_VERSION_MASK) >>
+         2u) == RDP_GCC_REDIRECTION_VERSION_6 - 1u);
+    PCHECK(summary.redirected_session_id == 0x10203040u);
     PCHECK(summary.has_multitransport &&
            summary.multitransport_flags == config.multitransport_flags);
     PCHECK(summary.version == RDP_GCC_CLIENT_VERSION_10_12);
