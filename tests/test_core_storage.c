@@ -392,6 +392,9 @@ int test_filesystem_information_class_coverage(void)
     int fd = -1;
     size_t i = 0;
     size_t utf16_name_len = strlen(directory_name) * 2u;
+    const char* file_name = strrchr(path, '/');
+
+    file_name = file_name ? file_name + 1u : path;
 
     memset(&file, 0, sizeof(file));
     memset(&st, 0, sizeof(st));
@@ -414,6 +417,20 @@ int test_filesystem_information_class_coverage(void)
         CHECK(rdp_session_write_file_information(&buffer, query_classes[i], &st, &file) == LIBRDP_STATUS_OK);
         CHECK(buffer.length >= 4u || query_classes[i] == RDP_SESSION_FILE_FULL_EA_INFORMATION);
     }
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    CHECK(rdp_session_write_file_information(&buffer,
+                                             RDP_SESSION_FILE_ALL_INFORMATION,
+                                             &st,
+                                             &file) == LIBRDP_STATUS_OK);
+    CHECK(buffer.length == 104u + strlen(file_name) * 2u);
+    CHECK(rdp_session_read_u32_le_unaligned(buffer.data) == buffer.length - 4u);
+    CHECK(buffer.data[40u] == 0u);
+    CHECK(buffer.data[41u] == 0u);
+    CHECK(buffer.data[42u] == 0u);
+    CHECK(buffer.data[43u] == 0u);
+    CHECK(buffer.data[66u] == 0u);
+    CHECK(buffer.data[67u] == 0u);
     for (i = 0; i < sizeof(invalid_file_query_classes) / sizeof(invalid_file_query_classes[0]); i++)
     {
         rdp_buffer_free(&buffer);

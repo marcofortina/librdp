@@ -1103,6 +1103,7 @@ static librdp_status server_drive_validate_request(
         (normalized->operation == LIBRDP_SERVER_DRIVE_READ &&
          normalized->offset > UINT64_MAX - normalized->length) ||
         (normalized->operation == LIBRDP_SERVER_DRIVE_WRITE &&
+         normalized->offset != UINT64_MAX &&
          normalized->offset > UINT64_MAX - normalized->data_len) ||
         (normalized->operation == LIBRDP_SERVER_DRIVE_CREATE &&
          normalized->allocation_size >

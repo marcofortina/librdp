@@ -870,16 +870,12 @@ static librdp_status rdp_session_handle_printer_length_irp(librdp_session* sessi
     rdp_buffer_init(&response);
     if (major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION)
     {
-        status = rdp_printer_redirection_write_buffer_response(&response,
-                                                               request.io.device_id,
-                                                               request.io.completion_id,
-                                                               io_status,
-                                                               io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS ?
-                                                                   payload.data :
-                                                                   NULL,
-                                                               io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS ?
-                                                                   (uint32_t)payload.length :
-                                                                   0);
+        status = rdp_session_write_information_response(
+            &response,
+            request.io.device_id,
+            request.io.completion_id,
+            io_status,
+            &payload);
     }
     else
     {

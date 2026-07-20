@@ -68,6 +68,15 @@
 #define SMOKE_LIFECYCLE_STRESS_RSS_ALLOWANCE (32u * 1024u * 1024u)
 #define SMOKE_DESCRIPTOR_SCAN_LIMIT 1048576L
 #define SMOKE_SHA256_BYTES 32u
+#define SMOKE_DRIVE_GENERIC_READ 0x80000000u
+#define SMOKE_DRIVE_GENERIC_WRITE 0x40000000u
+#define SMOKE_DRIVE_SHARE_ALL 0x00000007u
+#define SMOKE_DRIVE_OPEN_EXISTING 1u
+#define SMOKE_DRIVE_CREATE_NEW 2u
+#define SMOKE_DRIVE_DIRECTORY_OPTION 0x00000001u
+#define SMOKE_DRIVE_FILE_RENAME_INFORMATION 10u
+#define SMOKE_DRIVE_FILE_DISPOSITION_INFORMATION 13u
+#define SMOKE_DRIVE_FILE_END_OF_FILE_INFORMATION 20u
 
 #if defined(__SANITIZE_ADDRESS__)
 #define SMOKE_ADDRESS_SANITIZER_ACTIVE 1
@@ -142,6 +151,55 @@ static const uint8_t smoke_fastpath_bitmap_sha256[SMOKE_SHA256_BYTES] = {
     0x82, 0x6a, 0x54, 0x7c, 0x8f, 0x9d, 0xed, 0x98,
 };
 
+typedef enum smoke_drive_mode
+{
+    SMOKE_DRIVE_NONE = 0,
+    SMOKE_DRIVE_READ_ONLY = 1,
+    SMOKE_DRIVE_WRITABLE = 2
+} smoke_drive_mode;
+
+typedef enum smoke_drive_stage
+{
+    SMOKE_DRIVE_STAGE_DISABLED = 0,
+    SMOKE_DRIVE_STAGE_WAIT_VOLUME = 1,
+    SMOKE_DRIVE_STAGE_OPEN_FILE = 2,
+    SMOKE_DRIVE_STAGE_READ_FILE = 3,
+    SMOKE_DRIVE_STAGE_QUERY_FILE = 4,
+    SMOKE_DRIVE_STAGE_OPEN_DIRECTORY = 5,
+    SMOKE_DRIVE_STAGE_QUERY_DIRECTORY = 6,
+    SMOKE_DRIVE_STAGE_WRITE_DENIED = 7,
+    SMOKE_DRIVE_STAGE_RENAME_DENIED = 8,
+    SMOKE_DRIVE_STAGE_DELETE_DENIED = 9,
+    SMOKE_DRIVE_STAGE_WRITE_FILE = 10,
+    SMOKE_DRIVE_STAGE_APPEND_FILE = 11,
+    SMOKE_DRIVE_STAGE_FLUSH_FILE = 12,
+    SMOKE_DRIVE_STAGE_TRUNCATE_FILE = 13,
+    SMOKE_DRIVE_STAGE_READ_TRUNCATED = 14,
+    SMOKE_DRIVE_STAGE_RENAME_FILE = 15,
+    SMOKE_DRIVE_STAGE_DELETE_FILE = 16,
+    SMOKE_DRIVE_STAGE_CLEANUP_FILE = 17,
+    SMOKE_DRIVE_STAGE_CLOSE_FILE = 18,
+    SMOKE_DRIVE_STAGE_CLOSE_DIRECTORY = 19,
+    SMOKE_DRIVE_STAGE_COMPLETE = 20,
+    SMOKE_DRIVE_STAGE_FAILED = 21
+} smoke_drive_stage;
+
+typedef struct smoke_drive_profile
+{
+    smoke_drive_mode mode;
+} smoke_drive_profile;
+
+static const smoke_drive_profile smoke_drive_read_only = {
+    SMOKE_DRIVE_READ_ONLY,
+};
+static const smoke_drive_profile smoke_drive_writable = {
+    SMOKE_DRIVE_WRITABLE,
+};
+static const uint8_t smoke_drive_marker_data[] =
+    "temporary client drive\n";
+static const uint8_t smoke_drive_write_data[] = "write-data";
+static const uint8_t smoke_drive_append_data[] = "-append";
+
 typedef struct smoke_platform
 {
     server_platform_capture_sink capture_sink;
@@ -152,11 +210,20 @@ typedef struct smoke_platform
     atomic_uint key_events;
     atomic_uint mouse_events;
     atomic_uint drive_presentations;
+    atomic_uint drive_stage;
+    atomic_uint drive_completions;
     atomic_uint releases;
     atomic_uint refresh_requests;
     atomic_uint output_suppressions;
     atomic_uint output_resumptions;
     char drive_name[64];
+    server_platform_drive_volume drive_volume;
+    librdp_server_drive_file_handle drive_file;
+    librdp_server_drive_file_handle drive_directory;
+    uint64_t drive_next_request_id;
+    librdp_status drive_failure_status;
+    uint32_t drive_failure_io_status;
+    const smoke_drive_profile* drive_profile;
     uint8_t pixels[SMOKE_PIXEL_BYTES];
     uint8_t alternate_pixels[SMOKE_PIXEL_BYTES];
 } smoke_platform;
@@ -1190,6 +1257,117 @@ static void smoke_input_release(void* context)
     }
 }
 
+static void smoke_drive_fail(smoke_platform* platform,
+                             librdp_status status,
+                             uint32_t io_status)
+{
+    if (!platform)
+        return;
+    platform->drive_failure_status = status;
+    platform->drive_failure_io_status = io_status;
+    atomic_store_explicit(&platform->drive_stage,
+                          SMOKE_DRIVE_STAGE_FAILED,
+                          memory_order_release);
+}
+
+static void smoke_drive_write_u32_le(uint8_t* destination, uint32_t value)
+{
+    if (!destination)
+        return;
+    destination[0] = (uint8_t)(value & 0xffu);
+    destination[1] = (uint8_t)((value >> 8u) & 0xffu);
+    destination[2] = (uint8_t)((value >> 16u) & 0xffu);
+    destination[3] = (uint8_t)((value >> 24u) & 0xffu);
+}
+
+static void smoke_drive_write_u64_le(uint8_t* destination, uint64_t value)
+{
+    if (!destination)
+        return;
+    smoke_drive_write_u32_le(destination, (uint32_t)(value & UINT64_C(0xffffffff)));
+    smoke_drive_write_u32_le(destination + 4u, (uint32_t)(value >> 32u));
+}
+
+static size_t smoke_drive_make_rename_payload(const char* name,
+                                              uint8_t* payload,
+                                              size_t capacity)
+{
+    size_t name_len = name ? strlen(name) : 0u;
+    size_t encoded_len = name_len * 2u;
+    size_t index = 0u;
+
+    if (!name || !payload || name_len == 0u ||
+        name_len > (SIZE_MAX - 6u) / 2u ||
+        encoded_len > UINT32_MAX || capacity < 6u + encoded_len)
+        return 0u;
+    memset(payload, 0, 6u + encoded_len);
+    smoke_drive_write_u32_le(payload + 2u, (uint32_t)encoded_len);
+    for (index = 0u; index < name_len; index++)
+        payload[6u + index * 2u] = (uint8_t)name[index];
+    return 6u + encoded_len;
+}
+
+static void smoke_drive_submit(smoke_platform* platform,
+                               smoke_drive_stage stage,
+                               librdp_server_drive_operation operation,
+                               librdp_server_drive_file_handle file,
+                               const char* path,
+                               const uint8_t* data,
+                               size_t data_len,
+                               uint32_t information_class,
+                               uint64_t offset,
+                               uint32_t length,
+                               uint32_t create_disposition,
+                               uint32_t create_options)
+{
+    server_platform_drive_request request;
+
+    if (!platform || !platform->drive_sink.request ||
+        platform->drive_volume.volume_id == 0u)
+    {
+        smoke_drive_fail(platform,
+                         LIBRDP_STATUS_STATE,
+                         0u);
+        return;
+    }
+    memset(&request, 0, sizeof(request));
+    if (librdp_server_drive_request_init(&request.operation) !=
+        LIBRDP_STATUS_OK)
+    {
+        smoke_drive_fail(platform,
+                         LIBRDP_STATUS_STATE,
+                         0u);
+        return;
+    }
+    request.request_id = ++platform->drive_next_request_id;
+    request.volume_id = platform->drive_volume.volume_id;
+    request.peer_id = platform->drive_volume.peer_id;
+    request.generation = platform->drive_volume.generation;
+    request.operation.operation = operation;
+    request.operation.device = platform->drive_volume.device;
+    request.operation.file = file;
+    request.operation.path = path;
+    request.operation.data = data;
+    request.operation.data_len = data_len;
+    request.operation.information_class = information_class;
+    request.operation.offset = offset;
+    request.operation.length = length;
+    request.operation.desired_access =
+        SMOKE_DRIVE_GENERIC_READ |
+        (platform->drive_profile &&
+                 platform->drive_profile->mode == SMOKE_DRIVE_WRITABLE
+             ? SMOKE_DRIVE_GENERIC_WRITE
+             : 0u);
+    request.operation.shared_access = SMOKE_DRIVE_SHARE_ALL;
+    request.operation.create_disposition = create_disposition;
+    request.operation.create_options = create_options;
+    atomic_store_explicit(&platform->drive_stage,
+                          (unsigned int)stage,
+                          memory_order_release);
+    platform->drive_sink.request(&request,
+                                 platform->drive_sink.user_data);
+}
+
 static librdp_status smoke_drive_start(
     void* context,
     const server_platform_drive_sink* sink)
@@ -1225,9 +1403,35 @@ static librdp_status smoke_drive_present(
                       volume->name);
     if (length < 0 || (size_t)length >= sizeof(platform->drive_name))
         return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    platform->drive_volume = *volume;
+    platform->drive_volume.name = platform->drive_name;
     atomic_fetch_add_explicit(&platform->drive_presentations,
                               1u,
                               memory_order_release);
+    if (platform->drive_profile)
+    {
+        const char* path =
+            platform->drive_profile->mode == SMOKE_DRIVE_WRITABLE
+                ? "created.bin"
+                : "marker.txt";
+        uint32_t disposition =
+            platform->drive_profile->mode == SMOKE_DRIVE_WRITABLE
+                ? SMOKE_DRIVE_CREATE_NEW
+                : SMOKE_DRIVE_OPEN_EXISTING;
+
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_OPEN_FILE,
+                           LIBRDP_SERVER_DRIVE_CREATE,
+                           (librdp_server_drive_file_handle){0},
+                           path,
+                           NULL,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           disposition,
+                           0u);
+    }
     return LIBRDP_STATUS_OK;
 }
 
@@ -1255,9 +1459,581 @@ static librdp_status smoke_drive_complete(
     void* context,
     const server_platform_drive_completion* completion)
 {
-    return context && completion
-               ? LIBRDP_STATUS_OK
-               : LIBRDP_STATUS_INVALID_ARGUMENT;
+    smoke_platform* platform = (smoke_platform*)context;
+    smoke_drive_stage stage = SMOKE_DRIVE_STAGE_DISABLED;
+    librdp_server_drive_io_result io_result =
+        LIBRDP_SERVER_DRIVE_IO_ERROR;
+    uint8_t rename_payload[64];
+    uint8_t size_payload[8];
+    uint8_t delete_payload[1] = {1u};
+    size_t rename_len = 0u;
+
+    if (!platform || !completion)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!platform->drive_profile)
+        return LIBRDP_STATUS_OK;
+    stage = (smoke_drive_stage)atomic_load_explicit(
+        &platform->drive_stage,
+        memory_order_acquire);
+    io_result =
+        librdp_server_drive_classify_io_status(completion->io_status);
+    atomic_fetch_add_explicit(&platform->drive_completions,
+                              1u,
+                              memory_order_relaxed);
+    if (completion->request_id != platform->drive_next_request_id ||
+        completion->type != LIBRDP_SERVER_DRIVE_REQUEST_COMPLETED ||
+        completion->status != LIBRDP_STATUS_OK)
+    {
+        smoke_drive_fail(platform,
+                         completion->status,
+                         completion->io_status);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_OPEN_FILE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            completion->file.file_id == 0u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        platform->drive_file = completion->file;
+        if (platform->drive_profile->mode == SMOKE_DRIVE_WRITABLE)
+        {
+            smoke_drive_submit(platform,
+                               SMOKE_DRIVE_STAGE_WRITE_FILE,
+                               LIBRDP_SERVER_DRIVE_WRITE,
+                               platform->drive_file,
+                               NULL,
+                               smoke_drive_write_data,
+                               sizeof(smoke_drive_write_data) - 1u,
+                               0u,
+                               0u,
+                               0u,
+                               0u,
+                               0u);
+        }
+        else
+        {
+            smoke_drive_submit(platform,
+                               SMOKE_DRIVE_STAGE_READ_FILE,
+                               LIBRDP_SERVER_DRIVE_READ,
+                               platform->drive_file,
+                               NULL,
+                               NULL,
+                               0u,
+                               0u,
+                               0u,
+                               (uint32_t)(sizeof(smoke_drive_marker_data) - 1u),
+                               0u,
+                               0u);
+        }
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_READ_FILE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_READ ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            completion->data_len != sizeof(smoke_drive_marker_data) - 1u ||
+            !completion->data ||
+            memcmp(completion->data,
+                   smoke_drive_marker_data,
+                   completion->data_len) != 0)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_QUERY_FILE,
+                           LIBRDP_SERVER_DRIVE_QUERY_INFORMATION,
+                           platform->drive_file,
+                           NULL,
+                           NULL,
+                           0u,
+                           LIBRDP_SERVER_DRIVE_FILE_ALL_INFORMATION,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_QUERY_FILE)
+    {
+        librdp_server_drive_metadata metadata;
+        librdp_status metadata_status = LIBRDP_STATUS_OK;
+
+        memset(&metadata, 0, sizeof(metadata));
+        metadata_status = librdp_server_drive_metadata_init(&metadata);
+        if (metadata_status == LIBRDP_STATUS_OK)
+        {
+            metadata_status = librdp_server_drive_decode_file_metadata(
+                completion->information_class,
+                completion->data,
+                completion->data_len,
+                &metadata);
+        }
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_QUERY_INFORMATION ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            metadata_status != LIBRDP_STATUS_OK ||
+            metadata.directory ||
+            metadata.file_size != sizeof(smoke_drive_marker_data) - 1u)
+        {
+            fprintf(stderr,
+                    "drive metadata mismatch operation=%u io_result=%u class=%u decode=%s data_len=%zu directory=%u file_size=%llu expected=%zu\n",
+                    (unsigned int)completion->operation,
+                    (unsigned int)io_result,
+                    completion->information_class,
+                    librdp_status_name(metadata_status),
+                    completion->data_len,
+                    metadata.directory,
+                    (unsigned long long)metadata.file_size,
+                    sizeof(smoke_drive_marker_data) - 1u);
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_OPEN_DIRECTORY,
+                           LIBRDP_SERVER_DRIVE_CREATE,
+                           (librdp_server_drive_file_handle){0},
+                           "",
+                           NULL,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           SMOKE_DRIVE_OPEN_EXISTING,
+                           SMOKE_DRIVE_DIRECTORY_OPTION);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_OPEN_DIRECTORY)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            completion->file.file_id == 0u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        platform->drive_directory = completion->file;
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_QUERY_DIRECTORY,
+                           LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY,
+                           platform->drive_directory,
+                           "marker.txt",
+                           NULL,
+                           0u,
+                           LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_QUERY_DIRECTORY)
+    {
+        librdp_server_drive_metadata metadata;
+        char name[64];
+        size_t name_len = 0u;
+        size_t next_offset = 0u;
+
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            librdp_server_drive_metadata_init(&metadata) !=
+                LIBRDP_STATUS_OK ||
+            librdp_server_drive_decode_directory_entry(
+                completion->information_class,
+                completion->data,
+                completion->data_len,
+                0u,
+                &metadata,
+                name,
+                sizeof(name),
+                &name_len,
+                &next_offset) != LIBRDP_STATUS_OK ||
+            strcmp(name, "marker.txt") != 0 ||
+            name_len != sizeof("marker.txt") ||
+            next_offset != 0u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_WRITE_DENIED,
+                           LIBRDP_SERVER_DRIVE_WRITE,
+                           platform->drive_file,
+                           NULL,
+                           smoke_drive_write_data,
+                           sizeof(smoke_drive_write_data) - 1u,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_WRITE_DENIED)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_WRITE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        rename_len = smoke_drive_make_rename_payload(
+            "renamed.txt",
+            rename_payload,
+            sizeof(rename_payload));
+        if (rename_len == 0u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_STATE,
+                             0u);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_RENAME_DENIED,
+                           LIBRDP_SERVER_DRIVE_SET_INFORMATION,
+                           platform->drive_file,
+                           NULL,
+                           rename_payload,
+                           rename_len,
+                           SMOKE_DRIVE_FILE_RENAME_INFORMATION,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_RENAME_DENIED)
+    {
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_SET_INFORMATION ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_DELETE_DENIED,
+                           LIBRDP_SERVER_DRIVE_SET_INFORMATION,
+                           platform->drive_file,
+                           NULL,
+                           delete_payload,
+                           sizeof(delete_payload),
+                           SMOKE_DRIVE_FILE_DISPOSITION_INFORMATION,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_DELETE_DENIED)
+    {
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_SET_INFORMATION ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_CLOSE_FILE,
+                           LIBRDP_SERVER_DRIVE_CLOSE,
+                           platform->drive_file,
+                           NULL,
+                           NULL,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_WRITE_FILE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_WRITE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            completion->transferred !=
+                sizeof(smoke_drive_write_data) - 1u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_APPEND_FILE,
+                           LIBRDP_SERVER_DRIVE_WRITE,
+                           platform->drive_file,
+                           NULL,
+                           smoke_drive_append_data,
+                           sizeof(smoke_drive_append_data) - 1u,
+                           0u,
+                           UINT64_MAX,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_APPEND_FILE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_WRITE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            completion->transferred !=
+                sizeof(smoke_drive_append_data) - 1u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_FLUSH_FILE,
+                           LIBRDP_SERVER_DRIVE_FLUSH,
+                           platform->drive_file,
+                           NULL,
+                           NULL,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_FLUSH_FILE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_FLUSH ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_write_u64_le(size_payload, 3u);
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_TRUNCATE_FILE,
+                           LIBRDP_SERVER_DRIVE_SET_INFORMATION,
+                           platform->drive_file,
+                           NULL,
+                           size_payload,
+                           sizeof(size_payload),
+                           SMOKE_DRIVE_FILE_END_OF_FILE_INFORMATION,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_TRUNCATE_FILE)
+    {
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_SET_INFORMATION ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_READ_TRUNCATED,
+                           LIBRDP_SERVER_DRIVE_READ,
+                           platform->drive_file,
+                           NULL,
+                           NULL,
+                           0u,
+                           0u,
+                           0u,
+                           16u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_READ_TRUNCATED)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_READ ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            completion->data_len != 3u || !completion->data ||
+            memcmp(completion->data, "wri", 3u) != 0)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        rename_len = smoke_drive_make_rename_payload(
+            "renamed.bin",
+            rename_payload,
+            sizeof(rename_payload));
+        if (rename_len == 0u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_STATE,
+                             0u);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_RENAME_FILE,
+                           LIBRDP_SERVER_DRIVE_SET_INFORMATION,
+                           platform->drive_file,
+                           NULL,
+                           rename_payload,
+                           rename_len,
+                           SMOKE_DRIVE_FILE_RENAME_INFORMATION,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_RENAME_FILE)
+    {
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_SET_INFORMATION ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_DELETE_FILE,
+                           LIBRDP_SERVER_DRIVE_SET_INFORMATION,
+                           platform->drive_file,
+                           NULL,
+                           delete_payload,
+                           sizeof(delete_payload),
+                           SMOKE_DRIVE_FILE_DISPOSITION_INFORMATION,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_DELETE_FILE)
+    {
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_SET_INFORMATION ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_CLEANUP_FILE,
+                           LIBRDP_SERVER_DRIVE_CLEANUP,
+                           platform->drive_file,
+                           NULL,
+                           NULL,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_CLEANUP_FILE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CLEANUP ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_CLOSE_FILE,
+                           LIBRDP_SERVER_DRIVE_CLOSE,
+                           platform->drive_file,
+                           NULL,
+                           NULL,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_CLOSE_FILE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CLOSE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        if (platform->drive_profile->mode == SMOKE_DRIVE_WRITABLE)
+        {
+            atomic_store_explicit(&platform->drive_stage,
+                                  SMOKE_DRIVE_STAGE_COMPLETE,
+                                  memory_order_release);
+        }
+        else
+        {
+            smoke_drive_submit(platform,
+                               SMOKE_DRIVE_STAGE_CLOSE_DIRECTORY,
+                               LIBRDP_SERVER_DRIVE_CLOSE,
+                               platform->drive_directory,
+                               NULL,
+                               NULL,
+                               0u,
+                               0u,
+                               0u,
+                               0u,
+                               0u,
+                               0u);
+        }
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_CLOSE_DIRECTORY)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CLOSE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        atomic_store_explicit(&platform->drive_stage,
+                              SMOKE_DRIVE_STAGE_COMPLETE,
+                              memory_order_release);
+        return LIBRDP_STATUS_OK;
+    }
+    smoke_drive_fail(platform,
+                     LIBRDP_STATUS_PROTOCOL_ERROR,
+                     completion->io_status);
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status smoke_permission_start(
@@ -1354,7 +2130,8 @@ static const server_platform_permission_vtable smoke_permission_vtable = {
 static void smoke_platform_init(smoke_platform* platform,
                                 server_host_config* config,
                                 server_client_clipboard_provider*
-                                    clipboard_provider)
+                                    clipboard_provider,
+                                const smoke_drive_profile* drive_profile)
 {
     size_t pixel = 0u;
 
@@ -1376,6 +2153,10 @@ static void smoke_platform_init(smoke_platform* platform,
     atomic_init(&platform->key_events, 0u);
     atomic_init(&platform->mouse_events, 0u);
     atomic_init(&platform->drive_presentations, 0u);
+    atomic_init(&platform->drive_stage,
+                drive_profile ? SMOKE_DRIVE_STAGE_WAIT_VOLUME
+                              : SMOKE_DRIVE_STAGE_DISABLED);
+    atomic_init(&platform->drive_completions, 0u);
     atomic_init(&platform->releases, 0u);
     atomic_init(&platform->refresh_requests, 0u);
     atomic_init(&platform->output_suppressions, 0u);
@@ -1392,7 +2173,8 @@ static void smoke_platform_init(smoke_platform* platform,
     config->platform.permission.vtable = &smoke_permission_vtable;
     config->platform.permission.context = platform;
     config->drive.enabled = 1;
-    config->drive.read_only = 1;
+    config->drive.read_only = drive_profile ? 0 : 1;
+    platform->drive_profile = drive_profile;
 }
 
 static void smoke_host_trace_callback(
@@ -4996,16 +5778,17 @@ static int smoke_configure_security(server_host_config* host_config,
  * server host. Every provider must cross a real protocol boundary before the
  * fixture accepts the run.
  */
-static int smoke_run_profile(librdp_security_mode security,
-                             librdp_status expected_connect_status,
-                             const smoke_nla_identity* identity,
-                             const char* bind_address,
-                             const char* target,
-                             const smoke_gateway_profile* gateway_profile,
-                             int exercise_output_control,
-                             int cancel_phase,
-                             const server_client_clipboard_profile*
-                                 clipboard_profile)
+static int smoke_run_profile_ex(
+    librdp_security_mode security,
+    librdp_status expected_connect_status,
+    const smoke_nla_identity* identity,
+    const char* bind_address,
+    const char* target,
+    const smoke_gateway_profile* gateway_profile,
+    int exercise_output_control,
+    int cancel_phase,
+    const server_client_clipboard_profile* clipboard_profile,
+    const smoke_drive_profile* drive_profile)
 {
     char cert_path[128] = {0};
     char key_path[128] = {0};
@@ -5013,6 +5796,8 @@ static int smoke_run_profile(librdp_security_mode security,
     char gateway_key_path[128] = {0};
     char drive_directory[128] = {0};
     char drive_marker[160] = {0};
+    char drive_created[160] = {0};
+    char drive_renamed[160] = {0};
     char gateway_url[128] = {0};
     char* saved_curl_ca_bundle = NULL;
     static const uint8_t clipboard_data[] = {'s', 'm', 'o', 'k', 'e'};
@@ -5119,7 +5904,8 @@ static int smoke_run_profile(librdp_security_mode security,
     events.clipboard_provider = clipboard_provider;
     smoke_platform_init(&platform,
                         &host_config,
-                        clipboard_provider);
+                        clipboard_provider,
+                        drive_profile);
     host_config.trace_callback = smoke_host_trace_callback;
     host_config.trace_user_data = &platform;
 
@@ -5136,6 +5922,28 @@ static int smoke_run_profile(librdp_security_mode security,
                                       "SMOKE",
                                       drive_directory) ==
             LIBRDP_STATUS_OK);
+    if (drive_profile)
+    {
+        librdp_drive_policy drive_policy;
+
+        REQUIRE(librdp_drive_policy_init(&drive_policy) ==
+                LIBRDP_STATUS_OK);
+        drive_policy.read_only =
+            drive_profile->mode == SMOKE_DRIVE_READ_ONLY ? 1 : 0;
+        drive_policy.deny_dotfiles = 0;
+        REQUIRE(librdp_settings_set_drive_policy(settings,
+                                                 0u,
+                                                 &drive_policy) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(snprintf(drive_created,
+                         sizeof(drive_created),
+                         "%s/created.bin",
+                         drive_directory) > 0);
+        REQUIRE(snprintf(drive_renamed,
+                         sizeof(drive_renamed),
+                         "%s/renamed.bin",
+                         drive_directory) > 0);
+    }
     REQUIRE(smoke_configure_security(&host_config,
                                      settings,
                                      security,
@@ -5693,9 +6501,33 @@ static int smoke_run_profile(librdp_security_mode security,
             (!clipboard_profile ||
              smoke_clipboard_profile_complete(clipboard_provider,
                                               &events)) &&
+            (!drive_profile ||
+             atomic_load_explicit(&platform.drive_stage,
+                                  memory_order_acquire) ==
+                 SMOKE_DRIVE_STAGE_COMPLETE) &&
             (!exercise_output_control ||
              output_control_stage == 3))
             break;
+        if (drive_profile &&
+            atomic_load_explicit(&platform.drive_stage,
+                                 memory_order_acquire) ==
+                SMOKE_DRIVE_STAGE_FAILED)
+            break;
+        if (drive_profile)
+        {
+            smoke_drive_stage drive_stage =
+                (smoke_drive_stage)atomic_load_explicit(
+                    &platform.drive_stage,
+                    memory_order_acquire);
+
+            if (drive_stage != SMOKE_DRIVE_STAGE_COMPLETE &&
+                drive_stage != SMOKE_DRIVE_STAGE_FAILED)
+            {
+                const struct timespec delay = {0, 1000000L};
+
+                (void)nanosleep(&delay, NULL);
+            }
+        }
     }
     if (cycle >= SMOKE_PUMP_LIMIT && exercise_output_control)
     {
@@ -5801,6 +6633,41 @@ static int smoke_run_profile(librdp_security_mode security,
         clipboard_provider));
     REQUIRE(atomic_load_explicit(&platform.drive_presentations,
                                  memory_order_acquire) > 0u);
+    if (drive_profile)
+    {
+        smoke_drive_stage drive_stage =
+            (smoke_drive_stage)atomic_load_explicit(
+                &platform.drive_stage,
+                memory_order_acquire);
+
+        if (drive_stage != SMOKE_DRIVE_STAGE_COMPLETE)
+        {
+            fprintf(stderr,
+                    "drive smoke incomplete stage=%u completions=%u status=%s io_status=%u\n",
+                    (unsigned int)drive_stage,
+                    atomic_load_explicit(&platform.drive_completions,
+                                         memory_order_acquire),
+                    librdp_status_name(platform.drive_failure_status),
+                    platform.drive_failure_io_status);
+        }
+        REQUIRE(drive_stage == SMOKE_DRIVE_STAGE_COMPLETE);
+        REQUIRE(platform.drive_failure_status == LIBRDP_STATUS_OK);
+        REQUIRE(platform.drive_failure_io_status == 0u);
+        if (drive_profile->mode == SMOKE_DRIVE_READ_ONLY)
+        {
+            REQUIRE(atomic_load_explicit(&platform.drive_completions,
+                                         memory_order_acquire) == 10u);
+            REQUIRE(access(drive_marker, F_OK) == 0);
+            REQUIRE(access(drive_renamed, F_OK) != 0);
+        }
+        else
+        {
+            REQUIRE(atomic_load_explicit(&platform.drive_completions,
+                                         memory_order_acquire) == 10u);
+            REQUIRE(access(drive_created, F_OK) != 0);
+            REQUIRE(access(drive_renamed, F_OK) != 0);
+        }
+    }
     REQUIRE(atomic_load_explicit(&platform.key_events,
                                  memory_order_acquire) >= 2u);
     REQUIRE(atomic_load_explicit(&platform.mouse_events,
@@ -5974,6 +6841,10 @@ cleanup:
     server_client_clipboard_provider_free(clipboard_provider);
     if (drive_marker[0] != '\0')
         (void)unlink(drive_marker);
+    if (drive_created[0] != '\0')
+        (void)unlink(drive_created);
+    if (drive_renamed[0] != '\0')
+        (void)unlink(drive_renamed);
     if (drive_directory[0] != '\0')
         (void)rmdir(drive_directory);
     if (cert_path[0] != '\0')
@@ -5995,6 +6866,29 @@ cleanup:
     }
     free(saved_curl_ca_bundle);
     return result;
+}
+
+static int smoke_run_profile(librdp_security_mode security,
+                             librdp_status expected_connect_status,
+                             const smoke_nla_identity* identity,
+                             const char* bind_address,
+                             const char* target,
+                             const smoke_gateway_profile* gateway_profile,
+                             int exercise_output_control,
+                             int cancel_phase,
+                             const server_client_clipboard_profile*
+                                 clipboard_profile)
+{
+    return smoke_run_profile_ex(security,
+                                expected_connect_status,
+                                identity,
+                                bind_address,
+                                target,
+                                gateway_profile,
+                                exercise_output_control,
+                                cancel_phase,
+                                clipboard_profile,
+                                NULL);
 }
 
 /*
@@ -8186,6 +9080,22 @@ static int smoke_run_clipboard_profile(
                              profile);
 }
 
+static int smoke_run_drive_profile(const smoke_drive_profile* profile)
+{
+    if (!profile)
+        return 1;
+    return smoke_run_profile_ex(LIBRDP_SECURITY_STANDARD,
+                                LIBRDP_STATUS_OK,
+                                NULL,
+                                "127.0.0.1",
+                                "127.0.0.1",
+                                NULL,
+                                0,
+                                -1,
+                                NULL,
+                                profile);
+}
+
 int main(int argc, char** argv)
 {
     librdp_security_mode security = LIBRDP_SECURITY_AUTO;
@@ -8264,6 +9174,10 @@ int main(int argc, char** argv)
         return smoke_run_redirection(0, 1);
     if (argc == 2 && strcmp(argv[1], "lifecycle-stress") == 0)
         return smoke_run_lifecycle_stress();
+    if (argc == 2 && strcmp(argv[1], "drive-read-only") == 0)
+        return smoke_run_drive_profile(&smoke_drive_read_only);
+    if (argc == 2 && strcmp(argv[1], "drive-writable") == 0)
+        return smoke_run_drive_profile(&smoke_drive_writable);
     if (argc == 2)
     {
         const server_client_clipboard_profile* clipboard_profile =
@@ -8393,7 +9307,8 @@ int main(int argc, char** argv)
                 "security-downgrade|"
                 "tls-untrusted|tls-hostname|tls-wrong-pin|tls-handshake|"
                 "redirection-standard|redirection-tls|redirection-loop|"
-                "lifecycle-stress|clipboard-text|clipboard-html|"
+                "lifecycle-stress|drive-read-only|drive-writable|"
+                "clipboard-text|clipboard-html|"
                 "clipboard-png|output-control|"
                 "cancel-connecting|cancel-negotiating|"
                 "cancel-tls|cancel-authenticating|cancel-activating|"

@@ -53,6 +53,12 @@ librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
                                                       uint32_t information_class,
                                                       const struct stat* st,
                                                       const char* name);
+librdp_status rdp_session_write_information_response(
+    rdp_buffer* response,
+    uint32_t device_id,
+    uint32_t completion_id,
+    uint32_t io_status,
+    const rdp_buffer* information);
 int rdp_session_seek_fd(int fd, uint64_t offset);
 librdp_status rdp_session_utf16le_path_to_utf8(const uint8_t* data, uint32_t data_len, char** out);
 uint32_t rdp_session_apply_basic_information(struct rdp_session_redirected_file* file,
