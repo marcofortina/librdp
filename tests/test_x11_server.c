@@ -547,7 +547,8 @@ static int test_selection_source_dispatch(test_selection_source* source)
                                 ? request->property
                                 : request->target;
 
-            if (request->selection != source->clipboard)
+            if (request->owner != source->owner ||
+                request->selection != source->clipboard)
                 continue;
             if (request->target == source->targets)
             {
@@ -778,6 +779,74 @@ static int test_read_selection(Display* display,
         XFree(data);
     free(buffer);
     return 0;
+}
+
+/*
+ * Begin an outbound INCR transfer without acknowledging its first property.
+ * The caller can then force timeout or ownership loss while the provider still
+ * owns a live transfer.
+ */
+static int test_begin_selection_incr(
+    Display* display,
+    Window requestor,
+    Atom selection,
+    Atom target,
+    Atom property,
+    Atom incr,
+    const server_platform_capture_vtable* capture,
+    void* context)
+{
+    XEvent event;
+    Atom type = None;
+    int format = 0;
+    unsigned long items = 0ul;
+    unsigned long after = 0ul;
+    unsigned char* data = NULL;
+    unsigned int attempt = 0u;
+    int notified = 0;
+
+    XConvertSelection(display,
+                      selection,
+                      target,
+                      property,
+                      requestor,
+                      CurrentTime);
+    XFlush(display);
+    for (attempt = 0u; attempt < 20u; attempt++)
+    {
+        if (!test_dispatch_platform(capture, context, 100))
+            break;
+        if (XCheckTypedWindowEvent(display,
+                                   requestor,
+                                   SelectionNotify,
+                                   &event))
+        {
+            notified = 1;
+            break;
+        }
+    }
+    if (!notified ||
+        event.xselection.property != property ||
+        XGetWindowProperty(display,
+                           requestor,
+                           property,
+                           0,
+                           1,
+                           False,
+                           AnyPropertyType,
+                           &type,
+                           &format,
+                           &items,
+                           &after,
+                           &data) != Success)
+    {
+        if (data)
+            XFree(data);
+        return 0;
+    }
+    if (data)
+        XFree(data);
+    return type == incr && format == 32 && items == 1ul;
 }
 
 static int test_cli_policy(void)
@@ -1217,6 +1286,8 @@ static int test_x11_providers(const char* display_name)
     Window root = None;
     Window window = None;
     Window requestor = None;
+    Window timeout_requestor = None;
+    Window owner_requestor = None;
     GC graphics = None;
     XColor red;
     XColor blue;
@@ -1241,6 +1312,7 @@ static int test_x11_providers(const char* display_name)
     uint8_t* selection = NULL;
     size_t selection_len = 0u;
     uint64_t request_count = 0u;
+    uint64_t cancel_count = 0u;
     unsigned int index = 0u;
 
     memset(&state, 0, sizeof(state));
@@ -1273,14 +1345,37 @@ static int test_x11_providers(const char* display_name)
                                     0u,
                                     0u,
                                     0u);
-    CHECK(window != None && requestor != None);
+    timeout_requestor = XCreateSimpleWindow(client,
+                                            root,
+                                            240,
+                                            10,
+                                            40u,
+                                            30u,
+                                            0u,
+                                            0u,
+                                            0u);
+    owner_requestor = XCreateSimpleWindow(client,
+                                          root,
+                                          290,
+                                          10,
+                                          40u,
+                                          30u,
+                                          0u,
+                                          0u,
+                                          0u);
+    CHECK(window != None && requestor != None &&
+          timeout_requestor != None && owner_requestor != None);
     XSelectInput(client,
                  window,
                  KeyPressMask | KeyReleaseMask | ButtonPressMask |
                      ButtonReleaseMask | PointerMotionMask);
     XSelectInput(client, requestor, PropertyChangeMask);
+    XSelectInput(client, timeout_requestor, PropertyChangeMask);
+    XSelectInput(client, owner_requestor, PropertyChangeMask);
     XMapWindow(client, window);
     XMapWindow(client, requestor);
+    XMapWindow(client, timeout_requestor);
+    XMapWindow(client, owner_requestor);
     graphics = XCreateGC(client, window, 0ul, NULL);
     XSync(client, False);
 
@@ -1561,6 +1656,45 @@ static int test_x11_providers(const char* display_name)
     }
     CHECK(state.cancel_count == 1u);
 
+    state.defer_clipboard_response = 0;
+    state.send_large_clipboard = 1;
+    cancel_count = state.cancel_count;
+    CHECK(test_begin_selection_incr(
+        client,
+        timeout_requestor,
+        XInternAtom(client, "CLIPBOARD", False),
+        XInternAtom(client, "UTF8_STRING", False),
+        property,
+        XInternAtom(client, "INCR", False),
+        capture,
+        context));
+    x11_server_context_test_expire_clipboard(context);
+    CHECK(state.cancel_count == cancel_count + 1u);
+    XDeleteProperty(client, timeout_requestor, property);
+    XFlush(client);
+
+    cancel_count = state.cancel_count;
+    CHECK(test_begin_selection_incr(
+        client,
+        owner_requestor,
+        XInternAtom(client, "CLIPBOARD", False),
+        XInternAtom(client, "UTF8_STRING", False),
+        property,
+        XInternAtom(client, "INCR", False),
+        capture,
+        context));
+    XSetSelectionOwner(client,
+                       XInternAtom(client, "CLIPBOARD", False),
+                       window,
+                       CurrentTime);
+    XFlush(client);
+    for (index = 0u;
+         index < 20u && state.cancel_count == cancel_count;
+         index++)
+        CHECK(test_dispatch_platform(capture, context, 100));
+    CHECK(state.cancel_count == cancel_count + 1u);
+    state.send_large_clipboard = 0;
+
     {
         static const uint8_t local_text[] = "local incremental text";
         static const uint8_t local_html[] = "<i>local html</i>";
@@ -1758,6 +1892,8 @@ static int test_x11_providers(const char* display_name)
     permission->stop(context);
     x11_server_context_free(context);
     XFreeGC(client, graphics);
+    XDestroyWindow(client, owner_requestor);
+    XDestroyWindow(client, timeout_requestor);
     XDestroyWindow(client, requestor);
     XDestroyWindow(client, window);
     XCloseDisplay(client);
