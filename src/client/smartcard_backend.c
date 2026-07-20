@@ -18,6 +18,8 @@
 
 #include "client/smartcard_backend.h"
 
+#include "common/trace.h"
+
 #include <errno.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -665,26 +667,55 @@ static const rdp_smartcard_backend_ops rdp_smartcard_none_ops = {
 #ifdef RDP_HAVE_PCSC
 static LONG rdp_smartcard_pcsc_establish_context(void* user_data, DWORD scope, SCARDCONTEXT* context)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardEstablishContext(scope, NULL, NULL, context);
+    status = SCardEstablishContext(scope, NULL, NULL, context);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.establish_context",
+                    "scope=%lu status=%ld",
+                    (unsigned long)scope,
+                    (long)status);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_release_context(void* user_data, SCARDCONTEXT context)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardReleaseContext(context);
+    status = SCardReleaseContext(context);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.release_context",
+                    "status=%ld",
+                    (long)status);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_is_valid_context(void* user_data, SCARDCONTEXT context)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardIsValidContext(context);
+    status = SCardIsValidContext(context);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.context_status",
+                    "status=%ld",
+                    (long)status);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_cancel(void* user_data, SCARDCONTEXT context)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardCancel(context);
+    status = SCardCancel(context);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.cancel",
+                    "status=%ld",
+                    (long)status);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_list_reader_groups(void* user_data,
@@ -692,8 +723,16 @@ static LONG rdp_smartcard_pcsc_list_reader_groups(void* user_data,
                                                   char* groups,
                                                   DWORD* groups_len)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardListReaderGroups(context, groups, groups_len);
+    status = SCardListReaderGroups(context, groups, groups_len);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.list_reader_groups",
+                    "status=%ld bytes=%lu",
+                    (long)status,
+                    groups_len ? (unsigned long)*groups_len : 0ul);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_list_readers(void* user_data,
@@ -702,8 +741,16 @@ static LONG rdp_smartcard_pcsc_list_readers(void* user_data,
                                             char* readers,
                                             DWORD* readers_len)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardListReaders(context, groups, readers, readers_len);
+    status = SCardListReaders(context, groups, readers, readers_len);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.list_readers",
+                    "status=%ld bytes=%lu",
+                    (long)status,
+                    readers_len ? (unsigned long)*readers_len : 0ul);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_get_status_change(void* user_data,
@@ -712,14 +759,34 @@ static LONG rdp_smartcard_pcsc_get_status_change(void* user_data,
                                                  SCARD_READERSTATE* readers,
                                                  DWORD count)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardGetStatusChange(context, timeout, readers, count);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.status_change.start",
+                    "timeout_ms=%lu readers=%lu",
+                    (unsigned long)timeout,
+                    (unsigned long)count);
+    status = SCardGetStatusChange(context, timeout, readers, count);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.status_change.done",
+                    "status=%ld readers=%lu",
+                    (long)status,
+                    (unsigned long)count);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_begin_transaction(void* user_data, SCARDHANDLE handle)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardBeginTransaction(handle);
+    status = SCardBeginTransaction(handle);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.transaction.begin",
+                    "status=%ld",
+                    (long)status);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_connect(void* user_data,
@@ -730,20 +797,54 @@ static LONG rdp_smartcard_pcsc_connect(void* user_data,
                                        SCARDHANDLE* handle,
                                        DWORD* active_protocol)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardConnect(context, reader, share_mode, preferred_protocols, handle, active_protocol);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.connect.start",
+                    "share_mode=%lu protocols=%lu",
+                    (unsigned long)share_mode,
+                    (unsigned long)preferred_protocols);
+    status = SCardConnect(context,
+                          reader,
+                          share_mode,
+                          preferred_protocols,
+                          handle,
+                          active_protocol);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.connect.done",
+                    "status=%ld active_protocol=%lu",
+                    (long)status,
+                    active_protocol ? (unsigned long)*active_protocol : 0ul);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_disconnect(void* user_data, SCARDHANDLE handle, DWORD disposition)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardDisconnect(handle, disposition);
+    status = SCardDisconnect(handle, disposition);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.disconnect",
+                    "disposition=%lu status=%ld",
+                    (unsigned long)disposition,
+                    (long)status);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_end_transaction(void* user_data, SCARDHANDLE handle, DWORD disposition)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardEndTransaction(handle, disposition);
+    status = SCardEndTransaction(handle, disposition);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.transaction.end",
+                    "disposition=%lu status=%ld",
+                    (unsigned long)disposition,
+                    (long)status);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_reconnect(void* user_data,
@@ -753,8 +854,23 @@ static LONG rdp_smartcard_pcsc_reconnect(void* user_data,
                                          DWORD initialization,
                                          DWORD* active_protocol)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardReconnect(handle, share_mode, preferred_protocols, initialization, active_protocol);
+    status = SCardReconnect(handle,
+                            share_mode,
+                            preferred_protocols,
+                            initialization,
+                            active_protocol);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.reconnect",
+                    "share_mode=%lu protocols=%lu initialization=%lu status=%ld active_protocol=%lu",
+                    (unsigned long)share_mode,
+                    (unsigned long)preferred_protocols,
+                    (unsigned long)initialization,
+                    (long)status,
+                    active_protocol ? (unsigned long)*active_protocol : 0ul);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_status(void* user_data,
@@ -766,8 +882,25 @@ static LONG rdp_smartcard_pcsc_status(void* user_data,
                                       uint8_t* atr,
                                       DWORD* atr_len)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardStatus(handle, reader_names, reader_names_len, state, protocol, atr, atr_len);
+    status = SCardStatus(handle,
+                         reader_names,
+                         reader_names_len,
+                         state,
+                         protocol,
+                         atr,
+                         atr_len);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.status",
+                    "status=%ld state=%lu protocol=%lu readers_bytes=%lu atr_bytes=%lu",
+                    (long)status,
+                    state ? (unsigned long)*state : 0ul,
+                    protocol ? (unsigned long)*protocol : 0ul,
+                    reader_names_len ? (unsigned long)*reader_names_len : 0ul,
+                    atr_len ? (unsigned long)*atr_len : 0ul);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_transmit(void* user_data,
@@ -779,8 +912,28 @@ static LONG rdp_smartcard_pcsc_transmit(void* user_data,
                                         uint8_t* recv_data,
                                         DWORD* recv_len)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardTransmit(handle, send_pci, send_data, send_len, recv_pci, recv_data, recv_len);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.transmit.start",
+                    "protocol=%lu send_bytes=%lu receive_capacity=%lu",
+                    send_pci ? (unsigned long)send_pci->dwProtocol : 0ul,
+                    (unsigned long)send_len,
+                    recv_len ? (unsigned long)*recv_len : 0ul);
+    status = SCardTransmit(handle,
+                           send_pci,
+                           send_data,
+                           send_len,
+                           recv_pci,
+                           recv_data,
+                           recv_len);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.transmit.done",
+                    "status=%ld receive_bytes=%lu",
+                    (long)status,
+                    recv_len ? (unsigned long)*recv_len : 0ul);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_control(void* user_data,
@@ -792,8 +945,25 @@ static LONG rdp_smartcard_pcsc_control(void* user_data,
                                        DWORD output_len,
                                        DWORD* bytes_returned)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardControl(handle, control_code, input, input_len, output, output_len, bytes_returned);
+    status = SCardControl(handle,
+                          control_code,
+                          input,
+                          input_len,
+                          output,
+                          output_len,
+                          bytes_returned);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.control",
+                    "control_code=%lu input_bytes=%lu output_capacity=%lu output_bytes=%lu status=%ld",
+                    (unsigned long)control_code,
+                    (unsigned long)input_len,
+                    (unsigned long)output_len,
+                    bytes_returned ? (unsigned long)*bytes_returned : 0ul,
+                    (long)status);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_get_attrib(void* user_data,
@@ -802,8 +972,17 @@ static LONG rdp_smartcard_pcsc_get_attrib(void* user_data,
                                           uint8_t* attr,
                                           DWORD* attr_len)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardGetAttrib(handle, attr_id, attr, attr_len);
+    status = SCardGetAttrib(handle, attr_id, attr, attr_len);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.get_attribute",
+                    "attribute=%lu bytes=%lu status=%ld",
+                    (unsigned long)attr_id,
+                    attr_len ? (unsigned long)*attr_len : 0ul,
+                    (long)status);
+    return status;
 }
 
 static LONG rdp_smartcard_pcsc_set_attrib(void* user_data,
@@ -812,8 +991,17 @@ static LONG rdp_smartcard_pcsc_set_attrib(void* user_data,
                                           const uint8_t* attr,
                                           DWORD attr_len)
 {
+    LONG status = SCARD_S_SUCCESS;
+
     (void)user_data;
-    return SCardSetAttrib(handle, attr_id, attr, attr_len);
+    status = SCardSetAttrib(handle, attr_id, attr, attr_len);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.pcsc.set_attribute",
+                    "attribute=%lu bytes=%lu status=%ld",
+                    (unsigned long)attr_id,
+                    (unsigned long)attr_len,
+                    (long)status);
+    return status;
 }
 
 static const rdp_smartcard_backend_ops rdp_smartcard_pcsc_ops = {

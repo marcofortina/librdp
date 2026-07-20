@@ -280,6 +280,12 @@ if(LIBRDP_BUILD_TESTS)
         )
         librdp_configure_test_executable(test_printer_cups_smoke)
     endif()
+    if(LIBRDP_PCSC_FOUND)
+        add_executable(test_smartcard_pcsc_smoke
+            tests/test_smartcard_pcsc_smoke.c
+        )
+        librdp_configure_test_executable(test_smartcard_pcsc_smoke)
+    endif()
     if(TARGET librdp-viewer AND
        LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         find_program(LIBRDP_VIEWER_SMOKE_XVFB_EXECUTABLE NAMES Xvfb)
@@ -415,6 +421,9 @@ if(LIBRDP_BUILD_TESTS)
     )
     if(TARGET test_printer_cups_smoke)
         add_dependencies(librdp_tests test_printer_cups_smoke)
+    endif()
+    if(TARGET test_smartcard_pcsc_smoke)
+        add_dependencies(librdp_tests test_smartcard_pcsc_smoke)
     endif()
     if(TARGET test_workspace_launch_smoke)
         add_dependencies(librdp_tests test_workspace_launch_smoke)
@@ -592,6 +601,14 @@ if(LIBRDP_BUILD_TESTS)
         set_tests_properties(printer_cups_smoke PROPERTIES
             SKIP_RETURN_CODE 77
             TIMEOUT 15
+        )
+    endif()
+    if(TARGET test_smartcard_pcsc_smoke)
+        add_test(NAME smartcard_pcsc_smoke
+                 COMMAND test_smartcard_pcsc_smoke)
+        set_tests_properties(smartcard_pcsc_smoke PROPERTIES
+            SKIP_RETURN_CODE 77
+            TIMEOUT 25
         )
     endif()
     add_test(NAME server_client_smoke_clipboard_text
