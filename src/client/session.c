@@ -2384,12 +2384,9 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         else if (request.name_len == sizeof(RDP_VIDEO_REDIRECTION_CHANNEL_NAME) - 1u &&
                  memcmp(request.name, RDP_VIDEO_REDIRECTION_CHANNEL_NAME, request.name_len) == 0)
         {
+            rdp_session_video_redirection_reset(session);
             session->video_redirection_channel_id = request.channel_id;
             session->video_redirection_channel_id_bytes = request.channel_id_bytes;
-            session->video_redirection_ready = 0;
-            session->video_redirection_capabilities_sent = 0;
-            session->video_redirection_rim_sent = 0;
-            memset(session->video_streams, 0, sizeof(session->video_streams));
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.tsmf.channel",
                             "dvc_channel_id=%u video_enabled=%u geometry_enabled=%u",

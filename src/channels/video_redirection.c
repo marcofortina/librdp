@@ -476,7 +476,8 @@ librdp_status rdp_video_redirection_write_geometry_update(
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || !presentation_id || (!geometry && geometry_len > 0) ||
-        (!visible_rect && visible_rect_len > 0))
+        (!visible_rect && visible_rect_len > 0) ||
+        visible_rect_len % 16u != 0u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_video_redirection_write_default_header(buffer,
                                                         message_id,
@@ -547,7 +548,7 @@ librdp_status rdp_video_redirection_write_rect(
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer)
+    if (!buffer || top >= bottom || left >= right)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u32_le(buffer, top);
     if (status != LIBRDP_STATUS_OK)
@@ -1499,6 +1500,7 @@ librdp_status rdp_video_redirection_parse_geometry_update(
         rdp_stream_read_bytes(&stream, &parsed.geometry, parsed.geometry_len) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &parsed.visible_rect_len) != LIBRDP_STATUS_OK ||
         parsed.visible_rect_len != rdp_stream_remaining(&stream) ||
+        parsed.visible_rect_len % 16u != 0u ||
         rdp_stream_read_bytes(&stream, &parsed.visible_rect, parsed.visible_rect_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     *update = parsed;
@@ -1592,7 +1594,9 @@ librdp_status rdp_video_redirection_parse_rect(
     if (rdp_stream_read_u32_le(&stream, &parsed.top) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &parsed.left) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &parsed.bottom) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &parsed.right) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.right) != LIBRDP_STATUS_OK ||
+        parsed.top >= parsed.bottom ||
+        parsed.left >= parsed.right)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     *rect = parsed;
     return LIBRDP_STATUS_OK;

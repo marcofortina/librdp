@@ -121,6 +121,7 @@ typedef struct rdp_session_usb_worker rdp_session_usb_worker;
 #define RDP_SESSION_VOLUME_LABEL_MAX_CHARS 32u
 #define RDP_SESSION_VOLUME_LABEL_MAX_BYTES 129u
 #define RDP_SESSION_VIDEO_STREAMS 32u
+#define RDP_SESSION_VIDEO_GEOMETRIES RDP_SESSION_VIDEO_STREAMS
 #define RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS 16u
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_WIDTH 640u
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_HEIGHT 480u
@@ -575,6 +576,17 @@ typedef struct rdp_session_video_stream
     uint32_t playback_rate_bits;
 } rdp_session_video_stream;
 
+typedef struct rdp_session_video_geometry
+{
+    uint8_t active;
+    uint8_t presentation_id[16];
+    uint64_t video_window_id;
+    uint32_t last_message_id;
+    rdp_video_redirection_geometry_info info;
+    uint32_t visible_rect_count;
+    rdp_video_redirection_rect* visible_rects;
+} rdp_session_video_geometry;
+
 typedef struct rdp_session_video_optimized_presentation
 {
     uint8_t active;
@@ -796,6 +808,9 @@ struct librdp_session
     uint8_t multiparty_joined;
     uint8_t desktop_composition_active;
     uint32_t video_geometry_update_count;
+    uint32_t video_geometry_active_count;
+    uint32_t video_geometry_stale_count;
+    uint32_t video_geometry_clipped_count;
     rdp_license_client_state license_state;
     rdp_license_crypto_context license_crypto;
     uint8_t multitransport_negotiated;
@@ -824,6 +839,7 @@ struct librdp_session
     rdp_session_pointer_cache_entry pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS];
     rdp_composited_render_tree composited_tree;
     rdp_session_video_stream video_streams[RDP_SESSION_VIDEO_STREAMS];
+    rdp_session_video_geometry video_geometries[RDP_SESSION_VIDEO_GEOMETRIES];
     rdp_session_video_optimized_presentation video_optimized_presentations[RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS];
     rdp_session_redirected_file redirected_files[RDP_SESSION_MAX_REDIRECTED_FILES];
     rdp_printer_backend printer_backend;

@@ -1952,36 +1952,141 @@ static int build_dynamic_channel_telemetry_packet(rdp_buffer* out)
     return ok;
 }
 
-static int build_dynamic_channel_geometry_packet(rdp_buffer* out)
+static const uint8_t geometry_presentation_id[16] = {
+    0x10u, 0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u,
+    0x18u, 0x19u, 0x1au, 0x1bu, 0x1cu, 0x1du, 0x1eu, 0x1fu
+};
+
+static int build_dynamic_channel_geometry_packet(
+    rdp_buffer* out,
+    uint32_t message_id,
+    const rdp_video_redirection_geometry_info* info,
+    const rdp_video_redirection_rect* rects,
+    uint32_t rect_count)
 {
-    static const uint8_t presentation_id[16] = {
-        0x10u, 0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u,
-        0x18u, 0x19u, 0x1au, 0x1bu, 0x1cu, 0x1du, 0x1eu, 0x1fu
-    };
-    rdp_video_redirection_geometry_info info;
     rdp_buffer geometry;
+    rdp_buffer visible;
     rdp_buffer update;
     int ok = 0;
+    uint32_t i = 0;
 
-    memset(&info, 0, sizeof(info));
-    info.video_window_id = 1u;
-    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_NEW;
-    info.width = 320u;
-    info.height = 200u;
+    if (!out || !info || (!rects && rect_count > 0))
+        return 0;
     rdp_buffer_init(&geometry);
+    rdp_buffer_init(&visible);
     rdp_buffer_init(&update);
-    ok = rdp_video_redirection_write_geometry_info(&geometry, &info) == LIBRDP_STATUS_OK &&
+    for (i = 0; i < rect_count; i++)
+    {
+        if (rdp_video_redirection_write_rect(&visible,
+                                             rects[i].top,
+                                             rects[i].left,
+                                             rects[i].bottom,
+                                             rects[i].right) != LIBRDP_STATUS_OK)
+        {
+            rdp_buffer_free(&update);
+            rdp_buffer_free(&visible);
+            rdp_buffer_free(&geometry);
+            return 0;
+        }
+    }
+    ok = rdp_video_redirection_write_geometry_info(&geometry, info) == LIBRDP_STATUS_OK &&
          rdp_video_redirection_write_geometry_update(&update,
-                                                     1u,
-                                                     presentation_id,
+                                                     message_id,
+                                                     geometry_presentation_id,
                                                      geometry.data,
                                                      (uint32_t)geometry.length,
-                                                     NULL,
-                                                     0) == LIBRDP_STATUS_OK &&
+                                                     visible.data,
+                                                     (uint32_t)visible.length) == LIBRDP_STATUS_OK &&
          build_dynamic_channel_data_payload_packet(out, update.data, update.length);
     rdp_buffer_free(&update);
+    rdp_buffer_free(&visible);
     rdp_buffer_free(&geometry);
     return ok;
+}
+
+static int write_dynamic_channel_geometry_packet(
+    int fd,
+    uint32_t message_id,
+    const rdp_video_redirection_geometry_info* info,
+    const rdp_video_redirection_rect* rects,
+    uint32_t rect_count)
+{
+    rdp_buffer packet;
+    int ok = 0;
+
+    rdp_buffer_init(&packet);
+    ok = build_dynamic_channel_geometry_packet(&packet,
+                                               message_id,
+                                               info,
+                                               rects,
+                                               rect_count) &&
+         write_exact_fd(fd, packet.data, packet.length);
+    rdp_buffer_free(&packet);
+    return ok;
+}
+
+/*
+ * Drive geometry state through create, clipped visible-region update, delete,
+ * stale update, and identifier reuse while keeping the socket open until the
+ * client has inspected and disconnected the session.
+ */
+static int run_geometry_tracking_runtime_server_scenario(int fd)
+{
+    static const rdp_video_redirection_rect initial_rects[] = {
+        {90u, 90u, 210u, 310u},
+        {300u, 400u, 340u, 450u}
+    };
+    static const rdp_video_redirection_rect update_rects[] = {
+        {120u, 130u, 180u, 250u}
+    };
+    rdp_video_redirection_geometry_info info;
+
+    memset(&info, 0, sizeof(info));
+    info.video_window_id = 0x1020304050607080u;
+    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_NEW |
+                        RDP_VIDEO_REDIRECTION_WINDOW_VISRGN;
+    info.width = 200u;
+    info.height = 100u;
+    info.left = 100u;
+    info.top = 100u;
+    if (!write_dynamic_channel_geometry_packet(fd,
+                                               1u,
+                                               &info,
+                                               initial_rects,
+                                               2u))
+        return 0;
+
+    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_VISRGN;
+    if (!write_dynamic_channel_geometry_packet(fd,
+                                               2u,
+                                               &info,
+                                               update_rects,
+                                               1u))
+        return 0;
+
+    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_DELETED;
+    info.width = 0u;
+    info.height = 0u;
+    if (!write_dynamic_channel_geometry_packet(fd, 3u, &info, NULL, 0u))
+        return 0;
+
+    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_VISRGN;
+    info.width = 200u;
+    info.height = 100u;
+    if (!write_dynamic_channel_geometry_packet(fd,
+                                               4u,
+                                               &info,
+                                               update_rects,
+                                               1u))
+        return 0;
+
+    info.video_window_id = 0x8877665544332211u;
+    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_NEW;
+    info.left = 20u;
+    info.top = 30u;
+    info.width = 160u;
+    info.height = 90u;
+    return write_dynamic_channel_geometry_packet(fd, 5u, &info, NULL, 0u);
 }
 
 static int build_dynamic_channel_webauthn_request_packet(rdp_buffer* out, const char* rp_id)
@@ -4136,14 +4241,11 @@ int start_handshake_server_full(uint16_t* port,
 	                            _exit(5);
 	                        }
 	                    }
-	                    else if (dynamic_channel_scenario == DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME)
-	                    {
-	                        if (!build_dynamic_channel_geometry_packet(&dvc_data) ||
-	                            !write_exact_fd(client, dvc_data.data, dvc_data.length))
-	                        {
-	                            _exit(5);
-	                        }
-	                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME)
+                    {
+                        if (!run_geometry_tracking_runtime_server_scenario(client))
+                            _exit(5);
+                    }
 	                    else if (dynamic_channel_scenario == DVC_SCENARIO_DUPLICATE_CREATE)
 	                    {
                         if (!write_exact_fd(client, dvc_create.data, dvc_create.length))
@@ -4312,6 +4414,17 @@ int start_handshake_server_full(uint16_t* port,
                 }
             }
 done_connection:
+            if (dynamic_channel_scenario == DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME)
+            {
+                ssize_t got = 0;
+
+                do
+                {
+                    got = read(client, input, sizeof(input));
+                } while (got > 0 || (got < 0 && errno == EINTR));
+                if (got < 0)
+                    _exit(5);
+            }
             if (handshake_scenario ==
                 HANDSHAKE_SCENARIO_GRACEFUL_IDLE_EOF)
             {

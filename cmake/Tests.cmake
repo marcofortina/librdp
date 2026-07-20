@@ -388,6 +388,12 @@ if(LIBRDP_BUILD_TESTS)
         ENVIRONMENT "LIBRDP_TEST_TRACE_OUTPUT=1"
         TIMEOUT 60
     )
+    add_test(NAME smoke_video_geometry
+        COMMAND test_core video-geometry-smoke)
+    set_tests_properties(smoke_video_geometry PROPERTIES
+        ENVIRONMENT "LIBRDP_TEST_TRACE_OUTPUT=1"
+        TIMEOUT 60
+    )
     if(LIBRDP_CAIRO_FOUND)
         add_test(NAME smoke_gdiplus_cairo
             COMMAND test_core gdiplus-native-smoke)

@@ -2182,6 +2182,8 @@ static int test_video_redirection_channel(void)
         nested.data[28] = 0x00u;
     }
     PCHECK(rdp_video_redirection_write_rect(&payload, 1, 2, 3, 4) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_rect(&payload, 3, 2, 1, 4) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_video_redirection_parse_rect(payload.data, payload.length, &rect) ==
            LIBRDP_STATUS_OK);
     PCHECK(rect.top == 1 && rect.right == 4);
@@ -2218,6 +2220,13 @@ static int test_video_redirection_channel(void)
                                                        nested.data,
                                                        (uint32_t)nested.length,
                                                        NULL,
+                                                       1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_video_redirection_write_geometry_update(&payload,
+                                                       15,
+                                                       guid,
+                                                       nested.data,
+                                                       (uint32_t)nested.length,
+                                                       nested.data,
                                                        1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&payload);

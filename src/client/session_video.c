@@ -14,18 +14,319 @@
 
 #include <limits.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
+
+static void rdp_session_video_geometry_counter_add(uint32_t* counter, uint32_t value)
+{
+    if (!counter)
+        return;
+    if (value > UINT32_MAX - *counter)
+        *counter = UINT32_MAX;
+    else
+        *counter += value;
+}
+
+static void rdp_session_video_geometry_clear(rdp_session_video_geometry* geometry)
+{
+    if (!geometry)
+        return;
+    free(geometry->visible_rects);
+    memset(geometry, 0, sizeof(*geometry));
+}
+
+/*
+ * Geometry entries are keyed by presentation and video-window identifiers.
+ * Keeping both identifiers prevents one presentation from overwriting another
+ * when the server reuses a window number.
+ */
+static rdp_session_video_geometry* rdp_session_video_geometry_find(
+    librdp_session* session,
+    const uint8_t presentation_id[16],
+    uint64_t video_window_id)
+{
+    uint32_t i = 0;
+
+    if (!session || !presentation_id)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_VIDEO_GEOMETRIES; i++)
+    {
+        rdp_session_video_geometry* geometry = &session->video_geometries[i];
+
+        if (geometry->active &&
+            geometry->video_window_id == video_window_id &&
+            memcmp(geometry->presentation_id, presentation_id, 16u) == 0)
+            return geometry;
+    }
+    return NULL;
+}
+
+static rdp_session_video_geometry* rdp_session_video_geometry_unused(librdp_session* session)
+{
+    uint32_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_VIDEO_GEOMETRIES; i++)
+    {
+        if (!session->video_geometries[i].active)
+            return &session->video_geometries[i];
+    }
+    return NULL;
+}
+
+/*
+ * Visible rectangles arrive in desktop coordinates. This routine validates
+ * every rectangle and stores only its intersection with the associated video
+ * window, so decoder or compositor backends never receive out-of-window
+ * regions.
+ */
+static librdp_status rdp_session_video_geometry_clip_rects(
+    const rdp_video_redirection_geometry_update* update,
+    const rdp_video_redirection_geometry_info* info,
+    rdp_video_redirection_rect** visible_rects,
+    uint32_t* visible_rect_count,
+    uint32_t* clipped_count)
+{
+    rdp_video_redirection_rect* rects = NULL;
+    uint32_t input_count = 0;
+    uint32_t output_count = 0;
+    uint32_t clipped = 0;
+    uint32_t window_right = 0;
+    uint32_t window_bottom = 0;
+    uint32_t i = 0;
+
+    if (!update || !info || !visible_rects || !visible_rect_count || !clipped_count)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *visible_rects = NULL;
+    *visible_rect_count = 0;
+    *clipped_count = 0;
+    if (update->visible_rect_len == 0)
+        return LIBRDP_STATUS_OK;
+    if ((info->window_state & RDP_VIDEO_REDIRECTION_WINDOW_VISRGN) == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    input_count = update->visible_rect_len / 16u;
+    rects = (rdp_video_redirection_rect*)calloc(input_count, sizeof(*rects));
+    if (!rects)
+        return LIBRDP_STATUS_NO_MEMORY;
+    window_right = info->left + info->width;
+    window_bottom = info->top + info->height;
+    for (i = 0; i < input_count; i++)
+    {
+        rdp_video_redirection_rect rect;
+        rdp_video_redirection_rect clipped_rect;
+        librdp_status status =
+            rdp_video_redirection_parse_rect(update->visible_rect + ((size_t)i * 16u),
+                                             16u,
+                                             &rect);
+
+        if (status != LIBRDP_STATUS_OK)
+        {
+            free(rects);
+            return status;
+        }
+        clipped_rect.top = rect.top > info->top ? rect.top : info->top;
+        clipped_rect.left = rect.left > info->left ? rect.left : info->left;
+        clipped_rect.bottom = rect.bottom < window_bottom ? rect.bottom : window_bottom;
+        clipped_rect.right = rect.right < window_right ? rect.right : window_right;
+        if (clipped_rect.top >= clipped_rect.bottom ||
+            clipped_rect.left >= clipped_rect.right)
+        {
+            clipped++;
+            continue;
+        }
+        if (rect.top != clipped_rect.top ||
+            rect.left != clipped_rect.left ||
+            rect.bottom != clipped_rect.bottom ||
+            rect.right != clipped_rect.right)
+            clipped++;
+        rects[output_count++] = clipped_rect;
+    }
+    if (output_count == 0)
+    {
+        free(rects);
+        rects = NULL;
+    }
+    *visible_rects = rects;
+    *visible_rect_count = output_count;
+    *clipped_count = clipped;
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_session_video_geometry_update_streams(
+    librdp_session* session,
+    const uint8_t presentation_id[16],
+    const rdp_video_redirection_geometry_info* info,
+    uint8_t removed)
+{
+    uint32_t i = 0;
+
+    if (!session || !presentation_id || !info)
+        return;
+    for (i = 0; i < RDP_SESSION_VIDEO_STREAMS; i++)
+    {
+        rdp_session_video_stream* stream = &session->video_streams[i];
+
+        if (!stream->active ||
+            memcmp(stream->presentation_id, presentation_id, 16u) != 0)
+            continue;
+        if (removed && stream->video_window_id == info->video_window_id)
+        {
+            stream->video_window_id = 0;
+            stream->width = 0;
+            stream->height = 0;
+        }
+        else if (!removed)
+        {
+            stream->video_window_id = info->video_window_id;
+            stream->width = info->width;
+            stream->height = info->height;
+        }
+    }
+}
+
+/*
+ * Apply one geometry update atomically. Malformed rectangles cannot partially
+ * replace an existing region, while late updates for a removed region are
+ * counted and ignored without recreating stale state.
+ */
+static librdp_status rdp_session_video_geometry_apply(
+    librdp_session* session,
+    const rdp_video_redirection_geometry_update* update,
+    const rdp_video_redirection_geometry_info* info,
+    const char** action)
+{
+    rdp_session_video_geometry* geometry = NULL;
+    rdp_video_redirection_rect* visible_rects = NULL;
+    uint32_t visible_rect_count = 0;
+    uint32_t clipped_count = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t created = 0;
+
+    if (!session || !update || !info || !action)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *action = "update";
+    if ((info->window_state & RDP_VIDEO_REDIRECTION_WINDOW_DELETED) != 0)
+    {
+        if (update->visible_rect_len != 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        geometry = rdp_session_video_geometry_find(session,
+                                                   update->presentation_id,
+                                                   info->video_window_id);
+        if (!geometry)
+        {
+            rdp_session_video_geometry_counter_add(&session->video_geometry_stale_count, 1u);
+            rdp_session_video_geometry_counter_add(&session->video_geometry_update_count, 1u);
+            *action = "stale";
+            return LIBRDP_STATUS_OK;
+        }
+        rdp_session_video_geometry_update_streams(session,
+                                                  update->presentation_id,
+                                                  info,
+                                                  1u);
+        rdp_session_video_geometry_clear(geometry);
+        if (session->video_geometry_active_count > 0)
+            session->video_geometry_active_count--;
+        rdp_session_video_geometry_counter_add(&session->video_geometry_update_count, 1u);
+        *action = "delete";
+        return LIBRDP_STATUS_OK;
+    }
+
+    status = rdp_session_video_geometry_clip_rects(update,
+                                                   info,
+                                                   &visible_rects,
+                                                   &visible_rect_count,
+                                                   &clipped_count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    geometry = rdp_session_video_geometry_find(session,
+                                               update->presentation_id,
+                                               info->video_window_id);
+    if (!geometry && (info->window_state & RDP_VIDEO_REDIRECTION_WINDOW_NEW) == 0)
+    {
+        free(visible_rects);
+        rdp_session_video_geometry_counter_add(&session->video_geometry_stale_count, 1u);
+        rdp_session_video_geometry_counter_add(&session->video_geometry_update_count, 1u);
+        rdp_session_video_geometry_counter_add(&session->video_geometry_clipped_count,
+                                               clipped_count);
+        *action = "stale";
+        return LIBRDP_STATUS_OK;
+    }
+    if (!geometry)
+    {
+        geometry = rdp_session_video_geometry_unused(session);
+        if (!geometry)
+        {
+            free(visible_rects);
+            return rdp_session_limit_rejected(session);
+        }
+        created = 1u;
+    }
+    free(geometry->visible_rects);
+    memset(geometry, 0, sizeof(*geometry));
+    geometry->active = 1u;
+    memcpy(geometry->presentation_id, update->presentation_id, 16u);
+    geometry->video_window_id = info->video_window_id;
+    geometry->last_message_id = update->header.message_id;
+    geometry->info = *info;
+    geometry->visible_rect_count = visible_rect_count;
+    geometry->visible_rects = visible_rects;
+    if (created)
+        rdp_session_video_geometry_counter_add(&session->video_geometry_active_count, 1u);
+    rdp_session_video_geometry_counter_add(&session->video_geometry_update_count, 1u);
+    rdp_session_video_geometry_counter_add(&session->video_geometry_clipped_count,
+                                           clipped_count);
+    rdp_session_video_geometry_update_streams(session,
+                                              update->presentation_id,
+                                              info,
+                                              0u);
+    *action = created ? "new" : "update";
+    return LIBRDP_STATUS_OK;
+}
+
+static uint32_t rdp_session_video_geometry_remove_presentation(
+    librdp_session* session,
+    const uint8_t presentation_id[16])
+{
+    uint32_t removed = 0;
+    uint32_t i = 0;
+
+    if (!session || !presentation_id)
+        return 0;
+    for (i = 0; i < RDP_SESSION_VIDEO_GEOMETRIES; i++)
+    {
+        rdp_session_video_geometry* geometry = &session->video_geometries[i];
+
+        if (!geometry->active ||
+            memcmp(geometry->presentation_id, presentation_id, 16u) != 0)
+            continue;
+        rdp_session_video_geometry_clear(geometry);
+        removed++;
+    }
+    if (removed >= session->video_geometry_active_count)
+        session->video_geometry_active_count = 0;
+    else
+        session->video_geometry_active_count -= removed;
+    return removed;
+}
 
 void rdp_session_video_redirection_reset(librdp_session* session)
 {
+    uint32_t i = 0;
+
     if (!session)
         return;
+    for (i = 0; i < RDP_SESSION_VIDEO_GEOMETRIES; i++)
+        rdp_session_video_geometry_clear(&session->video_geometries[i]);
     session->video_redirection_channel_id = 0;
     session->video_redirection_channel_id_bytes = 0;
     session->video_redirection_ready = 0;
     session->video_redirection_capabilities_sent = 0;
     session->video_redirection_rim_sent = 0;
     session->video_geometry_update_count = 0;
+    session->video_geometry_active_count = 0;
+    session->video_geometry_stale_count = 0;
+    session->video_geometry_clipped_count = 0;
     memset(session->video_streams, 0, sizeof(session->video_streams));
 }
 
@@ -728,14 +1029,16 @@ librdp_status rdp_session_handle_video_redirection_message(librdp_session* sessi
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_DEBUG,
                           "client.tsmf.pdu",
-                          "dvc_channel_id=%u interface_id=%u stream_mask=%u message_id=%u function_id=%u payload_len=%u enabled=%u",
+                          "dvc_channel_id=%u interface_id=%u stream_mask=%u message_id=%u function_id=%u payload_len=%u video_enabled=%u geometry_enabled=%u",
                           channel_id,
                           header.interface_id,
                           header.stream_id_mask,
                           header.message_id,
                           header.has_function_id ? header.function_id : 0u,
                           (unsigned)header.payload_len,
-                          rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_VIDEO));
+                          rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_VIDEO),
+                          rdp_session_feature_ready_for_negotiation(session,
+                                                                    LIBRDP_FEATURE_GEOMETRY_TRACKING));
     if (header.has_function_id &&
         header.interface_id == RDP_VIDEO_REDIRECTION_INTERFACE_RIM_CAPABILITIES &&
         header.function_id == RDP_VIDEO_REDIRECTION_FUNC_RIM_EXCHANGE_CAPABILITY_REQUEST)
@@ -848,6 +1151,7 @@ librdp_status rdp_session_handle_video_redirection_message(librdp_session* sessi
         {
             rdp_video_redirection_presentation presentation;
             uint32_t removed = 0;
+            uint32_t geometries_removed = 0;
 
             status = rdp_video_redirection_parse_presentation_only(data,
                                                                    data_len,
@@ -856,12 +1160,16 @@ librdp_status rdp_session_handle_video_redirection_message(librdp_session* sessi
             if (status != LIBRDP_STATUS_OK)
                 return status;
             removed = rdp_session_video_presentation_remove(session, presentation.presentation_id);
+            geometries_removed =
+                rdp_session_video_geometry_remove_presentation(session,
+                                                               presentation.presentation_id);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.tsmf.presentation.shutdown",
-                            "dvc_channel_id=%u message_id=%u streams_removed=%u",
+                            "dvc_channel_id=%u message_id=%u streams_removed=%u geometries_removed=%u",
                             channel_id,
                             presentation.header.message_id,
-                            removed);
+                            removed,
+                            geometries_removed);
             break;
         }
         case RDP_VIDEO_REDIRECTION_FUNC_ADD_STREAM:
@@ -1127,28 +1435,44 @@ librdp_status rdp_session_handle_video_redirection_message(librdp_session* sessi
         {
             rdp_video_redirection_geometry_update update;
             rdp_video_redirection_geometry_info info;
+            rdp_session_video_geometry* stored = NULL;
+            const char* action = NULL;
 
             status = rdp_video_redirection_parse_geometry_update(data, data_len, &update);
             if (status != LIBRDP_STATUS_OK)
                 return status;
             memset(&info, 0, sizeof(info));
-            if (update.geometry_len > 0)
-            {
-                status = rdp_video_redirection_parse_geometry_info(update.geometry, update.geometry_len, &info);
-                if (status != LIBRDP_STATUS_OK)
-                    return status;
-            }
+            if (update.geometry_len == 0)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            status = rdp_video_redirection_parse_geometry_info(update.geometry,
+                                                               update.geometry_len,
+                                                               &info);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            status = rdp_session_video_geometry_apply(session, &update, &info, &action);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            stored = rdp_session_video_geometry_find(session,
+                                                     update.presentation_id,
+                                                     info.video_window_id);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.tsmf.geometry",
-                            "dvc_channel_id=%u message_id=%u geometry_len=%u visible_len=%u window_state=%u width=%u height=%u",
+                            "dvc_channel_id=%u message_id=%u action=%s window_id=%llu geometry_len=%u visible_len=%u visible_rects=%u window_state=%u left=%u top=%u width=%u height=%u active=%u clipped=%u stale=%u",
                             channel_id,
                             update.header.message_id,
+                            action,
+                            (unsigned long long)info.video_window_id,
                             update.geometry_len,
                             update.visible_rect_len,
+                            stored ? stored->visible_rect_count : 0u,
                             info.window_state,
+                            info.left,
+                            info.top,
                             info.width,
-                            info.height);
-            session->video_geometry_update_count++;
+                            info.height,
+                            session->video_geometry_active_count,
+                            session->video_geometry_clipped_count,
+                            session->video_geometry_stale_count);
             break;
         }
         case RDP_VIDEO_REDIRECTION_FUNC_ON_PLAYBACK_RATE_CHANGED:
