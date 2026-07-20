@@ -400,6 +400,12 @@ if(LIBRDP_BUILD_TESTS)
         ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=debug;LIBRDP_TRACE_HEX_BYTES=0"
         TIMEOUT 60
     )
+    add_test(NAME smoke_display_control_layout
+        COMMAND test_core display-layout-smoke)
+    set_tests_properties(smoke_display_control_layout PROPERTIES
+        ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=debug;LIBRDP_TRACE_HEX_BYTES=0"
+        TIMEOUT 60
+    )
     if(LIBRDP_CAIRO_FOUND)
         add_test(NAME smoke_gdiplus_cairo
             COMMAND test_core gdiplus-native-smoke)

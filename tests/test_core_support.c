@@ -53,6 +53,48 @@ const core_test_display_resize_stage
         {1001u, 701u, 1000u, 701u, 0x00f0d0b0u}
     };
 
+const librdp_display_monitor core_test_display_layout_multi[2] = {
+    {
+        .flags = LIBRDP_DISPLAY_MONITOR_PRIMARY,
+        .left = 0,
+        .top = 0,
+        .width = 800u,
+        .height = 600u,
+        .physical_width = 300u,
+        .physical_height = 200u,
+        .orientation = 90u,
+        .desktop_scale_factor = 150u,
+        .device_scale_factor = 140u
+    },
+    {
+        .flags = 0u,
+        .left = -640,
+        .top = 120,
+        .width = 640u,
+        .height = 480u,
+        .physical_width = 250u,
+        .physical_height = 150u,
+        .orientation = 270u,
+        .desktop_scale_factor = 175u,
+        .device_scale_factor = 180u
+    }
+};
+
+const librdp_display_monitor core_test_display_layout_single[1] = {
+    {
+        .flags = LIBRDP_DISPLAY_MONITOR_PRIMARY,
+        .left = 0,
+        .top = 0,
+        .width = 1024u,
+        .height = 768u,
+        .physical_width = 340u,
+        .physical_height = 190u,
+        .orientation = 180u,
+        .desktop_scale_factor = 200u,
+        .device_scale_factor = 180u
+    }
+};
+
 const uint8_t core_test_server_certificate[] = {
     0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
     0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
@@ -3296,7 +3338,8 @@ static int read_client_display_control_layout_fd(int fd,
                                                  uint32_t expected_dynamic_channel_id,
                                                  uint32_t expected_monitor_count,
                                                  uint32_t expected_width,
-                                                 uint32_t expected_height)
+                                                 uint32_t expected_height,
+                                                 const librdp_display_monitor* expected_monitors)
 {
     for (size_t attempt = 0; attempt < 8u; attempt++)
     {
@@ -3329,9 +3372,33 @@ static int read_client_display_control_layout_fd(int fd,
             return 0;
         if (!test_display_control_layout_bounds(monitors, monitor_count, &width, &height))
             return 0;
-        return monitor_count == expected_monitor_count &&
-               width == expected_width &&
-               height == expected_height;
+        if (monitor_count != expected_monitor_count ||
+            width != expected_width ||
+            height != expected_height)
+            return 0;
+        if (expected_monitors)
+        {
+            uint32_t monitor_index = 0u;
+
+            for (monitor_index = 0u; monitor_index < monitor_count; monitor_index++)
+            {
+                const rdp_display_control_monitor* actual = &monitors[monitor_index];
+                const librdp_display_monitor* expected = &expected_monitors[monitor_index];
+
+                if (actual->flags != expected->flags ||
+                    actual->left != expected->left ||
+                    actual->top != expected->top ||
+                    actual->width != expected->width ||
+                    actual->height != expected->height ||
+                    actual->physical_width != expected->physical_width ||
+                    actual->physical_height != expected->physical_height ||
+                    actual->orientation != expected->orientation ||
+                    actual->desktop_scale_factor != expected->desktop_scale_factor ||
+                    actual->device_scale_factor != expected->device_scale_factor)
+                    return 0;
+            }
+        }
+        return 1;
     }
     return 0;
 }
@@ -3353,6 +3420,19 @@ static int read_client_reactivation_sequence_fd(int fd,
             return 0;
     }
     return 1;
+}
+
+static int wait_for_client_eof_fd(int fd, uint8_t* input, size_t capacity)
+{
+    ssize_t received = 0;
+
+    if (fd < 0 || !input || capacity == 0u)
+        return 0;
+    do
+    {
+        received = read(fd, input, capacity);
+    } while (received > 0 || (received < 0 && errno == EINTR));
+    return received == 0;
 }
 
 /*
@@ -3398,7 +3478,8 @@ static int run_display_control_resize_server_scenario(int fd,
                                                    7u,
                                                    1u,
                                                    stage->width,
-                                                   stage->height) &&
+                                                   stage->height,
+                                                   NULL) &&
              build_display_resize_deactivate_packet(&deactivate) &&
              build_display_resize_demand_packet(&demand, stage->width, stage->height) &&
              write_exact_fd(fd, deactivate.data, deactivate.length) &&
@@ -3408,19 +3489,52 @@ static int run_display_control_resize_server_scenario(int fd,
              write_exact_fd(fd, frame.data, frame.length);
     }
     if (ok)
-    {
-        ssize_t received = 0;
-
-        do
-        {
-            received = read(fd, input, capacity);
-        } while (received > 0 || (received < 0 && errno == EINTR));
-        ok = received == 0;
-    }
+        ok = wait_for_client_eof_fd(fd, input, capacity);
 
     rdp_buffer_free(&frame);
     rdp_buffer_free(&demand);
     rdp_buffer_free(&deactivate);
+    rdp_buffer_free(&caps);
+    return ok;
+}
+
+/*
+ * Validate all monitor fields rather than only the aggregate desktop bounds.
+ * The fixture keeps the connection open until the client has sent both the
+ * multi-monitor and single-monitor layouts.
+ */
+static int run_display_control_layout_fields_server_scenario(int fd,
+                                                             uint8_t* input,
+                                                             size_t capacity)
+{
+    rdp_buffer caps;
+    int ok = 0;
+
+    if (fd < 0 || !input || capacity == 0u)
+        return 0;
+    rdp_buffer_init(&caps);
+    ok = read_client_dynamic_create_response_fd(fd, input, capacity, 1004u, 7u) &&
+         build_dynamic_channel_display_control_caps_packet_ex(&caps, 2u, 8192u, 8192u) &&
+         write_exact_fd(fd, caps.data, caps.length) &&
+         read_client_display_control_layout_fd(fd,
+                                               input,
+                                               capacity,
+                                               1004u,
+                                               7u,
+                                               2u,
+                                               1440u,
+                                               600u,
+                                               core_test_display_layout_multi) &&
+         read_client_display_control_layout_fd(fd,
+                                               input,
+                                               capacity,
+                                               1004u,
+                                               7u,
+                                               1u,
+                                               1024u,
+                                               768u,
+                                               core_test_display_layout_single) &&
+         wait_for_client_eof_fd(fd, input, capacity);
     rdp_buffer_free(&caps);
     return ok;
 }
@@ -4311,6 +4425,12 @@ int start_handshake_server_full(uint16_t* port,
                             _exit(5);
                         goto done_connection;
                     }
+                    if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_UNAVAILABLE)
+                    {
+                        if (!wait_for_client_eof_fd(client, input, sizeof(input)))
+                            _exit(5);
+                        goto done_connection;
+                    }
                     if (dynamic_channel_scenario == DVC_SCENARIO_DATA_BEFORE_CREATE)
                     {
                         if (!build_dynamic_channel_data_packet(&dvc_data) ||
@@ -4412,16 +4532,21 @@ int start_handshake_server_full(uint16_t* port,
                             _exit(5);
                         }
                     }
-	                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_CAPS_REJECT_LAYOUT ||
-	                             dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT ||
-	                             dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_RESIZE_STRESS)
-	                    {
-	                        if (!build_dynamic_channel_create_display_control_packet(&dvc_create) ||
-	                            !write_exact_fd(client, dvc_create.data, dvc_create.length))
-	                        {
-	                            _exit(5);
-	                        }
-	                    }
+                    else if (dynamic_channel_scenario ==
+                                 DVC_SCENARIO_DISPLAY_CONTROL_CAPS_REJECT_LAYOUT ||
+                             dynamic_channel_scenario ==
+                                 DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT ||
+                             dynamic_channel_scenario ==
+                                 DVC_SCENARIO_DISPLAY_CONTROL_RESIZE_STRESS ||
+                             dynamic_channel_scenario ==
+                                 DVC_SCENARIO_DISPLAY_CONTROL_LAYOUT_FIELDS)
+                    {
+                        if (!build_dynamic_channel_create_display_control_packet(&dvc_create) ||
+                            !write_exact_fd(client, dvc_create.data, dvc_create.length))
+                        {
+                            _exit(5);
+                        }
+                    }
 	                    else if (dynamic_channel_scenario == DVC_SCENARIO_TELEMETRY_RUNTIME)
 	                    {
 	                        if (!build_dynamic_channel_create_telemetry_packet(&dvc_create) ||
@@ -4547,8 +4672,10 @@ int start_handshake_server_full(uint16_t* port,
                         if (!read_client_dynamic_create_response_fd(client, input, sizeof(input), 1004, 7) ||
                             !build_dynamic_channel_display_control_caps_packet_ex(&dvc_data, 2u, 8192u, 8192u) ||
                             !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
-                            !read_client_display_control_layout_fd(client, input, sizeof(input), 1004, 7, 2u, 1440u, 600u) ||
-                            !read_client_display_control_layout_fd(client, input, sizeof(input), 1004, 7, 1u, 1024u, 768u))
+                            !read_client_display_control_layout_fd(
+                                client, input, sizeof(input), 1004, 7, 2u, 1440u, 600u, NULL) ||
+                            !read_client_display_control_layout_fd(
+                                client, input, sizeof(input), 1004, 7, 1u, 1024u, 768u, NULL))
                         {
                             _exit(5);
                         }
@@ -4558,6 +4685,15 @@ int start_handshake_server_full(uint16_t* port,
                         if (!run_display_control_resize_server_scenario(client,
                                                                         input,
                                                                         sizeof(input)))
+                        {
+                            _exit(5);
+                        }
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_LAYOUT_FIELDS)
+                    {
+                        if (!run_display_control_layout_fields_server_scenario(client,
+                                                                               input,
+                                                                               sizeof(input)))
                         {
                             _exit(5);
                         }

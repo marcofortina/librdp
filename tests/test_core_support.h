@@ -100,6 +100,8 @@
 #define DVC_SCENARIO_COMPOSITED_RUNTIME 25
 #define DVC_SCENARIO_RAIL_RUNTIME 26
 #define DVC_SCENARIO_DISPLAY_CONTROL_RESIZE_STRESS 27
+#define DVC_SCENARIO_DISPLAY_CONTROL_LAYOUT_FIELDS 28
+#define DVC_SCENARIO_DISPLAY_CONTROL_UNAVAILABLE 29
 
 #define CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT 5u
 
@@ -242,6 +244,8 @@ extern const uint8_t core_test_server_random[32];
 extern const librdp_feature core_test_all_features[19];
 extern const core_test_display_resize_stage
     core_test_display_resize_stages[CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT];
+extern const librdp_display_monitor core_test_display_layout_multi[2];
+extern const librdp_display_monitor core_test_display_layout_single[1];
 extern const uint8_t core_test_server_certificate[];
 extern const size_t core_test_server_certificate_len;
 
@@ -433,6 +437,8 @@ int test_display_control_dvc_rejects_unrequested_feature(void);
 int test_display_control_accept_pending_and_resize(void);
 
 int test_display_control_resize_frame_stability(void);
+
+int test_display_control_monitor_fields_and_unavailable(void);
 
 int test_dynamic_channel_data_before_create(void);
 

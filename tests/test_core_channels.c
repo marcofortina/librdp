@@ -1246,6 +1246,144 @@ int test_display_control_resize_frame_stability(void)
 }
 
 /*
+ * Coverage: verifies every public monitor field reaches the Display Control
+ * wire format unchanged for both multi-monitor and single-monitor layouts.
+ */
+static int test_display_control_monitor_fields(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    librdp_metrics before_layout;
+    librdp_metrics after_layout;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t attempt = 0u;
+    int first_layout_sent = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_DISPLAY_CONTROL_LAYOUT_FIELDS,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_metrics_init(&before_layout) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &before_layout) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_set_display_layout(session,
+                                            core_test_display_layout_multi,
+                                            2u) == LIBRDP_STATUS_OK);
+
+    for (attempt = 0u; attempt < 8u && !first_layout_sent; attempt++)
+    {
+        librdp_status status = librdp_session_run_once(session, 1000);
+
+        CHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT);
+        CHECK(librdp_metrics_init(&after_layout) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_get_metrics(session, &after_layout) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_get_feature_status(session,
+                                                LIBRDP_FEATURE_DISPLAY_CONTROL,
+                                                &feature_status) == LIBRDP_STATUS_OK);
+        first_layout_sent =
+            feature_status.active &&
+            after_layout.channel_out >= before_layout.channel_out + 2u;
+    }
+    CHECK(first_layout_sent);
+    before_layout = after_layout;
+    CHECK(librdp_session_set_display_layout(session,
+                                            core_test_display_layout_single,
+                                            1u) == LIBRDP_STATUS_OK);
+    CHECK(librdp_metrics_init(&after_layout) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &after_layout) == LIBRDP_STATUS_OK);
+    CHECK(after_layout.channel_out == before_layout.channel_out + 1u);
+    CHECK(feature_status.requested && feature_status.negotiated && feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: keeps an otherwise active server connection open without creating
+ * Display Control. The public feature query must distinguish a pending request
+ * from a negotiated runtime instead of reporting a false active capability.
+ */
+static int test_display_control_unavailable(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t attempt = 0u;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_DISPLAY_CONTROL_UNAVAILABLE,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_set_display_layout(session,
+                                            core_test_display_layout_multi,
+                                            2u) == LIBRDP_STATUS_OK);
+    for (attempt = 0u; attempt < 5u; attempt++)
+    {
+        librdp_status status = librdp_session_run_once(session, 100);
+
+        CHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT);
+    }
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_DISPLAY_CONTROL,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+int test_display_control_monitor_fields_and_unavailable(void)
+{
+    if (test_display_control_monitor_fields() != 0)
+        return 1;
+    return test_display_control_unavailable();
+}
+
+/*
  * Coverage: validates that dynamic channel data cannot arrive before the
  * channel create handshake. It catches out-of-order DVC sequencing that would
  * otherwise hide malformed server traffic and lose channel metrics.
