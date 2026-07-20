@@ -103,8 +103,10 @@
 #define DVC_SCENARIO_DISPLAY_CONTROL_LAYOUT_FIELDS 28
 #define DVC_SCENARIO_DISPLAY_CONTROL_UNAVAILABLE 29
 #define DVC_SCENARIO_CLIENT_OPEN_PRIORITIES 30
+#define DVC_SCENARIO_FRAGMENT_BOUNDARIES 31
 
 #define CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT 5u
+#define CORE_TEST_DVC_BOUNDARY_COUNT 8u
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_ALTSEC_RUNTIME 1
@@ -249,6 +251,9 @@ extern const librdp_display_monitor core_test_display_layout_multi[2];
 extern const librdp_display_monitor core_test_display_layout_single[1];
 extern const uint8_t core_test_server_certificate[];
 extern const size_t core_test_server_certificate_len;
+extern const size_t core_test_dvc_boundary_sizes[CORE_TEST_DVC_BOUNDARY_COUNT];
+
+uint8_t core_test_dvc_boundary_byte(size_t message_index, size_t offset);
 
 void on_event(librdp_session* session, const librdp_event* event, void* user_data);
 

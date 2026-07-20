@@ -22,6 +22,22 @@ const uint8_t core_test_server_random[32] = {
     0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f
 };
 
+const size_t core_test_dvc_boundary_sizes[CORE_TEST_DVC_BOUNDARY_COUNT] = {
+    0u,
+    1u,
+    RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE - 2u,
+    RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE - 1u,
+    (RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE - 4u) + (RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE - 2u),
+    (RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE - 4u) + (RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE - 2u) + 1u,
+    UINT16_MAX,
+    (size_t)UINT16_MAX + 1u
+};
+
+uint8_t core_test_dvc_boundary_byte(size_t message_index, size_t offset)
+{
+    return (uint8_t)((offset + (message_index * 37u)) & 0xffu);
+}
+
 const librdp_feature core_test_all_features[] = {
     LIBRDP_FEATURE_AUDIO_OUTPUT,
     LIBRDP_FEATURE_AUDIO_INPUT,
@@ -2434,6 +2450,21 @@ static int build_dynamic_channel_create_response_packet(rdp_buffer* out, uint32_
     return ok;
 }
 
+static int build_dynamic_channel_priority_capabilities_packet(rdp_buffer* out)
+{
+    static const uint16_t priority_charges[4] = {936u, 3276u, 9362u, 21845u};
+    rdp_buffer payload;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = rdp_dynamic_channel_write_capabilities_request(&payload,
+                                                        3u,
+                                                        priority_charges) == LIBRDP_STATUS_OK &&
+         build_static_channel_packet(out, &payload, 1004u);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
 static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
 {
     uint16_t total = 0;
@@ -3101,6 +3132,299 @@ static int read_client_dynamic_create_response_fd(int fd,
                                                         expected_dynamic_channel_id,
                                                         &status_code) &&
            status_code == RDP_DYNAMIC_CHANNEL_STATUS_OK;
+}
+
+static int read_client_dynamic_capabilities_response_fd(int fd,
+                                                        uint8_t* input,
+                                                        size_t capacity)
+{
+    for (size_t attempt = 0; attempt < 8u; attempt++)
+    {
+        size_t input_len = 0;
+        rdp_virtual_channel_packet packet;
+        rdp_dynamic_channel_capabilities capabilities;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (!parse_client_dynamic_channel_payload(input, input_len, 1004u, &packet))
+            continue;
+        if (rdp_dynamic_channel_parse_capabilities(packet.payload,
+                                                   packet.payload_len,
+                                                   &capabilities) != LIBRDP_STATUS_OK)
+        {
+            return 0;
+        }
+        return capabilities.version == 3u && !capabilities.has_priority_charges;
+    }
+    return 0;
+}
+
+static int test_dvc_boundary_payload_matches(const uint8_t* data,
+                                             size_t data_len,
+                                             size_t message_index,
+                                             size_t offset)
+{
+    if (!data && data_len > 0)
+        return 0;
+    for (size_t i = 0; i < data_len; i++)
+    {
+        if (data[i] != core_test_dvc_boundary_byte(message_index, offset + i))
+            return 0;
+    }
+    return 1;
+}
+
+/*
+ * Wrap one DVC PDU in the DRDYNVC static-channel framing used by the
+ * deterministic peer. Each call emits one independently parseable wire PDU.
+ */
+static int write_server_dynamic_packet_fd(int fd, const rdp_buffer* payload)
+{
+    rdp_buffer packet;
+    int ok = 0;
+
+    if (!payload)
+        return 0;
+    rdp_buffer_init(&packet);
+    ok = build_static_channel_packet(&packet, payload, 1004u) &&
+         write_exact_fd(fd, packet.data, packet.length);
+    rdp_buffer_free(&packet);
+    return ok;
+}
+
+/*
+ * Emit one deterministic DVC message using the same protocol size limits as
+ * the client, including the 8-, 16-, and 32-bit total-length transitions.
+ */
+static int write_server_dynamic_boundary_message_fd(int fd,
+                                                    size_t message_index,
+                                                    size_t total_len,
+                                                    uint8_t priority)
+{
+    uint8_t chunk[RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE];
+    const size_t data_header = rdp_dynamic_channel_data_pdu_header_size(1u);
+    const size_t data_capacity = RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE - data_header;
+    rdp_buffer payload;
+    size_t offset = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (total_len > UINT32_MAX || data_header == 0)
+        return 0;
+    rdp_buffer_init(&payload);
+    if (total_len <= data_capacity)
+    {
+        for (size_t i = 0; i < total_len; i++)
+            chunk[i] = core_test_dvc_boundary_byte(message_index, i);
+        status = rdp_dynamic_channel_write_data_ex(&payload,
+                                                   7u,
+                                                   1u,
+                                                   priority,
+                                                   chunk,
+                                                   total_len);
+        if (status == LIBRDP_STATUS_OK && !write_server_dynamic_packet_fd(fd, &payload))
+            status = LIBRDP_STATUS_IO_ERROR;
+    }
+    else
+    {
+        size_t first_header =
+            rdp_dynamic_channel_data_first_pdu_header_size(1u, (uint32_t)total_len);
+        size_t first_capacity = 0;
+        size_t first_len = 0;
+
+        if (first_header == 0 || first_header >= RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE)
+        {
+            rdp_buffer_free(&payload);
+            return 0;
+        }
+        first_capacity = RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE - first_header;
+        first_len = total_len < first_capacity ? total_len : first_capacity;
+        for (size_t i = 0; i < first_len; i++)
+            chunk[i] = core_test_dvc_boundary_byte(message_index, i);
+        status = rdp_dynamic_channel_write_data_first_ex(&payload,
+                                                         7u,
+                                                         1u,
+                                                         priority,
+                                                         (uint32_t)total_len,
+                                                         chunk,
+                                                         first_len);
+        if (status == LIBRDP_STATUS_OK && !write_server_dynamic_packet_fd(fd, &payload))
+            status = LIBRDP_STATUS_IO_ERROR;
+        offset = first_len;
+        while (status == LIBRDP_STATUS_OK && offset < total_len)
+        {
+            size_t remaining = total_len - offset;
+            size_t current_len = remaining < data_capacity ? remaining : data_capacity;
+
+            for (size_t i = 0; i < current_len; i++)
+                chunk[i] = core_test_dvc_boundary_byte(message_index, offset + i);
+            payload.length = 0;
+            status = rdp_dynamic_channel_write_data_ex(&payload,
+                                                       7u,
+                                                       1u,
+                                                       priority,
+                                                       chunk,
+                                                       current_len);
+            if (status == LIBRDP_STATUS_OK && !write_server_dynamic_packet_fd(fd, &payload))
+                status = LIBRDP_STATUS_IO_ERROR;
+            offset += current_len;
+        }
+    }
+    rdp_buffer_free(&payload);
+    return status == LIBRDP_STATUS_OK;
+}
+
+static int read_client_dynamic_packet_fd(int fd,
+                                         uint8_t* input,
+                                         size_t capacity,
+                                         rdp_virtual_channel_packet* packet)
+{
+    for (size_t attempt = 0; attempt < 8u; attempt++)
+    {
+        size_t input_len = 0;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (parse_client_dynamic_channel_payload(input, input_len, 1004u, packet))
+            return 1;
+    }
+    return 0;
+}
+
+/*
+ * Reassemble one client message at exact protocol boundaries and validate
+ * every byte, command transition, channel identifier and continuation class.
+ */
+static int read_client_dynamic_boundary_message_fd(int fd,
+                                                   uint8_t* input,
+                                                   size_t capacity,
+                                                   size_t message_index,
+                                                   size_t total_len,
+                                                   uint8_t priority)
+{
+    const size_t data_capacity =
+        RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE - rdp_dynamic_channel_data_pdu_header_size(1u);
+    rdp_virtual_channel_packet packet;
+    rdp_dynamic_channel_header header;
+    size_t received = 0;
+
+    if (!read_client_dynamic_packet_fd(fd, input, capacity, &packet) ||
+        rdp_dynamic_channel_parse_header(packet.payload,
+                                         packet.payload_len,
+                                         &header) != LIBRDP_STATUS_OK)
+    {
+        return 0;
+    }
+    if (total_len <= data_capacity)
+    {
+        rdp_dynamic_channel_data_pdu data_pdu;
+
+        return header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA &&
+               header.priority == priority &&
+               rdp_dynamic_channel_parse_data(packet.payload,
+                                              packet.payload_len,
+                                              &data_pdu) == LIBRDP_STATUS_OK &&
+               data_pdu.channel_id == 7u &&
+               data_pdu.data_len == total_len &&
+               test_dvc_boundary_payload_matches(data_pdu.data,
+                                                 data_pdu.data_len,
+                                                 message_index,
+                                                 0u);
+    }
+    else
+    {
+        rdp_dynamic_channel_data_first_pdu first;
+        const uint8_t expected_length_bytes =
+            total_len <= UINT8_MAX ? 1u : (total_len <= UINT16_MAX ? 2u : 4u);
+
+        if (header.command != RDP_DYNAMIC_CHANNEL_CMD_DATA_FIRST ||
+            header.length_bytes != expected_length_bytes ||
+            rdp_dynamic_channel_parse_data_first(packet.payload,
+                                                 packet.payload_len,
+                                                 &first) != LIBRDP_STATUS_OK ||
+            first.channel_id != 7u ||
+            first.total_length != total_len ||
+            first.data_len == 0 ||
+            !test_dvc_boundary_payload_matches(first.data,
+                                               first.data_len,
+                                               message_index,
+                                               0u))
+        {
+            return 0;
+        }
+        received = first.data_len;
+    }
+    while (received < total_len)
+    {
+        rdp_dynamic_channel_data_pdu data_pdu;
+
+        if (!read_client_dynamic_packet_fd(fd, input, capacity, &packet) ||
+            rdp_dynamic_channel_parse_header(packet.payload,
+                                             packet.payload_len,
+                                             &header) != LIBRDP_STATUS_OK ||
+            header.command != RDP_DYNAMIC_CHANNEL_CMD_DATA ||
+            header.priority != priority ||
+            rdp_dynamic_channel_parse_data(packet.payload,
+                                           packet.payload_len,
+                                           &data_pdu) != LIBRDP_STATUS_OK ||
+            data_pdu.channel_id != 7u ||
+            data_pdu.data_len == 0 ||
+            data_pdu.data_len > total_len - received ||
+            !test_dvc_boundary_payload_matches(data_pdu.data,
+                                               data_pdu.data_len,
+                                               message_index,
+                                               received))
+        {
+            return 0;
+        }
+        received += data_pdu.data_len;
+    }
+    return received == total_len;
+}
+
+/*
+ * Exchange every DVC framing boundary in both directions. The peer advances
+ * only after the client has delivered and echoed a complete logical message.
+ */
+static int run_dynamic_channel_fragment_boundaries_server_scenario(int fd,
+                                                                   uint8_t* input,
+                                                                   size_t capacity)
+{
+    rdp_buffer capabilities;
+    rdp_buffer create;
+    rdp_buffer close_pdu;
+    int ok = 0;
+
+    rdp_buffer_init(&capabilities);
+    rdp_buffer_init(&create);
+    rdp_buffer_init(&close_pdu);
+    ok = build_dynamic_channel_priority_capabilities_packet(&capabilities) &&
+         write_exact_fd(fd, capabilities.data, capabilities.length) &&
+         read_client_dynamic_capabilities_response_fd(fd, input, capacity) &&
+         build_dynamic_channel_create_packet(&create) &&
+         write_exact_fd(fd, create.data, create.length) &&
+         read_client_dynamic_create_response_fd(fd, input, capacity, 1004u, 7u);
+    for (size_t i = 0; ok && i < CORE_TEST_DVC_BOUNDARY_COUNT; i++)
+    {
+        ok = write_server_dynamic_boundary_message_fd(fd,
+                                                      i,
+                                                      core_test_dvc_boundary_sizes[i],
+                                                      LIBRDP_CHANNEL_PRIORITY_MEDIUM) &&
+             read_client_dynamic_boundary_message_fd(fd,
+                                                     input,
+                                                     capacity,
+                                                     i,
+                                                     core_test_dvc_boundary_sizes[i],
+                                                     LIBRDP_CHANNEL_PRIORITY_MEDIUM);
+    }
+    if (ok)
+    {
+        ok = build_dynamic_channel_close_packet(&close_pdu) &&
+             write_exact_fd(fd, close_pdu.data, close_pdu.length);
+    }
+    rdp_buffer_free(&close_pdu);
+    rdp_buffer_free(&create);
+    rdp_buffer_free(&capabilities);
+    return ok;
 }
 
 static int read_client_composited_notification_fd(int fd,
@@ -4577,6 +4901,16 @@ int start_handshake_server_full(uint16_t* port,
                     {
                         if (!run_client_open_priorities_server_scenario(client, input, sizeof(input)))
                             _exit(5);
+                        goto done_connection;
+                    }
+                    if (dynamic_channel_scenario == DVC_SCENARIO_FRAGMENT_BOUNDARIES)
+                    {
+                        if (!run_dynamic_channel_fragment_boundaries_server_scenario(client,
+                                                                                     input,
+                                                                                     sizeof(input)))
+                        {
+                            _exit(5);
+                        }
                         goto done_connection;
                     }
                     if (dynamic_channel_scenario == DVC_SCENARIO_DATA_BEFORE_CREATE)

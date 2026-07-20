@@ -17,6 +17,50 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 
+typedef struct dvc_boundary_capture
+{
+    event_counter events;
+    size_t message_count;
+    int valid;
+} dvc_boundary_capture;
+
+/*
+ * Validate reassembled application payloads while preserving the shared event
+ * counters used to observe channel create and close ordering.
+ */
+static void on_dvc_boundary_event(librdp_session* session,
+                                  const librdp_event* event,
+                                  void* user_data)
+{
+    dvc_boundary_capture* capture = (dvc_boundary_capture*)user_data;
+
+    if (!capture)
+        return;
+    on_event(session, event, &capture->events);
+    if (!event || event->type != LIBRDP_EVENT_CHANNEL_DATA)
+        return;
+    if (capture->message_count >= CORE_TEST_DVC_BOUNDARY_COUNT ||
+        event->data.channel_data.channel_id != 7u ||
+        event->data.channel_data.data_len !=
+            core_test_dvc_boundary_sizes[capture->message_count])
+    {
+        capture->valid = 0;
+        capture->message_count++;
+        return;
+    }
+    for (size_t i = 0; i < event->data.channel_data.data_len; i++)
+    {
+        if (!event->data.channel_data.data ||
+            event->data.channel_data.data[i] !=
+                core_test_dvc_boundary_byte(capture->message_count, i))
+        {
+            capture->valid = 0;
+            break;
+        }
+    }
+    capture->message_count++;
+}
+
 /*
  * Coverage: validates static channel registration, activation-time channel
  * metadata, fragmented channel delivery, and deterministic fixture shutdown.
@@ -1628,6 +1672,96 @@ int test_dynamic_channel_public_open_priorities(void)
         CHECK(librdp_session_channel_list(session, NULL, 0, &channel_count) == LIBRDP_STATUS_OK);
         CHECK(channel_count == 0u);
     }
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: exchanges logical DVC messages at each framing boundary in both
+ * directions. The peer verifies DATA versus DATA_FIRST/DATA transitions while
+ * the callback proves that inbound fragments are delivered once and atomically.
+ */
+int test_dynamic_channel_fragment_boundaries(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    dvc_boundary_capture capture;
+    librdp_channel_handle handle = 0;
+    librdp_channel_send_options options;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+
+    memset(&capture, 0, sizeof(capture));
+    capture.valid = 1;
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_FRAGMENT_BOUNDARIES,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_dvc_boundary_event, &capture);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (size_t attempt = 0; attempt < 8u && capture.events.channel_open == 0; attempt++)
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(capture.events.channel_open == 1);
+    CHECK(capture.events.last_channel_id == 7u);
+    CHECK(librdp_session_channel_handle_for_id(session, 7u, &handle) == LIBRDP_STATUS_OK);
+    CHECK(handle != 0);
+    CHECK(librdp_channel_send_options_init(&options) == LIBRDP_STATUS_OK);
+    options.handle = handle;
+    options.priority = LIBRDP_CHANNEL_PRIORITY_MEDIUM;
+
+    for (size_t message_index = 0;
+         message_index < CORE_TEST_DVC_BOUNDARY_COUNT;
+         message_index++)
+    {
+        const size_t payload_len = core_test_dvc_boundary_sizes[message_index];
+        uint8_t* payload = NULL;
+
+        for (size_t attempt = 0;
+             attempt < 128u && capture.message_count <= message_index;
+             attempt++)
+        {
+            CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+        }
+        CHECK(capture.message_count == message_index + 1u);
+        CHECK(capture.valid);
+        if (payload_len > 0)
+        {
+            payload = (uint8_t*)malloc(payload_len);
+            CHECK(payload != NULL);
+            for (size_t i = 0; i < payload_len; i++)
+                payload[i] = core_test_dvc_boundary_byte(message_index, i);
+        }
+        CHECK(librdp_session_channel_send_ex(session,
+                                             &options,
+                                             payload,
+                                             payload_len) == LIBRDP_STATUS_OK);
+        free(payload);
+    }
+
+    for (size_t attempt = 0; attempt < 8u && capture.events.channel_close == 0; attempt++)
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(capture.valid);
+    CHECK(capture.message_count == CORE_TEST_DVC_BOUNDARY_COUNT);
+    CHECK(capture.events.channel_data == (int)CORE_TEST_DVC_BOUNDARY_COUNT);
+    CHECK(capture.events.channel_close == 1);
 
     librdp_session_free(session);
     librdp_settings_free(settings);
