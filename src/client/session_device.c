@@ -139,6 +139,28 @@ static librdp_status rdp_session_pnp_multisz1(rdp_buffer* out, const char* text)
 }
 
 /*
+ * Derive a stable, non-secret container identifier from the persistent client
+ * device ID. The namespace bytes separate synthetic PNP containers from other
+ * device classes, while the final UUID bits retain the normal variant shape.
+ */
+static void rdp_session_pnp_container_id(uint32_t device_id,
+                                         uint8_t container_id[16])
+{
+    static const uint8_t namespace_bytes[12] = {
+        0x6cu, 0x69u, 0x62u, 0x72u, 0x64u, 0x70u,
+        0x2du, 0x70u, 0x6eu, 0x70u, 0x00u, 0x01u
+    };
+
+    memcpy(container_id, namespace_bytes, sizeof(namespace_bytes));
+    container_id[12] = (uint8_t)device_id;
+    container_id[13] = (uint8_t)(device_id >> 8u);
+    container_id[14] = (uint8_t)(device_id >> 16u);
+    container_id[15] = (uint8_t)(device_id >> 24u);
+    container_id[6] = (uint8_t)((container_id[6] & 0x0fu) | 0x40u);
+    container_id[8] = (uint8_t)((container_id[8] & 0x3fu) | 0x80u);
+}
+
+/*
  * Announce configured PNP devices to the server. The function snapshots
  * session-owned backend descriptors into protocol packets so later host-device
  * changes cannot alter an in-flight announcement or violate lifecycle state.
@@ -149,6 +171,7 @@ librdp_status rdp_session_pnp_send_devices(librdp_session* session)
     rdp_buffer hardware[LIBRDP_SETTINGS_MAX_PNP_DEVICES];
     rdp_buffer compatibility[LIBRDP_SETTINGS_MAX_PNP_DEVICES];
     rdp_buffer descriptions[LIBRDP_SETTINGS_MAX_PNP_DEVICES];
+    uint8_t container_ids[LIBRDP_SETTINGS_MAX_PNP_DEVICES][16];
     rdp_buffer packet;
     uint32_t count = 0;
     uint32_t i = 0;
@@ -167,6 +190,7 @@ librdp_status rdp_session_pnp_send_devices(librdp_session* session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     memset(devices, 0, sizeof(devices));
+    memset(container_ids, 0, sizeof(container_ids));
     for (i = 0; i < LIBRDP_SETTINGS_MAX_PNP_DEVICES; i++)
     {
         rdp_buffer_init(&hardware[i]);
@@ -191,6 +215,8 @@ librdp_status rdp_session_pnp_send_devices(librdp_session* session)
         if (status == LIBRDP_STATUS_OK)
         {
             devices[i].client_device_id = rdp_settings_pnp_device_id_internal(session->settings, i);
+            rdp_session_pnp_container_id(devices[i].client_device_id,
+                                         container_ids[i]);
             devices[i].hardware_id = hardware[i].data;
             devices[i].hardware_id_len = (uint32_t)hardware[i].length;
             devices[i].compatibility_id = compatibility[i].data;
@@ -198,6 +224,9 @@ librdp_status rdp_session_pnp_send_devices(librdp_session* session)
             devices[i].device_description = descriptions[i].data;
             devices[i].device_description_len = (uint32_t)descriptions[i].length;
             devices[i].custom_flag = RDP_PNP_REDIRECTION_CUSTOM_FLAG_REDIRECTABLE;
+            devices[i].container_id = container_ids[i];
+            devices[i].container_id_len = sizeof(container_ids[i]);
+            devices[i].has_container_id = 1;
             devices[i].device_caps = librdp_settings_pnp_device_caps(session->settings, i);
             devices[i].has_device_caps = 1;
         }

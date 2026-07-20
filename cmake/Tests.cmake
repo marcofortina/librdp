@@ -274,6 +274,10 @@ if(LIBRDP_BUILD_TESTS)
     librdp_configure_test_executable(
         test_server_client_port_smoke
     )
+    add_executable(test_pnp_virtual_smoke
+        tests/test_pnp_virtual_smoke.c
+    )
+    librdp_configure_test_executable(test_pnp_virtual_smoke)
     if(LIBRDP_CUPS_FOUND)
         add_executable(test_printer_cups_smoke
             tests/test_printer_cups_smoke.c
@@ -423,6 +427,7 @@ if(LIBRDP_BUILD_TESTS)
         test_server_host
         test_server_host_drive
         test_server_client_smoke
+        test_pnp_virtual_smoke
         test_abi_probe
     )
     if(TARGET test_printer_cups_smoke)
@@ -604,6 +609,11 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_port_smoke serial)
     add_test(NAME server_client_smoke_parallel_port
              COMMAND test_server_client_port_smoke parallel)
+    add_test(NAME pnp_virtual_smoke
+             COMMAND test_pnp_virtual_smoke)
+    set_tests_properties(pnp_virtual_smoke PROPERTIES
+        TIMEOUT 15
+    )
     if(TARGET test_printer_cups_smoke)
         add_test(NAME printer_cups_smoke
                  COMMAND test_printer_cups_smoke)
