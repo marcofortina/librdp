@@ -502,6 +502,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke standard-integrity)
     add_test(NAME server_client_smoke_fastpath_bitmap
              COMMAND test_server_client_smoke fastpath-bitmap)
+    add_test(NAME server_client_smoke_fastpath_nscodec
+             COMMAND test_server_client_smoke fastpath-nscodec)
     add_test(NAME server_client_smoke_graphics_planar
              COMMAND test_server_client_smoke graphics-planar)
     add_test(NAME server_client_smoke_security_downgrade
@@ -583,6 +585,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_credssp_timeout
         server_client_smoke_standard_integrity
         server_client_smoke_fastpath_bitmap
+        server_client_smoke_fastpath_nscodec
         server_client_smoke_graphics_planar
         server_client_smoke_security_downgrade
         server_client_smoke_tls_untrusted

@@ -23,6 +23,7 @@
 #include "channels/graphics_pipeline.h"
 #include "graphics/bitmap.h"
 #include "graphics/planar.h"
+#include "graphics/surface_commands.h"
 #include "protocol/fastpath.h"
 #include "protocol/session_selection.h"
 #include "server/server_internal.h"
@@ -337,15 +338,19 @@ typedef struct smoke_integrity_peer
     librdp_status status;
 } smoke_integrity_peer;
 
-typedef struct smoke_fastpath_bitmap_peer
+typedef librdp_status (*smoke_fastpath_send_fn)(
+    librdp_server_peer* peer);
+
+typedef struct smoke_fastpath_peer
 {
     librdp_server_config config;
     pthread_t thread;
     atomic_uint port;
     atomic_uint packet_sent;
     atomic_uint client_closed;
+    smoke_fastpath_send_fn send;
     librdp_status status;
-} smoke_fastpath_bitmap_peer;
+} smoke_fastpath_peer;
 
 typedef struct smoke_graphics_peer
 {
@@ -434,6 +439,7 @@ typedef struct smoke_trace_capture
     unsigned int redirection_loops;
     unsigned int slowpath_bitmap_updates;
     unsigned int fastpath_bitmap_updates;
+    unsigned int surface_nscodec_updates;
     unsigned int graphics_caps_confirms;
     unsigned int graphics_surface_creates;
     unsigned int graphics_surface_maps;
@@ -670,6 +676,12 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event,
                     "rdp.fastpath.bitmap_update") == 0)
         capture->fastpath_bitmap_updates++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.surface.bits.blit") == 0 &&
+             record->message &&
+             strstr(record->message, "codec_id=1 ") != NULL)
+        capture->surface_nscodec_updates++;
     else if (record->event &&
              strcmp(record->event,
                     "client.graphics.caps_confirm") == 0)
@@ -1854,6 +1866,74 @@ static librdp_status smoke_fastpath_bitmap_send(
     return status;
 }
 
+/*
+ * Send a 3x3 NSCodec tile against the lower-right desktop edge. The codec
+ * planes mix literal and RLE data so the client traverses both plane paths.
+ */
+static librdp_status smoke_fastpath_nscodec_send(
+    librdp_server_peer* peer)
+{
+    static const uint8_t nscodec_stream[] = {
+        0x09u, 0x00u, 0x00u, 0x00u,
+        0x07u, 0x00u, 0x00u, 0x00u,
+        0x07u, 0x00u, 0x00u, 0x00u,
+        0x07u, 0x00u, 0x00u, 0x00u,
+        0x01u, 0x00u, 0x00u, 0x00u,
+        0x0au, 0x14u, 0x1eu,
+        0x28u, 0x32u, 0x3cu,
+        0x46u, 0x50u, 0x5au,
+        0x00u, 0x00u, 0x03u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x03u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0xffu, 0xffu, 0x03u,
+        0xffu, 0xffu, 0xffu, 0xffu
+    };
+    rdp_surface_bits bits;
+    rdp_buffer commands;
+    rdp_buffer update;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&bits, 0, sizeof(bits));
+    bits.command_type = RDP_SURFACE_COMMAND_SET_BITS;
+    bits.dest_left = (uint16_t)(SMOKE_WIDTH - 3u);
+    bits.dest_top = (uint16_t)(SMOKE_HEIGHT - 3u);
+    bits.dest_right = (uint16_t)SMOKE_WIDTH;
+    bits.dest_bottom = (uint16_t)SMOKE_HEIGHT;
+    bits.bpp = 32u;
+    bits.codec_id = RDP_SURFACE_CODEC_NSCODEC;
+    bits.width = 3u;
+    bits.height = 3u;
+    bits.bitmap_data_length = (uint32_t)sizeof(nscodec_stream);
+    bits.bitmap_data = nscodec_stream;
+    rdp_buffer_init(&commands);
+    rdp_buffer_init(&update);
+    status = rdp_surface_commands_write_bits(&commands, &bits);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_fastpath_write_update(
+            &update,
+            RDP_FASTPATH_UPDATE_SURFACE_COMMANDS,
+            RDP_FASTPATH_FRAGMENT_SINGLE,
+            0u,
+            0u,
+            commands.data,
+            commands.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = smoke_standard_send_fastpath(peer,
+                                              update.data,
+                                              update.length,
+                                              0);
+    }
+    rdp_buffer_free(&update);
+    rdp_buffer_free(&commands);
+    return status;
+}
+
 static int smoke_integrity_wait_for_client_close(int fd)
 {
     unsigned int attempt = 0u;
@@ -2005,17 +2085,17 @@ cleanup:
 }
 
 /*
- * Host the deterministic fast-path bitmap fixture until the client has
+ * Host one deterministic fast-path graphics fixture until the client has
  * verified the framebuffer and closed the transport.
  */
-static void* smoke_fastpath_bitmap_peer_main(void* user_data)
+static void* smoke_fastpath_peer_main(void* user_data)
 {
-    smoke_fastpath_bitmap_peer* fixture =
-        (smoke_fastpath_bitmap_peer*)user_data;
+    smoke_fastpath_peer* fixture =
+        (smoke_fastpath_peer*)user_data;
     librdp_server* server = NULL;
     librdp_server_peer* peer = NULL;
 
-    if (!fixture)
+    if (!fixture || !fixture->send)
         return NULL;
     fixture->status = LIBRDP_STATUS_TIMEOUT;
     server = librdp_server_new(&fixture->config);
@@ -2033,7 +2113,7 @@ static void* smoke_fastpath_bitmap_peer_main(void* user_data)
     fixture->status = smoke_server_accept_active(server, &peer);
     if (fixture->status != LIBRDP_STATUS_OK)
         goto cleanup;
-    fixture->status = smoke_fastpath_bitmap_send(peer);
+    fixture->status = fixture->send(peer);
     if (fixture->status != LIBRDP_STATUS_OK)
         goto cleanup;
     atomic_store_explicit(&fixture->packet_sent,
@@ -4625,7 +4705,7 @@ static int smoke_run_standard_integrity(void)
  */
 static int smoke_run_fastpath_bitmap(void)
 {
-    smoke_fastpath_bitmap_peer fixture;
+    smoke_fastpath_peer fixture;
     smoke_client_events events;
     smoke_trace_capture trace_capture;
     librdp_settings* settings = NULL;
@@ -4643,6 +4723,7 @@ static int smoke_run_fastpath_bitmap(void)
     atomic_init(&fixture.port, 0u);
     atomic_init(&fixture.packet_sent, 0u);
     atomic_init(&fixture.client_closed, 0u);
+    fixture.send = smoke_fastpath_bitmap_send;
     fixture.status = LIBRDP_STATUS_AGAIN;
     REQUIRE(librdp_server_config_init(&fixture.config) ==
             LIBRDP_STATUS_OK);
@@ -4652,7 +4733,7 @@ static int smoke_run_fastpath_bitmap(void)
     fixture.config.height = SMOKE_HEIGHT;
     REQUIRE(pthread_create(&fixture.thread,
                            NULL,
-                           smoke_fastpath_bitmap_peer_main,
+                           smoke_fastpath_peer_main,
                            &fixture) == 0);
     thread_started = 1;
     REQUIRE(smoke_wait_for_port(&fixture.port, &port));
@@ -4714,6 +4795,161 @@ static int smoke_run_fastpath_bitmap(void)
             librdp_surface_height(
                 librdp_session_get_surface(session)),
         smoke_fastpath_bitmap_sha256));
+    REQUIRE(librdp_session_disconnect(session) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(pthread_join(fixture.thread, NULL) == 0);
+    thread_started = 0;
+    REQUIRE(fixture.status == LIBRDP_STATUS_OK);
+    REQUIRE(atomic_load_explicit(&fixture.packet_sent,
+                                 memory_order_acquire) == 1u);
+    REQUIRE(atomic_load_explicit(&fixture.client_closed,
+                                 memory_order_acquire) == 1u);
+    result = 0;
+
+cleanup:
+    librdp_session_free(session);
+    session = NULL;
+    if (thread_started)
+        (void)pthread_join(fixture.thread, NULL);
+    librdp_settings_free(settings);
+    return result;
+}
+
+static int smoke_nscodec_edge_matches(
+    const librdp_surface* surface)
+{
+    static const uint8_t expected_luma[3][3] = {
+        {0x46u, 0x50u, 0x5au},
+        {0x28u, 0x32u, 0x3cu},
+        {0x0au, 0x14u, 0x1eu}
+    };
+    const uint8_t* pixels = NULL;
+    size_t stride = 0u;
+    uint32_t row = 0u;
+    uint32_t column = 0u;
+
+    if (!surface ||
+        librdp_surface_width(surface) != SMOKE_WIDTH ||
+        librdp_surface_height(surface) != SMOKE_HEIGHT)
+        return 0;
+    pixels = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    if (!pixels || stride <= 3u * 4u)
+        return 0;
+    for (row = 0u; row < 3u; row++)
+    {
+        for (column = 0u; column < 3u; column++)
+        {
+            const uint8_t* pixel =
+                pixels +
+                ((size_t)(SMOKE_HEIGHT - 3u + row) * stride) +
+                ((size_t)(SMOKE_WIDTH - 3u + column) * 4u);
+            uint8_t expected = expected_luma[row][column];
+
+            if (pixel[0] != expected ||
+                pixel[1] != expected ||
+                pixel[2] != expected ||
+                pixel[3] != 0xffu)
+                return 0;
+        }
+    }
+    pixels += ((size_t)(SMOKE_HEIGHT - 3u) * stride) +
+              ((size_t)(SMOKE_WIDTH - 4u) * 4u);
+    return pixels[0] == 0u &&
+           pixels[1] == 0u &&
+           pixels[2] == 0u;
+}
+
+/*
+ * Drive an odd-sized NSCodec Surface Bits command through encrypted
+ * fast-path and verify its edge placement on the normalized framebuffer.
+ */
+static int smoke_run_fastpath_nscodec(void)
+{
+    smoke_fastpath_peer fixture;
+    smoke_client_events events;
+    smoke_trace_capture trace_capture;
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint16_t port = 0u;
+    unsigned int cycle = 0u;
+    int thread_started = 0;
+    int result = 1;
+
+    memset(&fixture, 0, sizeof(fixture));
+    memset(&events, 0, sizeof(events));
+    memset(&trace_capture, 0, sizeof(trace_capture));
+    atomic_init(&fixture.port, 0u);
+    atomic_init(&fixture.packet_sent, 0u);
+    atomic_init(&fixture.client_closed, 0u);
+    fixture.send = smoke_fastpath_nscodec_send;
+    fixture.status = LIBRDP_STATUS_AGAIN;
+    REQUIRE(librdp_server_config_init(&fixture.config) ==
+            LIBRDP_STATUS_OK);
+    fixture.config.bind_address = "127.0.0.1";
+    fixture.config.security_mode = LIBRDP_SECURITY_STANDARD;
+    fixture.config.width = SMOKE_WIDTH;
+    fixture.config.height = SMOKE_HEIGHT;
+    REQUIRE(pthread_create(&fixture.thread,
+                           NULL,
+                           smoke_fastpath_peer_main,
+                           &fixture) == 0);
+    thread_started = 1;
+    REQUIRE(smoke_wait_for_port(&fixture.port, &port));
+
+    settings = librdp_settings_new();
+    REQUIRE(settings != NULL);
+    REQUIRE(librdp_settings_set_target(settings, "127.0.0.1") ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_port(settings, port) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_security_mode(
+                settings,
+                LIBRDP_SECURITY_STANDARD) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_settings_set_desktop_size(settings,
+                                             SMOKE_WIDTH,
+                                             SMOKE_HEIGHT) ==
+            LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    REQUIRE(session != NULL);
+    librdp_session_set_event_callback(session,
+                                      smoke_client_event,
+                                      &events);
+    REQUIRE(librdp_trace_policy_init(&trace_policy) ==
+            LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = smoke_trace_callback;
+    trace_policy.callback_user_data = &trace_capture;
+    trace_policy.trace_id = "fastpath-nscodec";
+    trace_capture.target = "127.0.0.1";
+    trace_capture.port = port;
+    REQUIRE(librdp_session_set_trace_policy(session,
+                                            &trace_policy) ==
+            LIBRDP_STATUS_OK);
+    REQUIRE(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (cycle = 0u; cycle < SMOKE_PUMP_LIMIT; cycle++)
+    {
+        status = librdp_session_run_once(session, 50);
+        REQUIRE(status == LIBRDP_STATUS_OK);
+        if (events.active_seen &&
+            events.surface_events >= 2u &&
+            trace_capture.surface_nscodec_updates == 1u)
+            break;
+    }
+    REQUIRE(cycle < SMOKE_PUMP_LIMIT);
+    REQUIRE(events.active);
+    REQUIRE(events.error_events == 0u);
+    REQUIRE(events.surface_events >= 2u);
+    REQUIRE(trace_capture.surface_nscodec_updates == 1u);
+    REQUIRE(trace_capture.integrity_failures == 0u);
+    REQUIRE(trace_capture.fastpath_integrity_failures == 0u);
+    REQUIRE(smoke_nscodec_edge_matches(
+        librdp_session_get_surface(session)));
     REQUIRE(librdp_session_disconnect(session) ==
             LIBRDP_STATUS_OK);
     REQUIRE(pthread_join(fixture.thread, NULL) == 0);
@@ -4988,6 +5224,8 @@ int main(int argc, char** argv)
         return smoke_run_standard_integrity();
     if (argc == 2 && strcmp(argv[1], "fastpath-bitmap") == 0)
         return smoke_run_fastpath_bitmap();
+    if (argc == 2 && strcmp(argv[1], "fastpath-nscodec") == 0)
+        return smoke_run_fastpath_nscodec();
     if (argc == 2 && strcmp(argv[1], "graphics-planar") == 0)
         return smoke_run_graphics_planar();
     if (argc == 2 && strcmp(argv[1], "security-downgrade") == 0)
