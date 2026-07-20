@@ -516,6 +516,11 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke graphics-multi-surface)
     add_test(NAME server_client_smoke_graphics_clearcodec
              COMMAND test_server_client_smoke graphics-clearcodec)
+    if(LIBRDP_FFMPEG_AVC_FOUND OR
+       LIBRDP_OPENH264_AVC_FOUND)
+        add_test(NAME server_client_smoke_graphics_avc
+                 COMMAND test_server_client_smoke graphics-avc)
+    endif()
     add_test(NAME server_client_smoke_security_downgrade
              COMMAND test_server_client_smoke security-downgrade)
     add_test(NAME server_client_smoke_tls_untrusted
