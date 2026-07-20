@@ -23,6 +23,7 @@
 #include "client/session_internal.h"
 #include "client/settings_internal.h"
 #include "clipboard/clipboard.h"
+#include "channels/composited_remoting.h"
 #include "channels/device_redirection.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
@@ -95,6 +96,7 @@
 #define DVC_SCENARIO_TELEMETRY_RUNTIME 22
 #define DVC_SCENARIO_MULTIPARTY_RUNTIME 23
 #define DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME 24
+#define DVC_SCENARIO_COMPOSITED_RUNTIME 25
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_ALTSEC_RUNTIME 1
@@ -450,6 +452,7 @@ int test_gdiplus_antialias_affects_line_edges(void);
 int test_gdiplus_clip_limits_visual_output(void);
 
 int test_gdi_altsec_runtime_orders(void);
+int test_composited_runtime_lifecycle(void);
 int test_gdi_orders_runtime_golden(void);
 
 int test_graphics_update_before_activation(void);

@@ -834,6 +834,7 @@ void rdp_session_gdi_window_state_reset(librdp_session* session)
         return;
     rdp_buffer_free(&session->gdi_window_state.data);
     memset(&session->gdi_window_state, 0, sizeof(session->gdi_window_state));
+    session->desktop_composition_active = 0u;
 }
 
 static size_t rdp_session_gdi_gdiplus_cache_entry_size(const rdp_session_gdi_gdiplus_cache_entry* entry)

@@ -2302,6 +2302,199 @@ int test_gdi_altsec_runtime_orders(void)
     return 0;
 }
 
+typedef struct composited_runtime_capture
+{
+    uint32_t surface_updates;
+    uint32_t full_surface_updates;
+    uint32_t targeted_updates;
+} composited_runtime_capture;
+
+static void on_composited_runtime_event(librdp_session* session,
+                                        const librdp_event* event,
+                                        void* user_data)
+{
+    composited_runtime_capture* capture = (composited_runtime_capture*)user_data;
+    (void)session;
+
+    if (!capture || !event || event->type != LIBRDP_EVENT_SURFACE_INVALIDATED)
+        return;
+    capture->surface_updates++;
+    if (event->data.surface.x == 0u &&
+        event->data.surface.y == 0u &&
+        event->data.surface.width == 640u &&
+        event->data.surface.height == 480u)
+        capture->full_surface_updates++;
+    if (event->data.surface.x == 32u &&
+        event->data.surface.y == 64u &&
+        event->data.surface.width == 128u &&
+        event->data.surface.height == 128u)
+        capture->targeted_updates++;
+}
+
+/*
+ * Coverage: drives window orders, desktop-composition activation, and CR2 over
+ * the session DVC path. The phased peer verifies create, update, root
+ * reassignment, bounded and fallback invalidation, resource deletion, close,
+ * and state reset without relying only on the standalone render-tree parser.
+ */
+int test_composited_runtime_lifecycle(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    composited_runtime_capture capture;
+    const rdp_composited_render_resource* target = NULL;
+    const rdp_composited_render_resource* window = NULL;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t create_full_surface_updates = 0u;
+    int saw_window_order = 0;
+    int saw_desktop_composition = 0;
+    int saw_active_feature = 0;
+    int saw_create = 0;
+    int saw_update = 0;
+    int saw_delete = 0;
+    int saw_reset = 0;
+    size_t i = 0u;
+
+    memset(&capture, 0, sizeof(capture));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings,
+                                            LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_desktop_size(settings, 640u, 480u) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings,
+                                         LIBRDP_FEATURE_CR2,
+                                         1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings,
+                                         LIBRDP_FEATURE_DESKTOP_COMPOSITION,
+                                         1) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_full(&test_port,
+                                      &server_pid,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      1,
+                                      DVC_SCENARIO_COMPOSITED_RUNTIME,
+                                      GDI_SCENARIO_DESKTOP_COMPOSITION,
+                                      0,
+                                      CLIPBOARD_SCENARIO_NONE,
+                                      HANDSHAKE_SCENARIO_NORMAL));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session,
+                                      on_composited_runtime_event,
+                                      &capture);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0u; i < 32u && !saw_reset; i++)
+    {
+        status = librdp_session_run_once(session, 1000);
+        CHECK(status == LIBRDP_STATUS_OK ||
+              status == LIBRDP_STATUS_TIMEOUT ||
+              status == LIBRDP_STATUS_CLOSED);
+
+        if (session->gdi_window_state.active &&
+            session->gdi_window_state.update_count == 1u)
+            saw_window_order = 1;
+        if (session->desktop_composition_active)
+            saw_desktop_composition = 1;
+        CHECK(librdp_session_get_feature_status(session,
+                                                LIBRDP_FEATURE_CR2,
+                                                &feature_status) == LIBRDP_STATUS_OK);
+        if (feature_status.negotiated && feature_status.active &&
+            feature_status.reason == LIBRDP_FEATURE_REASON_NONE)
+            saw_active_feature = 1;
+
+        if (session->composited_tree.command_count >= 6u &&
+            !saw_create)
+        {
+            target = rdp_composited_render_tree_find(&session->composited_tree,
+                                                      0x40u);
+            window = rdp_composited_render_tree_find(&session->composited_tree,
+                                                      0x41u);
+            CHECK(target != NULL && target->root_resource == 0x41u);
+            CHECK(window != NULL &&
+                  window->bounds_valid &&
+                  window->window_rect.left == 16 &&
+                  window->window_rect.bottom == 264);
+            CHECK(capture.targeted_updates >= 1u);
+            create_full_surface_updates = capture.full_surface_updates;
+            saw_create = 1;
+        }
+        if (session->composited_tree.command_count >= 14u &&
+            !saw_update)
+        {
+            target = rdp_composited_render_tree_find(&session->composited_tree,
+                                                      0x40u);
+            window = rdp_composited_render_tree_find(&session->composited_tree,
+                                                      0x42u);
+            CHECK(target != NULL &&
+                  target->root_resource == 0x42u &&
+                  target->invalid_rect_valid &&
+                  target->invalid_rect.left == 700 &&
+                  target->invalid_rect.right == 700);
+            CHECK(window != NULL &&
+                  window->bounds_valid &&
+                  window->window_rect.left == 80 &&
+                  window->window_rect.bottom == 336);
+            CHECK(rdp_composited_render_tree_find(&session->composited_tree,
+                                                  0x41u) == NULL);
+            CHECK(capture.full_surface_updates > create_full_surface_updates);
+            saw_update = 1;
+        }
+        if (session->composited_tree.command_count >= 17u &&
+            !saw_delete)
+        {
+            CHECK(session->composited_tree.resource_count == 0u);
+            CHECK(rdp_composited_render_tree_find(&session->composited_tree,
+                                                  0x40u) == NULL);
+            CHECK(rdp_composited_render_tree_find(&session->composited_tree,
+                                                  0x42u) == NULL);
+            saw_delete = 1;
+        }
+        if (saw_delete &&
+            session->composited_channel_id == 0u &&
+            session->composited_tree.command_count == 0u &&
+            session->composited_tree.resource_count == 0u)
+            saw_reset = 1;
+        if (status == LIBRDP_STATUS_CLOSED && !saw_reset)
+            break;
+    }
+
+    CHECK(saw_window_order);
+    CHECK(saw_desktop_composition);
+    CHECK(saw_active_feature);
+    CHECK(saw_create);
+    CHECK(saw_update);
+    CHECK(saw_delete);
+    CHECK(saw_reset);
+    CHECK(capture.surface_updates > 0u);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_CR2,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested &&
+          feature_status.built &&
+          feature_status.backend_ready &&
+          !feature_status.negotiated &&
+          !feature_status.active &&
+          feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    CHECK(session->desktop_composition_active == 0u);
+    CHECK(!session->gdi_window_state.active);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
 /*
  * Coverage: validates that slow-path graphics updates are rejected until the
  * Demand Active/Confirm Active activation exchange succeeds. It catches

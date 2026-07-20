@@ -1606,11 +1606,28 @@ static int build_gdi_altsec_runtime_update_packet(rdp_buffer* out)
 
 static int build_gdi_desktop_composition_update_packet(rdp_buffer* out)
 {
+    static const uint8_t window_altsec[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_WINDOW << 2u) | RDP_GDI_TS_SECONDARY),
+        0x08u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x04u,
+        0x12u
+    };
     static const uint8_t compdesk_first[] = {
         (uint8_t)((RDP_GDI_ALTSEC_COMPDESK_FIRST << 2u) | RDP_GDI_TS_SECONDARY)
     };
+    rdp_buffer orders;
+    int ok = 0;
 
-    return build_gdi_update_packet_from_orders(out, compdesk_first, sizeof(compdesk_first), 1);
+    rdp_buffer_init(&orders);
+    ok = rdp_buffer_append(&orders, window_altsec, sizeof(window_altsec)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, compdesk_first, sizeof(compdesk_first)) == LIBRDP_STATUS_OK &&
+         build_gdi_update_packet_from_orders(out, orders.data, orders.length, 2);
+    rdp_buffer_free(&orders);
+    return ok;
 }
 
 static int build_set_error_info_packet(rdp_buffer* out, uint32_t error_info)
@@ -2435,6 +2452,337 @@ static int read_client_dynamic_create_response_fd(int fd,
                                                         expected_dynamic_channel_id,
                                                         &status_code) &&
            status_code == RDP_DYNAMIC_CHANNEL_STATUS_OK;
+}
+
+static int read_client_composited_notification_fd(int fd,
+                                                  uint8_t* input,
+                                                  size_t capacity,
+                                                  uint32_t expected_control,
+                                                  uint32_t expected_channel,
+                                                  uint32_t expected_notification,
+                                                  uint32_t expected_value,
+                                                  int check_value)
+{
+    for (size_t attempt = 0; attempt < 8u; attempt++)
+    {
+        size_t input_len = 0;
+        rdp_virtual_channel_packet response_packet;
+        rdp_dynamic_channel_data_pdu data_pdu;
+        rdp_composited_control control;
+        rdp_stream payload;
+        uint32_t notification = 0;
+        uint32_t reserved = 0;
+        uint32_t value = 0;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (!parse_client_dynamic_channel_payload(input, input_len, 1004u, &response_packet))
+            continue;
+        if (rdp_dynamic_channel_parse_data(response_packet.payload,
+                                           response_packet.payload_len,
+                                           &data_pdu) != LIBRDP_STATUS_OK ||
+            data_pdu.channel_id != 7u ||
+            rdp_composited_parse_control(data_pdu.data,
+                                         data_pdu.data_len,
+                                         &control) != LIBRDP_STATUS_OK)
+            continue;
+        if (control.control_code != expected_control ||
+            control.word0 != expected_channel)
+            continue;
+        rdp_stream_init(&payload, control.payload, control.payload_len);
+        if (rdp_stream_read_u32_le(&payload, &notification) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u32_le(&payload, &reserved) != LIBRDP_STATUS_OK ||
+            notification != expected_notification)
+            return 0;
+        if (!check_value)
+            return 1;
+        if (rdp_stream_read_u32_le(&payload, &value) != LIBRDP_STATUS_OK)
+            return 0;
+        return value == expected_value;
+    }
+    return 0;
+}
+
+static int append_composited_roundtrip(rdp_buffer* batch, uint32_t request_id)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, request_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_channel_message(batch,
+                                                      RDP_COMPOSITED_CMD_ROUNDTRIP_REQUEST,
+                                                      payload.data,
+                                                      payload.length);
+    rdp_buffer_free(&payload);
+    return status == LIBRDP_STATUS_OK;
+}
+
+static int build_composited_create_batch(rdp_buffer* batch)
+{
+    static const uint8_t clear_color[16] = {
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u
+    };
+    const rdp_composited_rect_i window = {16, 24, 336, 264};
+    const rdp_composited_rect_i client = {20, 48, 332, 260};
+    const rdp_composited_rect_i content = {24, 52, 328, 256};
+    const rdp_composited_rect_i invalid = {32, 64, 160, 192};
+
+    return rdp_composited_write_target_create(batch,
+                                               0x40u,
+                                               640u,
+                                               480u,
+                                               clear_color) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_window_node_create(batch,
+                                                   0x41u,
+                                                   0x1112131415161718ull,
+                                                   0x2122232425262728ull,
+                                                   0u) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_window_node_bounds(batch,
+                                                   0x41u,
+                                                   &window,
+                                                   &client,
+                                                   &content) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_u32_target_order(batch,
+                                                 RDP_COMPOSITED_CMD_TARGET_SET_ROOT,
+                                                 0x40u,
+                                                 0x41u) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_rect_order(batch,
+                                           RDP_COMPOSITED_CMD_TARGET_INVALIDATE,
+                                           0x40u,
+                                           &invalid) == LIBRDP_STATUS_OK &&
+           append_composited_roundtrip(batch, 1u);
+}
+
+static int build_composited_update_batch(rdp_buffer* batch)
+{
+    const rdp_composited_rect_i first_window = {48, 72, 368, 312};
+    const rdp_composited_rect_i first_client = {52, 96, 364, 308};
+    const rdp_composited_rect_i first_content = {56, 100, 360, 304};
+    const rdp_composited_rect_i second_window = {80, 96, 400, 336};
+    const rdp_composited_rect_i second_client = {84, 120, 396, 332};
+    const rdp_composited_rect_i second_content = {88, 124, 392, 328};
+    const rdp_composited_rect_i fallback = {700, 500, 700, 500};
+
+    return rdp_composited_write_window_node_bounds(batch,
+                                                   0x41u,
+                                                   &first_window,
+                                                   &first_client,
+                                                   &first_content) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_window_node_create(batch,
+                                                   0x42u,
+                                                   0x3132333435363738ull,
+                                                   0x4142434445464748ull,
+                                                   0u) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_window_node_bounds(batch,
+                                                   0x42u,
+                                                   &second_window,
+                                                   &second_client,
+                                                   &second_content) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_u32_target_order(batch,
+                                                 RDP_COMPOSITED_CMD_TARGET_SET_ROOT,
+                                                 0x40u,
+                                                 0x42u) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_rect_order(batch,
+                                           RDP_COMPOSITED_CMD_TARGET_INVALIDATE,
+                                           0x40u,
+                                           &fallback) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_target_order(batch,
+                                             RDP_COMPOSITED_CMD_WINDOW_NODE_DETACH,
+                                             0x41u) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_resource_order(batch,
+                                               RDP_COMPOSITED_CMD_DELETE_RESOURCE,
+                                               0x41u,
+                                               RDP_COMPOSITED_RESOURCE_WINDOW_NODE) == LIBRDP_STATUS_OK &&
+           append_composited_roundtrip(batch, 2u);
+}
+
+static int build_composited_delete_batch(rdp_buffer* batch)
+{
+    return rdp_composited_write_resource_order(batch,
+                                               RDP_COMPOSITED_CMD_DELETE_RESOURCE,
+                                               0x42u,
+                                               RDP_COMPOSITED_RESOURCE_WINDOW_NODE) == LIBRDP_STATUS_OK &&
+           rdp_composited_write_resource_order(batch,
+                                               RDP_COMPOSITED_CMD_DELETE_RESOURCE,
+                                               0x40u,
+                                               RDP_COMPOSITED_RESOURCE_HWND_TARGET) == LIBRDP_STATUS_OK &&
+           append_composited_roundtrip(batch, 3u);
+}
+
+static int write_composited_dynamic_packet_fd(int fd,
+                                              const rdp_buffer* control,
+                                              rdp_buffer* packet)
+{
+    if (!control || !packet)
+        return 0;
+    rdp_buffer_free(packet);
+    rdp_buffer_init(packet);
+    return build_dynamic_channel_data_payload_packet(packet,
+                                                     control->data,
+                                                     control->length) &&
+           write_exact_fd(fd, packet->data, packet->length);
+}
+
+/*
+ * Fixture: synchronizes each CR2 lifecycle phase with a client roundtrip
+ * response before sending the next batch. It catches DVC ordering, partial
+ * tree mutation, invalidation fallback, stale resource, and close/reset bugs.
+ */
+static int run_composited_runtime_server_scenario(int fd,
+                                                  uint8_t* input,
+                                                  size_t input_capacity)
+{
+    rdp_buffer create;
+    rdp_buffer control;
+    rdp_buffer batch;
+    rdp_buffer packet;
+    rdp_buffer close;
+    int ok = 0;
+
+    rdp_buffer_init(&create);
+    rdp_buffer_init(&control);
+    rdp_buffer_init(&batch);
+    rdp_buffer_init(&packet);
+    rdp_buffer_init(&close);
+
+    ok = build_dynamic_channel_create_named_packet(&create, RDP_COMPOSITED_CHANNEL_NAME) &&
+         write_exact_fd(fd, create.data, create.length) &&
+         read_client_dynamic_create_response_fd(fd, input, input_capacity, 1004u, 7u);
+    if (ok)
+    {
+        ok = rdp_composited_write_control_fixed(&control,
+                                                RDP_COMPOSITED_CONTROL_VERSION_REQUEST,
+                                                0u,
+                                                0u) == LIBRDP_STATUS_OK &&
+             write_composited_dynamic_packet_fd(fd, &control, &packet) &&
+             read_client_composited_notification_fd(
+                 fd,
+                 input,
+                 input_capacity,
+                 RDP_COMPOSITED_CONTROL_CONNECTION_NOTIFICATION,
+                 0u,
+                 RDP_COMPOSITED_MSG_VERSION_REPLY,
+                 0u,
+                 0);
+    }
+    rdp_buffer_free(&control);
+    rdp_buffer_init(&control);
+    if (ok)
+    {
+        ok = rdp_composited_write_control_fixed(&control,
+                                                RDP_COMPOSITED_CONTROL_OPEN_CONNECTION,
+                                                0x31u,
+                                                0u) == LIBRDP_STATUS_OK &&
+             write_composited_dynamic_packet_fd(fd, &control, &packet);
+    }
+    rdp_buffer_free(&control);
+    rdp_buffer_init(&control);
+    if (ok)
+    {
+        ok = rdp_composited_write_control_fixed(&control,
+                                                RDP_COMPOSITED_CONTROL_OPEN_CHANNEL,
+                                                0x51u,
+                                                0u) == LIBRDP_STATUS_OK &&
+             write_composited_dynamic_packet_fd(fd, &control, &packet);
+    }
+    rdp_buffer_free(&control);
+    rdp_buffer_init(&control);
+    if (ok)
+    {
+        ok = build_composited_create_batch(&batch) &&
+             rdp_composited_write_data_on_channel(&control,
+                                                  0x51u,
+                                                  batch.data,
+                                                  batch.length) == LIBRDP_STATUS_OK &&
+             write_composited_dynamic_packet_fd(fd, &control, &packet) &&
+             read_client_composited_notification_fd(
+                 fd,
+                 input,
+                 input_capacity,
+                 RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION,
+                 0x51u,
+                 RDP_COMPOSITED_MSG_ROUNDTRIP_REPLY,
+                 1u,
+                 1);
+    }
+    rdp_buffer_free(&batch);
+    rdp_buffer_init(&batch);
+    rdp_buffer_free(&control);
+    rdp_buffer_init(&control);
+    if (ok)
+    {
+        ok = build_composited_update_batch(&batch) &&
+             rdp_composited_write_data_on_channel(&control,
+                                                  0x51u,
+                                                  batch.data,
+                                                  batch.length) == LIBRDP_STATUS_OK &&
+             write_composited_dynamic_packet_fd(fd, &control, &packet) &&
+             read_client_composited_notification_fd(
+                 fd,
+                 input,
+                 input_capacity,
+                 RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION,
+                 0x51u,
+                 RDP_COMPOSITED_MSG_ROUNDTRIP_REPLY,
+                 2u,
+                 1);
+    }
+    rdp_buffer_free(&batch);
+    rdp_buffer_init(&batch);
+    rdp_buffer_free(&control);
+    rdp_buffer_init(&control);
+    if (ok)
+    {
+        ok = build_composited_delete_batch(&batch) &&
+             rdp_composited_write_data_on_channel(&control,
+                                                  0x51u,
+                                                  batch.data,
+                                                  batch.length) == LIBRDP_STATUS_OK &&
+             write_composited_dynamic_packet_fd(fd, &control, &packet) &&
+             read_client_composited_notification_fd(
+                 fd,
+                 input,
+                 input_capacity,
+                 RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION,
+                 0x51u,
+                 RDP_COMPOSITED_MSG_ROUNDTRIP_REPLY,
+                 3u,
+                 1);
+    }
+    rdp_buffer_free(&control);
+    rdp_buffer_init(&control);
+    if (ok)
+    {
+        ok = rdp_composited_write_control_fixed(&control,
+                                                RDP_COMPOSITED_CONTROL_CLOSE_CHANNEL,
+                                                0x51u,
+                                                0u) == LIBRDP_STATUS_OK &&
+             write_composited_dynamic_packet_fd(fd, &control, &packet);
+    }
+    rdp_buffer_free(&control);
+    rdp_buffer_init(&control);
+    if (ok)
+    {
+        ok = rdp_composited_write_control_fixed(&control,
+                                                RDP_COMPOSITED_CONTROL_CLOSE_CONNECTION,
+                                                0x31u,
+                                                0u) == LIBRDP_STATUS_OK &&
+             write_composited_dynamic_packet_fd(fd, &control, &packet) &&
+             build_dynamic_channel_close_packet(&close) &&
+             write_exact_fd(fd, close.data, close.length);
+    }
+
+    rdp_buffer_free(&close);
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&batch);
+    rdp_buffer_free(&control);
+    rdp_buffer_free(&create);
+    return ok;
 }
 
 static int test_display_control_layout_bounds(const rdp_display_control_monitor* monitors,
@@ -3360,6 +3708,16 @@ int start_handshake_server_full(uint16_t* port,
                     {
                         if (!extra_static_channel ||
                             !run_printer_job_server_scenario(client, input, sizeof(input)))
+                        {
+                            _exit(5);
+                        }
+                        goto done_connection;
+                    }
+                    if (dynamic_channel_scenario == DVC_SCENARIO_COMPOSITED_RUNTIME)
+                    {
+                        if (!run_composited_runtime_server_scenario(client,
+                                                                    input,
+                                                                    sizeof(input)))
                         {
                             _exit(5);
                         }
