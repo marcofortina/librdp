@@ -47,12 +47,15 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #if defined(RDP_HAVE_ATTR) && defined(__linux__)
 #include <sys/xattr.h>
 #endif
@@ -171,7 +174,9 @@ typedef enum smoke_drive_mode
     SMOKE_DRIVE_ENUMERATION = 4,
     SMOKE_DRIVE_LOCKING = 5,
     SMOKE_DRIVE_NOTIFY = 6,
-    SMOKE_DRIVE_METADATA = 7
+    SMOKE_DRIVE_METADATA = 7,
+    SMOKE_DRIVE_CONFINEMENT = 8,
+    SMOKE_DRIVE_DEVICE_NODE = 9
 } smoke_drive_mode;
 
 typedef enum smoke_drive_stage
@@ -245,8 +250,19 @@ typedef enum smoke_drive_stage
     SMOKE_DRIVE_STAGE_QUERY_METADATA_ALL = 66,
     SMOKE_DRIVE_STAGE_QUERY_METADATA_RANGES = 67,
     SMOKE_DRIVE_STAGE_CLOSE_METADATA_FILE = 68,
-    SMOKE_DRIVE_STAGE_COMPLETE = 69,
-    SMOKE_DRIVE_STAGE_FAILED = 70
+    SMOKE_DRIVE_STAGE_REJECT_TRAVERSAL = 69,
+    SMOKE_DRIVE_STAGE_REJECT_ABSOLUTE = 70,
+    SMOKE_DRIVE_STAGE_REJECT_FINAL_SYMLINK = 71,
+    SMOKE_DRIVE_STAGE_REJECT_DIRECTORY_SYMLINK = 72,
+    SMOKE_DRIVE_STAGE_REJECT_FIFO = 73,
+    SMOKE_DRIVE_STAGE_REJECT_SOCKET = 74,
+    SMOKE_DRIVE_STAGE_OPEN_RACE_FILE = 75,
+    SMOKE_DRIVE_STAGE_REJECT_RENAME_TRAVERSAL = 76,
+    SMOKE_DRIVE_STAGE_REJECT_RENAME_RACE = 77,
+    SMOKE_DRIVE_STAGE_CLOSE_RACE_FILE = 78,
+    SMOKE_DRIVE_STAGE_REJECT_DEVICE_NODE = 79,
+    SMOKE_DRIVE_STAGE_COMPLETE = 80,
+    SMOKE_DRIVE_STAGE_FAILED = 81
 } smoke_drive_stage;
 
 typedef struct smoke_drive_profile
@@ -275,12 +291,23 @@ static const smoke_drive_profile smoke_drive_notify = {
 static const smoke_drive_profile smoke_drive_metadata = {
     SMOKE_DRIVE_METADATA,
 };
+static const smoke_drive_profile smoke_drive_confinement = {
+    SMOKE_DRIVE_CONFINEMENT,
+};
+static const smoke_drive_profile smoke_drive_device_node = {
+    SMOKE_DRIVE_DEVICE_NODE,
+};
 static const uint8_t smoke_drive_marker_data[] =
     "temporary client drive\n";
 static const uint8_t smoke_drive_write_data[] = "write-data";
 static const uint8_t smoke_drive_append_data[] = "-append";
 static const uint8_t smoke_drive_metadata_xattr[] =
     "metadata-value";
+static const uint8_t smoke_drive_outside_data[] = "outside-data";
+static const uint8_t smoke_drive_race_original_data[] =
+    "race-original";
+static const uint8_t smoke_drive_race_replacement_data[] =
+    "race-replacement";
 
 typedef struct smoke_drive_information_case
 {
@@ -351,6 +378,23 @@ static const smoke_drive_information_case
         {RDP_SESSION_FILE_ID_ALL_EXTD_BOTH_DIRECTORY_INFORMATION, 122u},
 };
 
+typedef struct smoke_drive_confinement_fixture
+{
+    char outside_directory[160];
+    char outside_file[192];
+    char outside_escape[192];
+    char final_symlink[192];
+    char directory_symlink[192];
+    char fifo[192];
+    char socket[192];
+    char race[192];
+    char race_original[192];
+    char race_renamed[192];
+    char root_escape[192];
+    int socket_fd;
+    int race_swapped;
+} smoke_drive_confinement_fixture;
+
 typedef struct smoke_platform
 {
     server_platform_capture_sink capture_sink;
@@ -379,10 +423,14 @@ typedef struct smoke_platform
     librdp_status drive_failure_status;
     uint32_t drive_failure_io_status;
     const smoke_drive_profile* drive_profile;
+    smoke_drive_confinement_fixture* drive_confinement;
     size_t drive_sequence_index;
     uint8_t pixels[SMOKE_PIXEL_BYTES];
     uint8_t alternate_pixels[SMOKE_PIXEL_BYTES];
 } smoke_platform;
+
+static int smoke_drive_confinement_swap_race(
+    smoke_drive_confinement_fixture* fixture);
 
 typedef struct smoke_host
 {
@@ -1635,7 +1683,9 @@ static void smoke_drive_submit(smoke_platform* platform,
                   platform->drive_profile->mode ==
                       SMOKE_DRIVE_LOCKING ||
                   platform->drive_profile->mode ==
-                      SMOKE_DRIVE_METADATA)
+                      SMOKE_DRIVE_METADATA ||
+                  platform->drive_profile->mode ==
+                      SMOKE_DRIVE_CONFINEMENT)
              ? SMOKE_DRIVE_GENERIC_WRITE
              : 0u);
     request.shared_access = SMOKE_DRIVE_SHARE_ALL;
@@ -1891,6 +1941,42 @@ static librdp_status smoke_drive_present(
     }
     if (platform->drive_profile)
     {
+        if (platform->drive_profile->mode ==
+            SMOKE_DRIVE_CONFINEMENT)
+        {
+            smoke_drive_submit(
+                platform,
+                SMOKE_DRIVE_STAGE_REJECT_TRAVERSAL,
+                LIBRDP_SERVER_DRIVE_CREATE,
+                (librdp_server_drive_file_handle){0},
+                "../outside.txt",
+                NULL,
+                0u,
+                0u,
+                0u,
+                0u,
+                SMOKE_DRIVE_OPEN_EXISTING,
+                0u);
+            return LIBRDP_STATUS_OK;
+        }
+        if (platform->drive_profile->mode ==
+            SMOKE_DRIVE_DEVICE_NODE)
+        {
+            smoke_drive_submit(
+                platform,
+                SMOKE_DRIVE_STAGE_REJECT_DEVICE_NODE,
+                LIBRDP_SERVER_DRIVE_CREATE,
+                (librdp_server_drive_file_handle){0},
+                "null",
+                NULL,
+                0u,
+                0u,
+                0u,
+                0u,
+                SMOKE_DRIVE_OPEN_EXISTING,
+                0u);
+            return LIBRDP_STATUS_OK;
+        }
         if (platform->drive_profile->mode ==
             SMOKE_DRIVE_ENUMERATION)
         {
@@ -3539,6 +3625,343 @@ static librdp_status smoke_drive_complete_metadata(
     return LIBRDP_STATUS_OK;
 }
 
+static int smoke_drive_confinement_path_rejected(
+    librdp_server_drive_io_result io_result)
+{
+    return io_result == LIBRDP_SERVER_DRIVE_IO_NOT_FOUND ||
+           io_result == LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED ||
+           io_result == LIBRDP_SERVER_DRIVE_IO_UNSUPPORTED;
+}
+
+/*
+ * Keep the hostile-path sequence strictly ordered. Traversal is rejected at
+ * both the public application boundary and the counted rename PDU boundary.
+ * The remaining requests cross the RDPDR wire before host postconditions are
+ * checked.
+ */
+static librdp_status smoke_drive_complete_confinement(
+    smoke_platform* platform,
+    smoke_drive_stage stage,
+    librdp_server_drive_io_result io_result,
+    const server_platform_drive_completion* completion)
+{
+    smoke_drive_confinement_fixture* fixture = NULL;
+    uint8_t rename_payload[512];
+    size_t rename_len = 0u;
+
+    if (!platform || !completion)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    fixture = platform->drive_confinement;
+    if (!fixture)
+    {
+        smoke_drive_fail(platform, LIBRDP_STATUS_STATE, 0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_REJECT_TRAVERSAL)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            completion->type !=
+                LIBRDP_SERVER_DRIVE_REQUEST_CANCELLED ||
+            completion->status != LIBRDP_STATUS_STATE)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(
+            platform,
+            SMOKE_DRIVE_STAGE_REJECT_ABSOLUTE,
+            LIBRDP_SERVER_DRIVE_CREATE,
+            (librdp_server_drive_file_handle){0},
+            fixture->outside_file,
+            NULL,
+            0u,
+            0u,
+            0u,
+            0u,
+            SMOKE_DRIVE_OPEN_EXISTING,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (completion->request_id != platform->drive_next_request_id ||
+        completion->type != LIBRDP_SERVER_DRIVE_REQUEST_COMPLETED ||
+        completion->status != LIBRDP_STATUS_OK)
+    {
+        smoke_drive_fail(platform,
+                         completion->status,
+                         completion->io_status);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_REJECT_ABSOLUTE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_NOT_FOUND)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(
+            platform,
+            SMOKE_DRIVE_STAGE_REJECT_FINAL_SYMLINK,
+            LIBRDP_SERVER_DRIVE_CREATE,
+            (librdp_server_drive_file_handle){0},
+            "outside-link",
+            NULL,
+            0u,
+            0u,
+            0u,
+            0u,
+            SMOKE_DRIVE_OPEN_EXISTING,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_REJECT_FINAL_SYMLINK)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            !smoke_drive_confinement_path_rejected(io_result))
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(
+            platform,
+            SMOKE_DRIVE_STAGE_REJECT_DIRECTORY_SYMLINK,
+            LIBRDP_SERVER_DRIVE_CREATE,
+            (librdp_server_drive_file_handle){0},
+            "outside-directory-link/outside.txt",
+            NULL,
+            0u,
+            0u,
+            0u,
+            0u,
+            SMOKE_DRIVE_OPEN_EXISTING,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_REJECT_DIRECTORY_SYMLINK)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            !smoke_drive_confinement_path_rejected(io_result))
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(
+            platform,
+            SMOKE_DRIVE_STAGE_REJECT_FIFO,
+            LIBRDP_SERVER_DRIVE_CREATE,
+            (librdp_server_drive_file_handle){0},
+            "pipe-node",
+            NULL,
+            0u,
+            0u,
+            0u,
+            0u,
+            SMOKE_DRIVE_OPEN_EXISTING,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_REJECT_FIFO)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(
+            platform,
+            SMOKE_DRIVE_STAGE_REJECT_SOCKET,
+            LIBRDP_SERVER_DRIVE_CREATE,
+            (librdp_server_drive_file_handle){0},
+            "socket-node",
+            NULL,
+            0u,
+            0u,
+            0u,
+            0u,
+            SMOKE_DRIVE_OPEN_EXISTING,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_REJECT_SOCKET)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            !smoke_drive_confinement_path_rejected(io_result))
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(
+            platform,
+            SMOKE_DRIVE_STAGE_OPEN_RACE_FILE,
+            LIBRDP_SERVER_DRIVE_CREATE,
+            (librdp_server_drive_file_handle){0},
+            "race.txt",
+            NULL,
+            0u,
+            0u,
+            0u,
+            0u,
+            SMOKE_DRIVE_OPEN_EXISTING,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_OPEN_RACE_FILE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS ||
+            completion->file.file_id == 0u)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        platform->drive_file = completion->file;
+        rename_len = smoke_drive_make_rename_payload(
+            "../escaped.txt",
+            rename_payload,
+            sizeof(rename_payload));
+        if (rename_len == 0u)
+        {
+            smoke_drive_fail(platform, LIBRDP_STATUS_STATE, 0u);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(
+            platform,
+            SMOKE_DRIVE_STAGE_REJECT_RENAME_TRAVERSAL,
+            LIBRDP_SERVER_DRIVE_SET_INFORMATION,
+            platform->drive_file,
+            NULL,
+            rename_payload,
+            rename_len,
+            SMOKE_DRIVE_FILE_RENAME_INFORMATION,
+            0u,
+            0u,
+            0u,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_REJECT_RENAME_TRAVERSAL)
+    {
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_SET_INFORMATION ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_INVALID ||
+            !smoke_drive_confinement_swap_race(fixture))
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        rename_len = smoke_drive_make_rename_payload(
+            "race-renamed.txt",
+            rename_payload,
+            sizeof(rename_payload));
+        if (rename_len == 0u)
+        {
+            smoke_drive_fail(platform, LIBRDP_STATUS_STATE, 0u);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(
+            platform,
+            SMOKE_DRIVE_STAGE_REJECT_RENAME_RACE,
+            LIBRDP_SERVER_DRIVE_SET_INFORMATION,
+            platform->drive_file,
+            NULL,
+            rename_payload,
+            rename_len,
+            SMOKE_DRIVE_FILE_RENAME_INFORMATION,
+            0u,
+            0u,
+            0u,
+            0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_REJECT_RENAME_RACE)
+    {
+        if (completion->operation !=
+                LIBRDP_SERVER_DRIVE_SET_INFORMATION ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        smoke_drive_submit(platform,
+                           SMOKE_DRIVE_STAGE_CLOSE_RACE_FILE,
+                           LIBRDP_SERVER_DRIVE_CLOSE,
+                           platform->drive_file,
+                           NULL,
+                           NULL,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u,
+                           0u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (stage == SMOKE_DRIVE_STAGE_CLOSE_RACE_FILE)
+    {
+        if (completion->operation != LIBRDP_SERVER_DRIVE_CLOSE ||
+            io_result != LIBRDP_SERVER_DRIVE_IO_SUCCESS)
+        {
+            smoke_drive_fail(platform,
+                             LIBRDP_STATUS_PROTOCOL_ERROR,
+                             completion->io_status);
+            return LIBRDP_STATUS_OK;
+        }
+        atomic_store_explicit(&platform->drive_stage,
+                              SMOKE_DRIVE_STAGE_COMPLETE,
+                              memory_order_release);
+        return LIBRDP_STATUS_OK;
+    }
+    smoke_drive_fail(platform,
+                     LIBRDP_STATUS_PROTOCOL_ERROR,
+                     completion->io_status);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status smoke_drive_complete_device_node(
+    smoke_platform* platform,
+    smoke_drive_stage stage,
+    librdp_server_drive_io_result io_result,
+    const server_platform_drive_completion* completion)
+{
+    if (!platform || !completion)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (stage != SMOKE_DRIVE_STAGE_REJECT_DEVICE_NODE ||
+        completion->request_id != platform->drive_next_request_id ||
+        completion->type != LIBRDP_SERVER_DRIVE_REQUEST_COMPLETED ||
+        completion->status != LIBRDP_STATUS_OK ||
+        completion->operation != LIBRDP_SERVER_DRIVE_CREATE ||
+        io_result != LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED)
+    {
+        smoke_drive_fail(platform,
+                         LIBRDP_STATUS_PROTOCOL_ERROR,
+                         completion->io_status);
+        return LIBRDP_STATUS_OK;
+    }
+    atomic_store_explicit(&platform->drive_stage,
+                          SMOKE_DRIVE_STAGE_COMPLETE,
+                          memory_order_release);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status smoke_drive_complete(
     void* context,
     const server_platform_drive_completion* completion)
@@ -3570,6 +3993,22 @@ static librdp_status smoke_drive_complete(
                                            stage,
                                            io_result,
                                            completion);
+    }
+    if (platform->drive_profile->mode ==
+        SMOKE_DRIVE_CONFINEMENT)
+    {
+        return smoke_drive_complete_confinement(platform,
+                                                stage,
+                                                io_result,
+                                                completion);
+    }
+    if (platform->drive_profile->mode ==
+        SMOKE_DRIVE_DEVICE_NODE)
+    {
+        return smoke_drive_complete_device_node(platform,
+                                                stage,
+                                                io_result,
+                                                completion);
     }
     if (completion->request_id != platform->drive_next_request_id ||
         completion->type != LIBRDP_SERVER_DRIVE_REQUEST_COMPLETED ||
@@ -7805,6 +8244,284 @@ static int smoke_wait_for_counter(const atomic_uint* source,
     return 0;
 }
 
+static int smoke_join_path(char* destination,
+                           size_t capacity,
+                           const char* directory,
+                           const char* name)
+{
+    int length = 0;
+
+    if (!destination || capacity == 0u || !directory || !name)
+        return 0;
+    length = snprintf(destination,
+                      capacity,
+                      "%s/%s",
+                      directory,
+                      name);
+    return length > 0 && (size_t)length < capacity;
+}
+
+static int smoke_write_file_data(const char* path,
+                                 const uint8_t* data,
+                                 size_t data_len)
+{
+    size_t offset = 0u;
+    int fd = -1;
+    int ok = 1;
+
+    if (!path || (!data && data_len > 0u))
+        return 0;
+    fd = open(path,
+              O_CREAT | O_EXCL | O_WRONLY,
+              S_IRUSR | S_IWUSR);
+    if (fd < 0)
+        return 0;
+    while (offset < data_len)
+    {
+        ssize_t written =
+            write(fd, data + offset, data_len - offset);
+
+        if (written > 0)
+            offset += (size_t)written;
+        else if (written < 0 && errno == EINTR)
+            continue;
+        else
+        {
+            ok = 0;
+            break;
+        }
+    }
+    if (close(fd) != 0)
+        ok = 0;
+    if (!ok)
+        (void)unlink(path);
+    return ok;
+}
+
+static int smoke_file_matches(const char* path,
+                              const uint8_t* expected,
+                              size_t expected_len)
+{
+    uint8_t buffer[64];
+    size_t offset = 0u;
+    int fd = -1;
+    int ok = 1;
+
+    if (!path || !expected || expected_len > sizeof(buffer))
+        return 0;
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return 0;
+    while (offset < expected_len)
+    {
+        ssize_t count =
+            read(fd, buffer + offset, expected_len - offset);
+
+        if (count > 0)
+            offset += (size_t)count;
+        else if (count < 0 && errno == EINTR)
+            continue;
+        else
+        {
+            ok = 0;
+            break;
+        }
+    }
+    if (ok)
+    {
+        uint8_t trailing = 0u;
+
+        ok = read(fd, &trailing, 1u) == 0 &&
+             memcmp(buffer, expected, expected_len) == 0;
+    }
+    if (close(fd) != 0)
+        ok = 0;
+    return ok;
+}
+
+/*
+ * Build hostile filesystem objects without elevated privileges. A separate
+ * read-only /dev mapping exercises the character-device case.
+ */
+static int smoke_drive_confinement_fixture_init(
+    smoke_drive_confinement_fixture* fixture,
+    const char* drive_root)
+{
+    struct sockaddr_un address;
+    socklen_t address_len = 0u;
+    size_t socket_path_len = 0u;
+    int length = 0;
+
+    if (!fixture || !drive_root)
+        return 0;
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->socket_fd = -1;
+    length = snprintf(fixture->outside_directory,
+                      sizeof(fixture->outside_directory),
+                      "/tmp/librdp-drive-outside-%ld-XXXXXX",
+                      (long)getpid());
+    if (length < 0 ||
+        (size_t)length >= sizeof(fixture->outside_directory) ||
+        !mkdtemp(fixture->outside_directory) ||
+        !smoke_join_path(fixture->outside_file,
+                         sizeof(fixture->outside_file),
+                         fixture->outside_directory,
+                         "outside.txt") ||
+        !smoke_join_path(fixture->outside_escape,
+                         sizeof(fixture->outside_escape),
+                         fixture->outside_directory,
+                         "escaped.txt") ||
+        !smoke_join_path(fixture->final_symlink,
+                         sizeof(fixture->final_symlink),
+                         drive_root,
+                         "outside-link") ||
+        !smoke_join_path(fixture->directory_symlink,
+                         sizeof(fixture->directory_symlink),
+                         drive_root,
+                         "outside-directory-link") ||
+        !smoke_join_path(fixture->fifo,
+                         sizeof(fixture->fifo),
+                         drive_root,
+                         "pipe-node") ||
+        !smoke_join_path(fixture->socket,
+                         sizeof(fixture->socket),
+                         drive_root,
+                         "socket-node") ||
+        !smoke_join_path(fixture->race,
+                         sizeof(fixture->race),
+                         drive_root,
+                         "race.txt") ||
+        !smoke_join_path(fixture->race_original,
+                         sizeof(fixture->race_original),
+                         drive_root,
+                         "race-original.txt") ||
+        !smoke_join_path(fixture->race_renamed,
+                         sizeof(fixture->race_renamed),
+                         drive_root,
+                         "race-renamed.txt") ||
+        !smoke_join_path(fixture->root_escape,
+                         sizeof(fixture->root_escape),
+                         drive_root,
+                         "escaped.txt") ||
+        !smoke_write_file_data(
+            fixture->outside_file,
+            smoke_drive_outside_data,
+            sizeof(smoke_drive_outside_data) - 1u) ||
+        !smoke_write_file_data(
+            fixture->race,
+            smoke_drive_race_original_data,
+            sizeof(smoke_drive_race_original_data) - 1u) ||
+        symlink(fixture->outside_file,
+                fixture->final_symlink) != 0 ||
+        symlink(fixture->outside_directory,
+                fixture->directory_symlink) != 0 ||
+        mkfifo(fixture->fifo, S_IRUSR | S_IWUSR) != 0)
+        return 0;
+    fixture->socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    socket_path_len = strlen(fixture->socket);
+    if (fixture->socket_fd < 0 ||
+        socket_path_len >= sizeof(address.sun_path))
+        return 0;
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    memcpy(address.sun_path,
+           fixture->socket,
+           socket_path_len + 1u);
+    address_len = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
+                              socket_path_len + 1u);
+    return bind(fixture->socket_fd,
+                (const struct sockaddr*)&address,
+                address_len) == 0;
+}
+
+static void smoke_drive_confinement_fixture_clear(
+    smoke_drive_confinement_fixture* fixture)
+{
+    if (!fixture)
+        return;
+    if (fixture->socket_fd >= 0)
+    {
+        (void)close(fixture->socket_fd);
+        fixture->socket_fd = -1;
+    }
+    if (fixture->socket[0] != '\0')
+        (void)unlink(fixture->socket);
+    if (fixture->fifo[0] != '\0')
+        (void)unlink(fixture->fifo);
+    if (fixture->final_symlink[0] != '\0')
+        (void)unlink(fixture->final_symlink);
+    if (fixture->directory_symlink[0] != '\0')
+        (void)unlink(fixture->directory_symlink);
+    if (fixture->race[0] != '\0')
+        (void)unlink(fixture->race);
+    if (fixture->race_original[0] != '\0')
+        (void)unlink(fixture->race_original);
+    if (fixture->race_renamed[0] != '\0')
+        (void)unlink(fixture->race_renamed);
+    if (fixture->root_escape[0] != '\0')
+        (void)unlink(fixture->root_escape);
+    if (fixture->outside_escape[0] != '\0')
+        (void)unlink(fixture->outside_escape);
+    if (fixture->outside_file[0] != '\0')
+        (void)unlink(fixture->outside_file);
+    if (fixture->outside_directory[0] != '\0')
+        (void)rmdir(fixture->outside_directory);
+}
+
+static int smoke_drive_confinement_swap_race(
+    smoke_drive_confinement_fixture* fixture)
+{
+    if (!fixture || fixture->race_swapped ||
+        rename(fixture->race, fixture->race_original) != 0)
+        return 0;
+    if (!smoke_write_file_data(
+            fixture->race,
+            smoke_drive_race_replacement_data,
+            sizeof(smoke_drive_race_replacement_data) - 1u))
+        return 0;
+    fixture->race_swapped = 1;
+    return 1;
+}
+
+static int smoke_drive_confinement_fixture_valid(
+    const smoke_drive_confinement_fixture* fixture)
+{
+    struct stat st;
+
+    if (!fixture || !fixture->race_swapped ||
+        !smoke_file_matches(
+            fixture->outside_file,
+            smoke_drive_outside_data,
+            sizeof(smoke_drive_outside_data) - 1u) ||
+        !smoke_file_matches(
+            fixture->race_original,
+            smoke_drive_race_original_data,
+            sizeof(smoke_drive_race_original_data) - 1u) ||
+        !smoke_file_matches(
+            fixture->race,
+            smoke_drive_race_replacement_data,
+            sizeof(smoke_drive_race_replacement_data) - 1u) ||
+        access(fixture->race_renamed, F_OK) == 0 ||
+        access(fixture->root_escape, F_OK) == 0 ||
+        access(fixture->outside_escape, F_OK) == 0)
+        return 0;
+    memset(&st, 0, sizeof(st));
+    if (lstat(fixture->final_symlink, &st) != 0 ||
+        !S_ISLNK(st.st_mode))
+        return 0;
+    memset(&st, 0, sizeof(st));
+    if (lstat(fixture->directory_symlink, &st) != 0 ||
+        !S_ISLNK(st.st_mode))
+        return 0;
+    memset(&st, 0, sizeof(st));
+    if (lstat(fixture->fifo, &st) != 0 ||
+        !S_ISFIFO(st.st_mode))
+        return 0;
+    memset(&st, 0, sizeof(st));
+    return lstat(fixture->socket, &st) == 0 &&
+           S_ISSOCK(st.st_mode);
+}
+
 static int smoke_make_drive(char* directory,
                             size_t directory_size,
                             char* marker,
@@ -7956,6 +8673,7 @@ static int smoke_run_profile_ex(
     smoke_client_events events;
     smoke_nla_provider nla_provider;
     smoke_trace_capture trace_capture;
+    smoke_drive_confinement_fixture drive_confinement;
     test_http_proxy proxy;
     test_http_proxy_config proxy_config;
     test_rdg_gateway rdg_gateway;
@@ -7983,6 +8701,7 @@ static int smoke_run_profile_ex(
     uint8_t initial_pixel[4] = {0};
     int clipboard_sent = 0;
     int curl_environment_changed = 0;
+    int drive_directory_owned = 0;
     int input_sent = 0;
     int proxy_started = 0;
     int rdg_started = 0;
@@ -8006,6 +8725,8 @@ static int smoke_run_profile_ex(
     memset(&events, 0, sizeof(events));
     memset(&nla_provider, 0, sizeof(nla_provider));
     memset(&trace_capture, 0, sizeof(trace_capture));
+    memset(&drive_confinement, 0, sizeof(drive_confinement));
+    drive_confinement.socket_fd = -1;
     memset(&proxy, 0, sizeof(proxy));
     memset(&proxy_config, 0, sizeof(proxy_config));
     memset(&rdg_gateway, 0, sizeof(rdg_gateway));
@@ -8030,10 +8751,30 @@ static int smoke_run_profile_ex(
     REQUIRE(target != NULL);
     atomic_init(&host_fixture.port, 0u);
     host_fixture.status = LIBRDP_STATUS_AGAIN;
-    REQUIRE(smoke_make_drive(drive_directory,
-                             sizeof(drive_directory),
-                             drive_marker,
-                             sizeof(drive_marker)));
+    if (drive_profile &&
+        drive_profile->mode == SMOKE_DRIVE_DEVICE_NODE)
+    {
+        REQUIRE(snprintf(drive_directory,
+                         sizeof(drive_directory),
+                         "%s",
+                         "/dev") ==
+                (int)sizeof("/dev") - 1);
+    }
+    else
+    {
+        REQUIRE(smoke_make_drive(drive_directory,
+                                 sizeof(drive_directory),
+                                 drive_marker,
+                                 sizeof(drive_marker)));
+        drive_directory_owned = 1;
+    }
+    if (drive_profile &&
+        drive_profile->mode == SMOKE_DRIVE_CONFINEMENT)
+    {
+        REQUIRE(smoke_drive_confinement_fixture_init(
+            &drive_confinement,
+            drive_directory));
+    }
 #if defined(RDP_HAVE_ATTR) && defined(__linux__)
     if (drive_profile &&
         drive_profile->mode == SMOKE_DRIVE_METADATA)
@@ -8068,6 +8809,11 @@ static int smoke_run_profile_ex(
                         &host_config,
                         clipboard_provider,
                         drive_profile);
+    platform.drive_confinement =
+        drive_profile &&
+                drive_profile->mode == SMOKE_DRIVE_CONFINEMENT
+            ? &drive_confinement
+            : NULL;
     host_config.trace_callback = smoke_host_trace_callback;
     host_config.trace_user_data = &platform;
 
@@ -8091,20 +8837,26 @@ static int smoke_run_profile_ex(
         REQUIRE(librdp_drive_policy_init(&drive_policy) ==
                 LIBRDP_STATUS_OK);
         drive_policy.read_only =
-            drive_profile->mode == SMOKE_DRIVE_READ_ONLY ? 1 : 0;
+            drive_profile->mode == SMOKE_DRIVE_READ_ONLY ||
+                    drive_profile->mode == SMOKE_DRIVE_DEVICE_NODE
+                ? 1
+                : 0;
         drive_policy.deny_dotfiles = 0;
         REQUIRE(librdp_settings_set_drive_policy(settings,
                                                  0u,
                                                  &drive_policy) ==
                 LIBRDP_STATUS_OK);
-        REQUIRE(snprintf(drive_created,
-                         sizeof(drive_created),
-                         "%s/created.bin",
-                         drive_directory) > 0);
-        REQUIRE(snprintf(drive_renamed,
-                         sizeof(drive_renamed),
-                         "%s/renamed.bin",
-                         drive_directory) > 0);
+        if (drive_profile->mode != SMOKE_DRIVE_DEVICE_NODE)
+        {
+            REQUIRE(snprintf(drive_created,
+                             sizeof(drive_created),
+                             "%s/created.bin",
+                             drive_directory) > 0);
+            REQUIRE(snprintf(drive_renamed,
+                             sizeof(drive_renamed),
+                             "%s/renamed.bin",
+                             drive_directory) > 0);
+        }
         if (drive_profile->mode == SMOKE_DRIVE_NOTIFY)
         {
             REQUIRE(snprintf(drive_notify_directory,
@@ -9024,6 +9776,24 @@ static int smoke_run_profile_ex(
             REQUIRE(0);
 #endif
         }
+        else if (drive_profile->mode ==
+                 SMOKE_DRIVE_CONFINEMENT)
+        {
+            REQUIRE(atomic_load_explicit(
+                        &platform.drive_completions,
+                        memory_order_acquire) == 10u);
+            REQUIRE(smoke_drive_confinement_fixture_valid(
+                &drive_confinement));
+            REQUIRE(access(drive_marker, F_OK) == 0);
+        }
+        else if (drive_profile->mode ==
+                 SMOKE_DRIVE_DEVICE_NODE)
+        {
+            REQUIRE(atomic_load_explicit(
+                        &platform.drive_completions,
+                        memory_order_acquire) == 1u);
+            REQUIRE(access("/dev/null", F_OK) == 0);
+        }
         else
         {
             REQUIRE(drive_profile->mode ==
@@ -9209,20 +9979,24 @@ cleanup:
     librdp_settings_free(settings);
     server_host_free(host_fixture.host);
     server_client_clipboard_provider_free(clipboard_provider);
-    if (drive_marker[0] != '\0')
-        (void)unlink(drive_marker);
-    if (drive_created[0] != '\0')
-        (void)unlink(drive_created);
-    if (drive_renamed[0] != '\0')
-        (void)unlink(drive_renamed);
-    if (drive_notify_first[0] != '\0')
-        (void)unlink(drive_notify_first);
-    if (drive_notify_late[0] != '\0')
-        (void)unlink(drive_notify_late);
-    if (drive_notify_directory[0] != '\0')
-        (void)rmdir(drive_notify_directory);
-    if (drive_directory[0] != '\0')
-        (void)rmdir(drive_directory);
+    smoke_drive_confinement_fixture_clear(&drive_confinement);
+    if (drive_directory_owned)
+    {
+        if (drive_marker[0] != '\0')
+            (void)unlink(drive_marker);
+        if (drive_created[0] != '\0')
+            (void)unlink(drive_created);
+        if (drive_renamed[0] != '\0')
+            (void)unlink(drive_renamed);
+        if (drive_notify_first[0] != '\0')
+            (void)unlink(drive_notify_first);
+        if (drive_notify_late[0] != '\0')
+            (void)unlink(drive_notify_late);
+        if (drive_notify_directory[0] != '\0')
+            (void)rmdir(drive_notify_directory);
+        if (drive_directory[0] != '\0')
+            (void)rmdir(drive_directory);
+    }
     if (cert_path[0] != '\0')
         (void)unlink(cert_path);
     if (key_path[0] != '\0')
@@ -11562,6 +12336,12 @@ int main(int argc, char** argv)
         return smoke_run_drive_profile(&smoke_drive_locking);
     if (argc == 2 && strcmp(argv[1], "drive-notify") == 0)
         return smoke_run_drive_profile(&smoke_drive_notify);
+    if (argc == 2 &&
+        strcmp(argv[1], "drive-confinement") == 0)
+        return smoke_run_drive_profile(&smoke_drive_confinement);
+    if (argc == 2 &&
+        strcmp(argv[1], "drive-device-node") == 0)
+        return smoke_run_drive_profile(&smoke_drive_device_node);
     if (argc == 2 && strcmp(argv[1], "drive-metadata") == 0)
     {
 #if defined(RDP_HAVE_ATTR) && defined(__linux__)
@@ -11701,7 +12481,8 @@ int main(int argc, char** argv)
                 "redirection-standard|redirection-tls|redirection-loop|"
                 "lifecycle-stress|drive-read-only|drive-writable|"
                 "drive-information|drive-enumeration|drive-locking|"
-                "drive-notify|drive-metadata|"
+                "drive-notify|drive-metadata|drive-confinement|"
+                "drive-device-node|"
                 "clipboard-text|clipboard-html|"
                 "clipboard-png|output-control|"
                 "cancel-connecting|cancel-negotiating|"
