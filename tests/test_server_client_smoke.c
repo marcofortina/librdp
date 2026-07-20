@@ -463,6 +463,7 @@ typedef struct smoke_client_events
     unsigned int clipboard_request_events;
     unsigned int clipboard_failures;
     const server_client_clipboard_profile* clipboard_profile;
+    server_client_clipboard_provider* clipboard_provider;
     int clipboard_data_requested;
     int active;
     int active_seen;
@@ -534,6 +535,9 @@ typedef struct smoke_trace_capture
     unsigned int clipboard_requests;
     unsigned int clipboard_responses;
     unsigned int clipboard_local_responses;
+    unsigned int clipboard_file_requests;
+    unsigned int clipboard_file_inbound_requests;
+    unsigned int clipboard_file_responses;
     unsigned int cancel_requests;
     int cancel_phase;
     librdp_status cancel_status;
@@ -928,6 +932,22 @@ static void smoke_trace_callback(librdp_session* session,
              strcmp(record->event,
                     "client.clipboard.format_data_response.local") == 0)
         capture->clipboard_local_responses++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.clipboard.request_file") == 0)
+        capture->clipboard_file_requests++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.clipboard.filecontents_request") == 0 &&
+             record->category &&
+             strcmp(record->category, "client") == 0)
+        capture->clipboard_file_inbound_requests++;
+    else if (record->event &&
+             strcmp(record->event,
+                    "client.clipboard.filecontents_response") == 0 &&
+             record->category &&
+             strcmp(record->category, "client") == 0)
+        capture->clipboard_file_responses++;
     else if (record->event &&
              strcmp(record->event, "client.lifecycle") == 0 &&
              record->message)
@@ -4729,6 +4749,13 @@ static void smoke_client_event(librdp_session* session,
         events->surface_events++;
     else if (event->type == LIBRDP_EVENT_ERROR)
         events->error_events++;
+    else if (events->clipboard_provider &&
+             server_client_clipboard_provider_handle_client_event(
+                 events->clipboard_provider,
+                 session,
+                 event))
+    {
+    }
     else if (event->type == LIBRDP_EVENT_CLIPBOARD_FORMATS &&
              events->clipboard_profile)
     {
@@ -4794,6 +4821,9 @@ static int smoke_clipboard_profile_complete(
 {
     if (!provider || !events || !events->clipboard_profile)
         return 0;
+    if (server_client_clipboard_profile_is_file_transfer(
+            events->clipboard_profile))
+        return server_client_clipboard_provider_complete(provider);
     return events->clipboard_format_events > 0u &&
            events->clipboard_data_events == 1u &&
            events->clipboard_request_events == 1u &&
@@ -5086,6 +5116,7 @@ static int smoke_run_profile(librdp_security_mode security,
     clipboard_provider =
         server_client_clipboard_provider_new(clipboard_profile);
     REQUIRE(clipboard_provider != NULL);
+    events.clipboard_provider = clipboard_provider;
     smoke_platform_init(&platform,
                         &host_config,
                         clipboard_provider);
@@ -5522,24 +5553,11 @@ static int smoke_run_profile(librdp_security_mode security,
             librdp_surface_height(surface) == SMOKE_HEIGHT;
         if (desktop_ready && !clipboard_sent)
         {
-            if (clipboard_profile &&
-                clipboard_profile->format_name)
-            {
-                status = librdp_session_clipboard_set_named_data(
-                    session,
-                    clipboard_profile->format_id,
-                    clipboard_profile->format_name,
-                    clipboard_profile->client_data,
-                    clipboard_profile->client_data_len);
-            }
-            else if (clipboard_profile)
-            {
-                status = librdp_session_clipboard_set_data(
-                    session,
-                    clipboard_profile->format_id,
-                    clipboard_profile->client_data,
-                    clipboard_profile->client_data_len);
-            }
+            if (clipboard_profile)
+                status =
+                    server_client_clipboard_provider_publish_client(
+                        clipboard_provider,
+                        session);
             else
             {
                 status = librdp_session_clipboard_set_data(
@@ -5795,6 +5813,15 @@ static int smoke_run_profile(librdp_security_mode security,
         REQUIRE(trace_capture.clipboard_requests == 1u);
         REQUIRE(trace_capture.clipboard_responses == 1u);
         REQUIRE(trace_capture.clipboard_local_responses == 1u);
+        if (server_client_clipboard_profile_is_file_transfer(
+                clipboard_profile))
+        {
+            REQUIRE(trace_capture.clipboard_file_requests == 8u);
+            REQUIRE(
+                trace_capture.clipboard_file_inbound_requests ==
+                8u);
+            REQUIRE(trace_capture.clipboard_file_responses == 8u);
+        }
     }
     if (exercise_output_control)
     {

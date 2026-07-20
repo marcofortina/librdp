@@ -570,6 +570,8 @@ if(LIBRDP_BUILD_TESTS)
              COMMAND test_server_client_smoke clipboard-html)
     add_test(NAME server_client_smoke_clipboard_png
              COMMAND test_server_client_smoke clipboard-png)
+    add_test(NAME server_client_smoke_clipboard_files
+             COMMAND test_server_client_smoke clipboard-files)
     if(TARGET test_workspace_launch_smoke)
         add_test(NAME workspace_desktop_launch_smoke
             COMMAND test_workspace_launch_smoke
@@ -762,6 +764,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_clipboard_text
         server_client_smoke_clipboard_html
         server_client_smoke_clipboard_png
+        server_client_smoke_clipboard_files
         server_client_smoke_nla_invalid
         server_client_smoke_nla_expired
         server_client_smoke_nla_locked
