@@ -178,7 +178,7 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
         }
         server_config.version = client_data.version ? client_data.version : RDP_GCC_CLIENT_VERSION_5;
         server_config.selected_protocol = peer->selected_protocol;
-        server_config.early_capability_flags = client_data.early_capability_flags;
+        server_config.early_capability_flags = 0u;
         server_config.mcs_channel_id = (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID;
         server_config.channel_count = client_data.channel_count;
         peer->multitransport_negotiated = 0;

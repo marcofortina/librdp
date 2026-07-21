@@ -615,6 +615,7 @@ int test_server_loopback_standard_activation_sequence(void)
                                             gcc_response.user_data_len,
                                             &server_data) == LIBRDP_STATUS_OK);
     SCHECK(server_data.has_core && server_data.has_security && server_data.has_network);
+    SCHECK(server_data.early_capability_flags == 0u);
     SCHECK(server_data.has_multitransport);
     SCHECK((server_data.multitransport_flags &
             (RDP_GCC_MULTITRANSPORT_UDP_FECR |

@@ -501,6 +501,18 @@ static int test_mcs_gcc_capabilities(void)
         rdp_buffer_free(&server_blocks);
         rdp_buffer_init(&server_blocks);
     }
+    {
+        rdp_gcc_server_config server_config;
+
+        memset(&server_config, 0, sizeof(server_config));
+        server_config.early_capability_flags = RDP_GCC_SERVER_EARLY_KNOWN_FLAGS | 0x10u;
+        PCHECK(rdp_buffer_append_u8(&server_blocks, 0xa5u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_gcc_write_server_data_blocks(&server_blocks, &server_config) ==
+               LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(server_blocks.length == 1u && server_blocks.data[0] == 0xa5u);
+        rdp_buffer_free(&server_blocks);
+        rdp_buffer_init(&server_blocks);
+    }
     PCHECK(rdp_gcc_parse_server_data_blocks(gcc_server_blocks, sizeof(gcc_server_blocks) - 1u, &server_data) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_gcc_parse_conference_create_response(gcc_response, sizeof(gcc_response), &conference_response) ==

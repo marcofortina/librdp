@@ -598,6 +598,8 @@ librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc
 
     if (!buffer || !config || config->channel_count > RDP_GCC_MAX_SERVER_CHANNELS)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((config->early_capability_flags & ~RDP_GCC_SERVER_EARLY_KNOWN_FLAGS) != 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     if ((config->encryption_method != 0 || config->encryption_level != 0) &&
         (!config->server_random || !config->server_certificate || config->server_random_len == 0 ||
          config->server_certificate_len == 0))
