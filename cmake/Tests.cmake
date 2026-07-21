@@ -805,6 +805,10 @@ if(LIBRDP_BUILD_TESTS)
     endif()
     add_test(NAME server_client_smoke_nla_invalid
              COMMAND test_server_client_smoke nla-invalid)
+    add_test(NAME server_client_smoke_nla_unknown_user
+             COMMAND test_server_client_smoke nla-unknown-user)
+    add_test(NAME server_client_smoke_nla_wrong_domain
+             COMMAND test_server_client_smoke nla-wrong-domain)
     add_test(NAME server_client_smoke_nla_expired
              COMMAND test_server_client_smoke nla-expired)
     add_test(NAME server_client_smoke_nla_locked

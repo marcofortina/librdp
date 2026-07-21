@@ -136,6 +136,16 @@ static const smoke_nla_identity smoke_nla_utf8_identity = {
     "smoke-secret-797",
     "D\xc3\x96M\xc3\x84IN-809",
 };
+static const smoke_nla_identity smoke_nla_unknown_user_identity = {
+    "unknown-smoke-user-853",
+    "smoke-secret-857",
+    "SMOKE-DOMAIN-733",
+};
+static const smoke_nla_identity smoke_nla_wrong_domain_identity = {
+    "smoke-user-731",
+    "smoke-secret-859",
+    "UNTRUSTED-DOMAIN-863",
+};
 static const smoke_nla_identity smoke_gateway_identity = {
     "gateway-user-811",
     "gateway-secret-821",
@@ -784,6 +794,8 @@ typedef struct smoke_nla_provider
 {
     librdp_status status;
     unsigned int calls;
+    const smoke_nla_identity* expected_identity;
+    int identity_matched;
 } smoke_nla_provider;
 
 typedef struct smoke_trace_capture
@@ -945,6 +957,19 @@ static librdp_status smoke_nla_credentials_provider(
     if (!peer || !request || !credentials || !provider)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     provider->calls++;
+    if (provider->expected_identity)
+    {
+        const char* expected_domain =
+            provider->expected_identity->domain;
+
+        provider->identity_matched =
+            request->username &&
+            strcmp(request->username,
+                   provider->expected_identity->username) == 0 &&
+            ((!expected_domain && !request->domain) ||
+             (expected_domain && request->domain &&
+              strcmp(request->domain, expected_domain) == 0));
+    }
     return provider->status;
 }
 
@@ -9495,6 +9520,7 @@ static int smoke_run_profile_ex(
     {
         REQUIRE(security == LIBRDP_SECURITY_NLA);
         nla_provider.status = expected_connect_status;
+        nla_provider.expected_identity = identity;
         host_config.credentials_provider = smoke_nla_credentials_provider;
         host_config.credentials_provider_user_data = &nla_provider;
     }
@@ -9804,6 +9830,7 @@ static int smoke_run_profile_ex(
 
         REQUIRE(connect_status == expected_connect_status);
         REQUIRE(nla_provider.calls == 1u);
+        REQUIRE(nla_provider.identity_matched);
         REQUIRE(trace_capture.records > 0u);
         REQUIRE(trace_capture.connect_starts == 1u);
         REQUIRE(trace_capture.connect_completions == 1u);
@@ -12742,6 +12769,18 @@ static int smoke_parse_security(const char* value,
         *security = LIBRDP_SECURITY_NLA;
         *expected_status = LIBRDP_STATUS_AUTHENTICATION_FAILED;
     }
+    else if (strcmp(value, "nla-unknown-user") == 0)
+    {
+        *security = LIBRDP_SECURITY_NLA;
+        *expected_status = LIBRDP_STATUS_AUTHENTICATION_FAILED;
+        *identity = &smoke_nla_unknown_user_identity;
+    }
+    else if (strcmp(value, "nla-wrong-domain") == 0)
+    {
+        *security = LIBRDP_SECURITY_NLA;
+        *expected_status = LIBRDP_STATUS_AUTHENTICATION_FAILED;
+        *identity = &smoke_nla_wrong_domain_identity;
+    }
     else if (strcmp(value, "nla-expired") == 0)
     {
         *security = LIBRDP_SECURITY_NLA;
@@ -13191,7 +13230,8 @@ int main(int argc, char** argv)
         fprintf(stderr,
                 "usage: test_server_client_smoke "
                 "standard|standard-dns|standard-ipv6|tls|nla|"
-                "nla-invalid|nla-expired|nla-locked|"
+                "nla-invalid|nla-unknown-user|nla-wrong-domain|"
+                "nla-expired|nla-locked|"
                 "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8|"
                 "timeout-credssp|standard-integrity|fastpath-bitmap|"
                 "fastpath-nscodec|fastpath-rfx|"
