@@ -18,5 +18,10 @@
 
 void rdp_session_multitransport_reset(librdp_session* session,
                                       int reset_metrics);
+librdp_status rdp_session_handle_multitransport_message(
+    librdp_session* session,
+    uint16_t security_flags,
+    const uint8_t* payload,
+    size_t payload_len);
 
 #endif

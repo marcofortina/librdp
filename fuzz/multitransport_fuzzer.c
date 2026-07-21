@@ -31,6 +31,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_multitransport_create_request request;
     rdp_multitransport_create_response response;
     rdp_multitransport_data tunnel_data;
+    rdp_multitransport_initiate_request initiate_request;
+    rdp_multitransport_initiate_response initiate_response;
     rdp_buffer buffer;
     rdp_buffer subheader_bytes;
     uint16_t subheader_count = 0;
@@ -42,12 +44,29 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_multitransport_parse_create_request(data, size, &request);
     (void)rdp_multitransport_parse_create_response(data, size, &response);
     (void)rdp_multitransport_parse_data(data, size, &tunnel_data);
+    (void)rdp_multitransport_parse_initiate_request(data,
+                                                    size,
+                                                    &initiate_request);
+    (void)rdp_multitransport_parse_initiate_response(data,
+                                                     size,
+                                                     &initiate_response);
 
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&subheader_bytes);
     (void)rdp_multitransport_write_create_request(&buffer, 1, cookie);
     buffer.length = 0;
     (void)rdp_multitransport_write_create_response(&buffer, 0);
+    buffer.length = 0;
+    (void)rdp_multitransport_write_initiate_request(
+        &buffer,
+        1u,
+        RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE,
+        cookie);
+    buffer.length = 0;
+    (void)rdp_multitransport_write_initiate_response(
+        &buffer,
+        1u,
+        RDP_MULTITRANSPORT_HRESULT_ABORT);
     buffer.length = 0;
     (void)rdp_multitransport_write_subheader(&subheader_bytes,
                                              RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST,

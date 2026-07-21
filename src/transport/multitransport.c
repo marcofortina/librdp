@@ -330,3 +330,114 @@ librdp_status rdp_multitransport_parse_data(const void* data,
     *tunnel_data = parsed;
     return LIBRDP_STATUS_OK;
 }
+
+static int rdp_multitransport_valid_requested_protocol(uint16_t protocol)
+{
+    return protocol == RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE ||
+           protocol == RDP_MULTITRANSPORT_PROTOCOL_UDP_LOSSY;
+}
+
+/*
+ * Encode the fixed Message Channel bootstrap request independently from the
+ * tunnel framing above. The request is transactional so a failed append never
+ * leaves a partial request in a caller-owned buffer.
+ */
+librdp_status rdp_multitransport_write_initiate_request(
+    rdp_buffer* buffer,
+    uint32_t request_id,
+    uint16_t requested_protocol,
+    const uint8_t security_cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH])
+{
+    size_t start = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !security_cookie ||
+        !rdp_multitransport_valid_requested_protocol(requested_protocol))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
+    status = rdp_buffer_append_u32_le(buffer, request_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, requested_protocol);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer,
+                                   security_cookie,
+                                   RDP_MULTITRANSPORT_COOKIE_LENGTH);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
+    return status;
+}
+
+librdp_status rdp_multitransport_parse_initiate_request(
+    const void* data,
+    size_t length,
+    rdp_multitransport_initiate_request* request)
+{
+    rdp_multitransport_initiate_request parsed;
+    rdp_stream stream;
+    const uint8_t* cookie = NULL;
+
+    if (!data || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != RDP_MULTITRANSPORT_INITIATE_REQUEST_LENGTH)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(&parsed, 0, sizeof(parsed));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u32_le(&stream, &parsed.request_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.requested_protocol) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.reserved) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_bytes(&stream,
+                              &cookie,
+                              RDP_MULTITRANSPORT_COOKIE_LENGTH) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0u || parsed.reserved != 0u ||
+        !rdp_multitransport_valid_requested_protocol(parsed.requested_protocol))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memcpy(parsed.security_cookie, cookie, sizeof(parsed.security_cookie));
+    *request = parsed;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_multitransport_write_initiate_response(
+    rdp_buffer* buffer,
+    uint32_t request_id,
+    uint32_t hresult)
+{
+    size_t start = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (hresult != RDP_MULTITRANSPORT_HRESULT_OK &&
+                    hresult != RDP_MULTITRANSPORT_HRESULT_ABORT))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
+    status = rdp_buffer_append_u32_le(buffer, request_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, hresult);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
+    return status;
+}
+
+librdp_status rdp_multitransport_parse_initiate_response(
+    const void* data,
+    size_t length,
+    rdp_multitransport_initiate_response* response)
+{
+    rdp_multitransport_initiate_response parsed;
+    rdp_stream stream;
+
+    if (!data || !response)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != RDP_MULTITRANSPORT_INITIATE_RESPONSE_LENGTH)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(&parsed, 0, sizeof(parsed));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u32_le(&stream, &parsed.request_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.hresult) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0u ||
+        (parsed.hresult != RDP_MULTITRANSPORT_HRESULT_OK &&
+         parsed.hresult != RDP_MULTITRANSPORT_HRESULT_ABORT))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *response = parsed;
+    return LIBRDP_STATUS_OK;
+}

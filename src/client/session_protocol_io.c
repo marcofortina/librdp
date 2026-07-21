@@ -223,7 +223,9 @@ librdp_status rdp_session_write_message_channel_pdu(
     if (!session || !payload || !event || session->message_channel_id == 0u ||
         !session->message_channel_joined ||
         (security_flags != RDP_SEC_AUTODETECT_REQ &&
-         security_flags != RDP_SEC_AUTODETECT_RSP))
+         security_flags != RDP_SEC_AUTODETECT_RSP &&
+         security_flags != RDP_SEC_TRANSPORT_REQ &&
+         security_flags != RDP_SEC_TRANSPORT_RSP))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&secured);

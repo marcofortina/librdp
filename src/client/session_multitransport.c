@@ -16,6 +16,10 @@
 #include "client/session_internal.h"
 
 #include "common/trace.h"
+#include "client/session_protocol_io.h"
+#include "protocol/gcc.h"
+#include "security/security.h"
+#include "transport/multitransport.h"
 #include "transport/udp_transport.h"
 
 #include <string.h>
@@ -133,6 +137,70 @@ void rdp_session_multitransport_reset(librdp_session* session,
     if (reset_metrics)
         (void)librdp_multitransport_metrics_init(
             &session->multitransport_metrics);
+}
+
+/*
+ * Process the primary Message Channel bootstrap record. The application-owned
+ * side-transport contract cannot be completed synchronously by the core, so a
+ * valid request receives the protocol-defined failure response and the TCP
+ * transport remains authoritative. This path must never mark UDP active.
+ */
+librdp_status rdp_session_handle_multitransport_message(
+    librdp_session* session,
+    uint16_t security_flags,
+    const uint8_t* payload,
+    size_t payload_len)
+{
+    rdp_multitransport_initiate_request request;
+    rdp_buffer response;
+    uint32_t required_flag = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !payload || session->message_channel_id == 0u ||
+        !session->message_channel_joined)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((security_flags & (RDP_SEC_TRANSPORT_REQ | RDP_SEC_TRANSPORT_RSP)) !=
+        RDP_SEC_TRANSPORT_REQ)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_multitransport_parse_initiate_request(payload,
+                                                       payload_len,
+                                                       &request);
+    if (status != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    required_flag = request.requested_protocol ==
+                            RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE ?
+                        RDP_GCC_MULTITRANSPORT_UDP_FECR :
+                        RDP_GCC_MULTITRANSPORT_UDP_FECL;
+    if (!session->multitransport_negotiated ||
+        (session->multitransport_flags & required_flag) == 0u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "rdp.multitransport.request",
+                    "request_id=%u protocol=%u side_transport=unavailable",
+                    request.request_id,
+                    request.requested_protocol);
+    rdp_buffer_init(&response);
+    status = rdp_multitransport_write_initiate_response(
+        &response,
+        request.request_id,
+        RDP_MULTITRANSPORT_HRESULT_ABORT);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_message_channel_pdu(
+            session,
+            RDP_SEC_TRANSPORT_RSP,
+            &response,
+            "rdp.multitransport.response");
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "rdp.multitransport.response",
+                        "request_id=%u hresult=%u",
+                        request.request_id,
+                        RDP_MULTITRANSPORT_HRESULT_ABORT);
+    }
+    rdp_buffer_free(&response);
+    return status;
 }
 
 librdp_status librdp_multitransport_metrics_init(

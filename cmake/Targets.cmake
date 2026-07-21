@@ -19,6 +19,7 @@ set(LIBRDP_CLIENT_SOURCES
     src/client/session_graphics_pipeline.c
     src/client/session_input.c
     src/client/session_lifecycle.c
+    src/client/session_message_channel.c
     src/client/session_multitransport.c
     src/client/session_ports.c
     src/client/session_printer.c

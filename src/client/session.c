@@ -5160,7 +5160,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             if (!session->message_channel_joined)
                 status = LIBRDP_STATUS_PROTOCOL_ERROR;
             else
-                status = rdp_session_handle_autodetect_message(
+                status = rdp_session_handle_message_channel(
                     session,
                     security_flags,
                     indication_payload,

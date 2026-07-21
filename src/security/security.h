@@ -31,6 +31,8 @@
 #include <openssl/types.h>
 
 #define RDP_SEC_EXCHANGE_PKT 0x0001u
+#define RDP_SEC_TRANSPORT_REQ 0x0002u
+#define RDP_SEC_TRANSPORT_RSP 0x0004u
 #define RDP_SEC_ENCRYPT 0x0008u
 #define RDP_SEC_INFO_PKT 0x0040u
 #define RDP_SEC_LICENSE_PKT 0x0080u

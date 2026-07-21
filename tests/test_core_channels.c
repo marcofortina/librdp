@@ -13,8 +13,10 @@
 #include "test_core_suites.h"
 
 #include "client/session_autodetect.h"
+#include "client/session_message_channel.h"
 #include "protocol/network_autodetect.h"
 #include "protocol/session_selection.h"
+#include "transport/multitransport.h"
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -156,6 +158,110 @@ int test_network_autodetect_client_state(void)
               packet.data,
               packet.length - 1u) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&packet);
+    return 0;
+}
+
+/*
+ * Exercise a real local Message Channel write after a server multitransport
+ * bootstrap request. The client must return the matching failure response,
+ * preserve TCP ownership, and leave every UDP runtime inactive.
+ */
+int test_multitransport_message_channel_fallback(void)
+{
+    uint8_t cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH];
+    int sockets[2] = {-1, -1};
+    librdp_session session;
+    rdp_transport peer_transport;
+    rdp_buffer request;
+    rdp_buffer packet;
+    rdp_buffer plaintext;
+    rdp_tpkt tpkt;
+    rdp_mcs_send_data_indication indication;
+    rdp_multitransport_initiate_response response;
+    const uint8_t* x224_payload = NULL;
+    size_t x224_payload_len = 0u;
+    uint16_t security_flags = 0u;
+    size_t i = 0u;
+
+    memset(&session, 0, sizeof(session));
+    memset(&tpkt, 0, sizeof(tpkt));
+    memset(&indication, 0, sizeof(indication));
+    memset(&response, 0, sizeof(response));
+    for (i = 0u; i < sizeof(cookie); i++)
+        cookie[i] = (uint8_t)(0xa0u + i);
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    rdp_transport_init(&session.transport);
+    rdp_transport_init(&peer_transport);
+    rdp_transport_attach_fd(&session.transport, sockets[0], 1);
+    sockets[0] = -1;
+    rdp_transport_attach_fd(&peer_transport, sockets[1], 1);
+    sockets[1] = -1;
+    session.mcs_user_id = 1003u;
+    session.message_channel_id = 1006u;
+    session.message_channel_joined = 1u;
+    session.multitransport_negotiated = 1u;
+    session.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR;
+    rdp_buffer_init(&request);
+    rdp_buffer_init(&packet);
+    rdp_buffer_init(&plaintext);
+
+    CHECK(rdp_multitransport_write_initiate_request(
+              &request,
+              4u,
+              RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE,
+              cookie) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_message_channel(
+              &session,
+              RDP_SEC_TRANSPORT_REQ,
+              request.data,
+              request.length) == LIBRDP_STATUS_OK);
+    CHECK(session.multitransport_udp_active == 0u &&
+          session.multitransport_udp2_active == 0u);
+    CHECK(rdp_transport_read_tpkt_timeout(&peer_transport,
+                                          &packet,
+                                          1000) == LIBRDP_STATUS_OK);
+    CHECK(rdp_tpkt_parse(packet.data, packet.length, &tpkt) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_x224_parse_data(tpkt.payload,
+                              tpkt.payload_len,
+                              &x224_payload,
+                              &x224_payload_len) == LIBRDP_STATUS_OK);
+    CHECK(rdp_mcs_parse_send_data_request(x224_payload,
+                                          x224_payload_len,
+                                          &indication) == LIBRDP_STATUS_OK);
+    CHECK(indication.initiator == session.mcs_user_id &&
+          indication.channel_id == session.message_channel_id);
+    CHECK(rdp_security_unwrap_pdu(NULL,
+                                  indication.payload,
+                                  indication.payload_len,
+                                  &plaintext,
+                                  &security_flags) == LIBRDP_STATUS_OK);
+    CHECK(security_flags == RDP_SEC_TRANSPORT_RSP);
+    CHECK(rdp_multitransport_parse_initiate_response(
+              plaintext.data,
+              plaintext.length,
+              &response) == LIBRDP_STATUS_OK);
+    CHECK(response.request_id == 4u &&
+          response.hresult == RDP_MULTITRANSPORT_HRESULT_ABORT);
+
+    request.data[6] = 1u;
+    CHECK(rdp_session_handle_message_channel(
+              &session,
+              RDP_SEC_TRANSPORT_REQ,
+              request.data,
+              request.length) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    request.data[6] = 0u;
+    CHECK(rdp_session_handle_message_channel(
+              &session,
+              (uint16_t)(RDP_SEC_TRANSPORT_REQ | RDP_SEC_AUTODETECT_REQ),
+              request.data,
+              request.length) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_buffer_free(&plaintext);
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&request);
+    rdp_transport_close(&peer_transport);
+    rdp_transport_close(&session.transport);
     return 0;
 }
 

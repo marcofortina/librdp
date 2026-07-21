@@ -30,6 +30,12 @@
 #define RDP_MULTITRANSPORT_ACTION_DATA 0x2u
 #define RDP_MULTITRANSPORT_HEADER_LENGTH 4u
 #define RDP_MULTITRANSPORT_COOKIE_LENGTH 16u
+#define RDP_MULTITRANSPORT_INITIATE_REQUEST_LENGTH 24u
+#define RDP_MULTITRANSPORT_INITIATE_RESPONSE_LENGTH 8u
+#define RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE 0x0001u
+#define RDP_MULTITRANSPORT_PROTOCOL_UDP_LOSSY 0x0002u
+#define RDP_MULTITRANSPORT_HRESULT_OK 0x00000000u
+#define RDP_MULTITRANSPORT_HRESULT_ABORT 0x80004004u
 
 #define RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST 0x00u
 #define RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_RESPONSE 0x01u
@@ -75,6 +81,20 @@ typedef struct rdp_multitransport_data
     size_t data_len;
 } rdp_multitransport_data;
 
+typedef struct rdp_multitransport_initiate_request
+{
+    uint32_t request_id;
+    uint16_t requested_protocol;
+    uint16_t reserved;
+    uint8_t security_cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH];
+} rdp_multitransport_initiate_request;
+
+typedef struct rdp_multitransport_initiate_response
+{
+    uint32_t request_id;
+    uint32_t hresult;
+} rdp_multitransport_initiate_response;
+
 librdp_status rdp_multitransport_parse_header(const void* data,
                                               size_t length,
                                               rdp_multitransport_header* header);
@@ -113,5 +133,22 @@ librdp_status rdp_multitransport_write_data(rdp_buffer* buffer,
 librdp_status rdp_multitransport_parse_data(const void* data,
                                             size_t length,
                                             rdp_multitransport_data* tunnel_data);
+librdp_status rdp_multitransport_write_initiate_request(
+    rdp_buffer* buffer,
+    uint32_t request_id,
+    uint16_t requested_protocol,
+    const uint8_t security_cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH]);
+librdp_status rdp_multitransport_parse_initiate_request(
+    const void* data,
+    size_t length,
+    rdp_multitransport_initiate_request* request);
+librdp_status rdp_multitransport_write_initiate_response(
+    rdp_buffer* buffer,
+    uint32_t request_id,
+    uint32_t hresult);
+librdp_status rdp_multitransport_parse_initiate_response(
+    const void* data,
+    size_t length,
+    rdp_multitransport_initiate_response* response);
 
 #endif

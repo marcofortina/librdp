@@ -1781,6 +1781,8 @@ static int test_multitransport_protocol(void)
     rdp_multitransport_create_request request;
     rdp_multitransport_create_response response;
     rdp_multitransport_data tunnel_data;
+    rdp_multitransport_initiate_request initiate_request;
+    rdp_multitransport_initiate_response initiate_response;
     uint16_t subheader_count = 0;
     size_t i = 0;
 
@@ -1817,6 +1819,78 @@ static int test_multitransport_protocol(void)
         TCHECK(rdp_multitransport_parse_create_response(buffer.data, buffer.length, &response) ==
                LIBRDP_STATUS_PROTOCOL_ERROR);
         TCHECK(memcmp(&response, &response_before, sizeof(response)) == 0);
+    }
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    TCHECK(rdp_multitransport_write_initiate_request(
+               &buffer,
+               0x10203040u,
+               RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE,
+               cookie) == LIBRDP_STATUS_OK);
+    TCHECK(buffer.length == RDP_MULTITRANSPORT_INITIATE_REQUEST_LENGTH);
+    TCHECK(rdp_multitransport_parse_initiate_request(
+               buffer.data,
+               buffer.length,
+               &initiate_request) == LIBRDP_STATUS_OK);
+    TCHECK(initiate_request.request_id == 0x10203040u &&
+           initiate_request.requested_protocol ==
+               RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE &&
+           initiate_request.reserved == 0u &&
+           memcmp(initiate_request.security_cookie,
+                  cookie,
+                  sizeof(cookie)) == 0);
+    {
+        rdp_multitransport_initiate_request before = initiate_request;
+
+        buffer.data[6] = 1u;
+        TCHECK(rdp_multitransport_parse_initiate_request(
+                   buffer.data,
+                   buffer.length,
+                   &initiate_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&initiate_request, &before, sizeof(before)) == 0);
+        buffer.data[6] = 0u;
+        buffer.data[4] = 3u;
+        TCHECK(rdp_multitransport_parse_initiate_request(
+                   buffer.data,
+                   buffer.length,
+                   &initiate_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&initiate_request, &before, sizeof(before)) == 0);
+        buffer.data[4] = RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE;
+        TCHECK(rdp_multitransport_parse_initiate_request(
+                   buffer.data,
+                   buffer.length - 1u,
+                   &initiate_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&initiate_request, &before, sizeof(before)) == 0);
+    }
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    TCHECK(rdp_multitransport_write_initiate_response(
+               &buffer,
+               0x10203040u,
+               RDP_MULTITRANSPORT_HRESULT_ABORT) == LIBRDP_STATUS_OK);
+    TCHECK(buffer.length == RDP_MULTITRANSPORT_INITIATE_RESPONSE_LENGTH);
+    TCHECK(rdp_multitransport_parse_initiate_response(
+               buffer.data,
+               buffer.length,
+               &initiate_response) == LIBRDP_STATUS_OK);
+    TCHECK(initiate_response.request_id == 0x10203040u &&
+           initiate_response.hresult == RDP_MULTITRANSPORT_HRESULT_ABORT);
+    {
+        rdp_multitransport_initiate_response before = initiate_response;
+
+        buffer.data[4] = 1u;
+        TCHECK(rdp_multitransport_parse_initiate_response(
+                   buffer.data,
+                   buffer.length,
+                   &initiate_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&initiate_response, &before, sizeof(before)) == 0);
+        TCHECK(rdp_multitransport_parse_initiate_response(
+                   buffer.data,
+                   buffer.length - 1u,
+                   &initiate_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&initiate_response, &before, sizeof(before)) == 0);
     }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);

@@ -1050,6 +1050,7 @@ struct librdp_session
 
 #include "client/session_runtime.h"
 #include "client/session_multitransport.h"
+#include "client/session_message_channel.h"
 #include "client/session_lifecycle.h"
 #include "client/session_device.h"
 #include "client/session_filesystem.h"

@@ -59,6 +59,7 @@ static int run_channels(void)
 {
     if (test_static_channels() != 0 ||
         test_network_autodetect_client_state() != 0 ||
+        test_multitransport_message_channel_fallback() != 0 ||
         test_clipboard_unmatched_responses() != 0)
         return 1;
     if (test_dynamic_channel_duplicate_create() != 0 ||
@@ -247,6 +248,7 @@ int test_client_core(void)
         return 1;
     if (test_static_channels() != 0 ||
         test_network_autodetect_client_state() != 0 ||
+        test_multitransport_message_channel_fallback() != 0 ||
         test_clipboard_unmatched_responses() != 0)
         return 1;
     if (test_reconnect_policy() != 0 || test_connect_cancellation() != 0 ||
