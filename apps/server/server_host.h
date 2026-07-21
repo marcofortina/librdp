@@ -168,6 +168,8 @@ typedef struct server_host_config
     server_host_input_policy input_policy;
     server_host_trace_callback trace_callback;
     void* trace_user_data;
+    librdp_server_channel_callback channel_callback;
+    void* channel_user_data;
     librdp_server_extension_callback extension_callback;
     void* extension_user_data;
     librdp_server_credentials_provider credentials_provider;

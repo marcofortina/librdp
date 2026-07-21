@@ -76,6 +76,7 @@
 #define SMOKE_LIFECYCLE_STRESS_RSS_ALLOWANCE (32u * 1024u * 1024u)
 #define SMOKE_DESCRIPTOR_SCAN_LIMIT 1048576L
 #define SMOKE_SHA256_BYTES 32u
+#define SMOKE_AUTH_REDIRECTION_CHANNEL_ID 0x4155u
 #define SMOKE_DRIVE_GENERIC_READ 0x80000000u
 #define SMOKE_DRIVE_GENERIC_WRITE 0x40000000u
 #define SMOKE_DRIVE_SHARE_ALL 0x00000007u
@@ -492,6 +493,16 @@ typedef struct smoke_host
     atomic_uint port;
     librdp_status status;
 } smoke_host;
+
+typedef struct smoke_auth_redirection
+{
+    atomic_uint open_requested;
+    atomic_uint channel_opened;
+    atomic_uint call_sent;
+    atomic_uint response_received;
+    atomic_uint cancellation_verified;
+    atomic_int failure_status;
+} smoke_auth_redirection;
 
 typedef struct smoke_nla_stall
 {
@@ -5375,6 +5386,152 @@ static void smoke_host_trace_callback(
 }
 
 /*
+ * Open RDPEAR only after an authenticated peer has begun normal extension
+ * traffic. A transient STATE result means DRDYNVC capability negotiation has
+ * not completed yet and is retried on the next validated extension event.
+ */
+static void smoke_auth_redirection_extension_callback(
+    librdp_server_peer* peer,
+    const librdp_server_extension_event* event,
+    void* user_data)
+{
+    smoke_auth_redirection* auth = (smoke_auth_redirection*)user_data;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !event || !auth)
+        return;
+    if (event->family == LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION)
+    {
+        static const uint8_t version_payload[4] = {0u, 0u, 0u, 0u};
+        rdp_auth_redirection_response response;
+        rdp_auth_redirection_negotiate_version version;
+        librdp_server_extension_state state;
+
+        memset(&response, 0, sizeof(response));
+        memset(&version, 0, sizeof(version));
+        status = rdp_auth_redirection_parse_negotiate_version_response(
+            event->payload,
+            event->payload_len,
+            &response,
+            &version);
+        if (status == LIBRDP_STATUS_OK &&
+            (response.call_id !=
+                 RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION ||
+             response.status != 0u ||
+             version.version != RDP_AUTH_REDIRECTION_VERSION))
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK)
+            atomic_fetch_add_explicit(&auth->response_received,
+                                      1u,
+                                      memory_order_release);
+        if (status == LIBRDP_STATUS_OK)
+            status = librdp_server_peer_send_auth_redirection_call(
+                peer,
+                event->dynamic_channel_id,
+                RDP_AUTH_REDIRECTION_PACKAGE_NTLM,
+                RDP_AUTH_REDIRECTION_CALL_NTLM_NEGOTIATE_VERSION,
+                version_payload,
+                sizeof(version_payload));
+        if (status == LIBRDP_STATUS_OK)
+            status = librdp_server_peer_record_extension_timeout(
+                peer,
+                LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION);
+        if (status == LIBRDP_STATUS_OK)
+            status = librdp_server_peer_cancel_extension(
+                peer,
+                LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION);
+        if (status == LIBRDP_STATUS_OK)
+            status = librdp_server_extension_state_init(&state);
+        if (status == LIBRDP_STATUS_OK)
+            status = librdp_server_peer_get_extension_state(
+                peer,
+                LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION,
+                &state);
+        if (status == LIBRDP_STATUS_OK &&
+            (!state.cancelled || state.pending_requests != 0u ||
+             state.timeout_count != 1u ||
+             state.last_status != LIBRDP_STATUS_OK))
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK)
+            atomic_store_explicit(&auth->cancellation_verified,
+                                  1u,
+                                  memory_order_release);
+        else
+            atomic_store_explicit(&auth->failure_status,
+                                  (int)status,
+                                  memory_order_release);
+        return;
+    }
+    if (atomic_load_explicit(&auth->open_requested,
+                             memory_order_acquire) != 0u)
+        return;
+    status = librdp_server_peer_enable_extension_provider(
+        peer,
+        LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION,
+        1);
+    if (status == LIBRDP_STATUS_OK)
+        status = librdp_server_peer_open_dynamic_channel(
+            peer,
+            SMOKE_AUTH_REDIRECTION_CHANNEL_ID,
+            0u,
+            RDP_AUTH_REDIRECTION_CHANNEL_NAME);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        atomic_store_explicit(&auth->open_requested,
+                              1u,
+                              memory_order_release);
+    }
+    else if (status != LIBRDP_STATUS_STATE)
+    {
+        atomic_store_explicit(&auth->failure_status,
+                              (int)status,
+                              memory_order_release);
+    }
+}
+
+/* Send a typed version-negotiation call as soon as the client accepts DVC. */
+static void smoke_auth_redirection_channel_callback(
+    librdp_server_peer* peer,
+    const librdp_server_channel_event* event,
+    void* user_data)
+{
+    static const uint8_t version_payload[4] = {0u, 0u, 0u, 0u};
+    smoke_auth_redirection* auth = (smoke_auth_redirection*)user_data;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !event || !auth ||
+        event->type != LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_OPEN ||
+        event->dynamic_channel_id != SMOKE_AUTH_REDIRECTION_CHANNEL_ID ||
+        event->name_len != sizeof(RDP_AUTH_REDIRECTION_CHANNEL_NAME) - 1u ||
+        memcmp(event->name,
+               RDP_AUTH_REDIRECTION_CHANNEL_NAME,
+               event->name_len) != 0)
+        return;
+    atomic_store_explicit(&auth->channel_opened,
+                          1u,
+                          memory_order_release);
+    status = librdp_server_peer_send_auth_redirection_call(
+        peer,
+        event->dynamic_channel_id,
+        RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS,
+        RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION,
+        version_payload,
+        sizeof(version_payload));
+    if (status == LIBRDP_STATUS_OK)
+    {
+        atomic_store_explicit(&auth->call_sent,
+                              1u,
+                              memory_order_release);
+    }
+    else
+    {
+        atomic_store_explicit(&auth->failure_status,
+                              (int)status,
+                              memory_order_release);
+    }
+}
+
+/*
  * Own all host operations on one thread. Cross-thread cancellation is the
  * only host method invoked by the client side of the fixture.
  */
@@ -9283,7 +9440,8 @@ static int smoke_run_profile_ex(
     int exercise_output_control,
     int cancel_phase,
     const server_client_clipboard_profile* clipboard_profile,
-    const smoke_drive_profile* drive_profile)
+    const smoke_drive_profile* drive_profile,
+    smoke_auth_redirection* auth_redirection)
 {
     char cert_path[128] = {0};
     char key_path[128] = {0};
@@ -9449,6 +9607,22 @@ static int smoke_run_profile_ex(
             : NULL;
     host_config.trace_callback = smoke_host_trace_callback;
     host_config.trace_user_data = &platform;
+    if (auth_redirection)
+    {
+        atomic_init(&auth_redirection->open_requested, 0u);
+        atomic_init(&auth_redirection->channel_opened, 0u);
+        atomic_init(&auth_redirection->call_sent, 0u);
+        atomic_init(&auth_redirection->response_received, 0u);
+        atomic_init(&auth_redirection->cancellation_verified, 0u);
+        atomic_init(&auth_redirection->failure_status,
+                    (int)LIBRDP_STATUS_OK);
+        host_config.channel_callback =
+            smoke_auth_redirection_channel_callback;
+        host_config.channel_user_data = auth_redirection;
+        host_config.extension_callback =
+            smoke_auth_redirection_extension_callback;
+        host_config.extension_user_data = auth_redirection;
+    }
 
     settings = librdp_settings_new();
     REQUIRE(settings != NULL);
@@ -10359,6 +10533,42 @@ static int smoke_run_profile_ex(
     }
     REQUIRE(cycle < SMOKE_PUMP_LIMIT);
     REQUIRE(events.active);
+    if (auth_redirection)
+    {
+        for (cycle = 0u;
+             cycle < SMOKE_PUMP_LIMIT &&
+             atomic_load_explicit(
+                 &auth_redirection->cancellation_verified,
+                 memory_order_acquire) == 0u &&
+             atomic_load_explicit(&auth_redirection->failure_status,
+                                  memory_order_acquire) ==
+                 (int)LIBRDP_STATUS_OK;
+             cycle++)
+        {
+            terminal_status = smoke_client_pump(&runtime);
+            REQUIRE(terminal_status == LIBRDP_STATUS_OK);
+        }
+        REQUIRE(cycle < SMOKE_PUMP_LIMIT);
+        REQUIRE(atomic_load_explicit(&auth_redirection->open_requested,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(&auth_redirection->channel_opened,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(&auth_redirection->call_sent,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(&auth_redirection->response_received,
+                                     memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(
+                    &auth_redirection->cancellation_verified,
+                    memory_order_acquire) == 1u);
+        REQUIRE(atomic_load_explicit(&auth_redirection->failure_status,
+                                     memory_order_acquire) ==
+                (int)LIBRDP_STATUS_OK);
+        for (cycle = 0u; cycle < 16u; cycle++)
+        {
+            terminal_status = smoke_client_pump(&runtime);
+            REQUIRE(terminal_status == LIBRDP_STATUS_OK);
+        }
+    }
     REQUIRE(events.surface_events > 0u);
     REQUIRE(events.error_events == 0u);
     REQUIRE(trace_capture.records > 0u);
@@ -10847,6 +11057,7 @@ static int smoke_run_profile(librdp_security_mode security,
                                 exercise_output_control,
                                 cancel_phase,
                                 clipboard_profile,
+                                NULL,
                                 NULL);
 }
 
@@ -13064,7 +13275,26 @@ static int smoke_run_drive_profile(const smoke_drive_profile* profile)
                                 0,
                                 -1,
                                 NULL,
-                                profile);
+                                profile,
+                                NULL);
+}
+
+static int smoke_run_auth_redirection(void)
+{
+    smoke_auth_redirection auth;
+
+    memset(&auth, 0, sizeof(auth));
+    return smoke_run_profile_ex(LIBRDP_SECURITY_NLA,
+                                LIBRDP_STATUS_OK,
+                                &smoke_nla_default_identity,
+                                "127.0.0.1",
+                                "127.0.0.1",
+                                NULL,
+                                0,
+                                -1,
+                                NULL,
+                                NULL,
+                                &auth);
 }
 
 int main(int argc, char** argv)
@@ -13081,6 +13311,8 @@ int main(int argc, char** argv)
         return smoke_serve_viewer_graphics(argv[2], argv[3]);
     if (argc == 2 && strcmp(argv[1], "timeout-credssp") == 0)
         return smoke_run_credssp_timeout();
+    if (argc == 2 && strcmp(argv[1], "auth-redirection") == 0)
+        return smoke_run_auth_redirection();
     if (argc == 2 && strcmp(argv[1], "standard-integrity") == 0)
         return smoke_run_standard_integrity();
     if (argc == 2 && strcmp(argv[1], "fastpath-bitmap") == 0)
@@ -13293,7 +13525,7 @@ int main(int argc, char** argv)
                 "nla-invalid|nla-unknown-user|nla-wrong-domain|"
                 "nla-expired|nla-locked|"
                 "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8|"
-                "timeout-credssp|standard-integrity|fastpath-bitmap|"
+                "timeout-credssp|auth-redirection|standard-integrity|fastpath-bitmap|"
                 "fastpath-nscodec|fastpath-rfx|"
                 "graphics-planar|graphics-progressive|"
                 "graphics-lifecycle|graphics-multi-surface|"

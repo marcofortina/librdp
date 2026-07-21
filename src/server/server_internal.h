@@ -249,6 +249,14 @@ struct librdp_server_peer
     uint32_t clipboard_pending_file_stream_id;
     uint32_t clipboard_locked_clip_data_id;
     uint32_t clipboard_reconnect_generation;
+    uint32_t auth_redirection_pending_channel_id;
+    uint32_t auth_redirection_pending_package;
+    uint32_t auth_redirection_pending_call_id;
+    uint32_t auth_redirection_retired_channel_id;
+    uint32_t auth_redirection_retired_package;
+    uint32_t auth_redirection_retired_call_id;
+    uint8_t auth_redirection_pending;
+    uint8_t auth_redirection_retired;
     librdp_server_extension_state extension_states[RDP_SERVER_EXTENSION_FAMILY_COUNT];
     uint8_t* framebuffer;
     size_t framebuffer_len;

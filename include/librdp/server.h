@@ -4356,6 +4356,47 @@ LIBRDP_API librdp_status librdp_server_peer_send_desktop_composition_lsurface(li
                                                                               uint64_t luid);
 
 /**
+ * @brief Send an authentication-redirection call to the client credential provider.
+ *
+ * The call is encoded for the selected authentication package, sealed with
+ * the CredSSP session security context, and correlated with the next response
+ * received on the same channel. Only one call may be pending per peer.
+ *
+ * @param[in,out] peer Active NLA-authenticated peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open authentication-redirection channel id.
+ * @param[in] package Authentication package identifier.
+ * @param[in] call_id Request call identifier compatible with package.
+ * @param[in] payload Borrowed call payload; may be NULL only when payload_len
+ * is zero.
+ * @param[in] payload_len Number of bytes in payload.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments, package/call mismatch, or a non-auth-redirection channel;
+ * LIBRDP_STATUS_STATE when the peer is not ACTIVE, was not authenticated with
+ * NLA, or already has a pending call; allocation or transport errors from the
+ * protected send path.
+ *
+ * The function copies the serialized request before returning. Input memory
+ * remains owned by the caller. The correlated response is delivered through
+ * the peer extension callback on the serialized peer dispatch thread.
+ *
+ * @note The application owns timeout policy and may use
+ * librdp_server_peer_record_extension_timeout() and
+ * librdp_server_peer_cancel_extension() for an outstanding call.
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Authentication redirection payloads can contain credential-derived
+ * material and are redacted by the default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_auth_redirection_call(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t package,
+    uint32_t call_id,
+    const void* payload,
+    size_t payload_len);
+
+/**
  * @brief Send an authentication-redirection response.
  *
  * @param[in,out] peer Active peer; must not be NULL.
@@ -4368,9 +4409,13 @@ LIBRDP_API librdp_status librdp_server_peer_send_desktop_composition_lsurface(li
  *
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
  * invalid arguments or a non-auth-redirection channel; LIBRDP_STATUS_STATE
- * when the peer is not ACTIVE; allocation or transport errors from the send
- * path.
+ * when the peer is not ACTIVE or lacks a CredSSP security context; allocation
+ * or transport errors from the protected send path.
  *
+ * @note This compatibility operation is intended for applications acting as
+ * the responder for an application-defined call. Normal RDP server operation
+ * sends calls with librdp_server_peer_send_auth_redirection_call() and receives
+ * client responses through the extension callback.
  * @note Thread-safety: call from the serialized peer owner context.
  * @warning Authentication redirection payloads may contain tokens and are
  * redacted by default trace policy.

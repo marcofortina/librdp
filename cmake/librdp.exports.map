@@ -171,6 +171,7 @@ LIBRDP_0.1 {
         librdp_server_peer_send_cr2_window_node_create;
         librdp_server_peer_send_desktop_composition_toggle;
         librdp_server_peer_send_desktop_composition_lsurface;
+        librdp_server_peer_send_auth_redirection_call;
         librdp_server_peer_send_auth_redirection_response;
         librdp_server_peer_send_telemetry_metrics;
         librdp_server_peer_send_multiparty_filter_state;

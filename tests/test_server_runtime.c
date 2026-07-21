@@ -301,7 +301,6 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_composited_rect_i cr2_client_bounds = {18, 48, 642, 492};
     rdp_composited_rect_i cr2_content_bounds = {0, 0, 624, 444};
     rdp_composited_rect_i cr2_invalid_rect = {40, 50, 140, 120};
-    rdp_auth_redirection_response auth_response;
     rdp_pointer_update pointer_update;
     librdp_server_pointer_update normalized_pointer;
     rdp_desktop_composition_toggle composition_toggle;
@@ -3537,39 +3536,6 @@ int test_server_loopback_standard_activation_sequence(void)
            optimized_video.sample_len == 3 &&
            memcmp(optimized_video.sample, "vid", 3) == 0);
 
-    SCHECK(test_server_open_client_dynamic_channel(client_fd,
-                                                   peer,
-                                                   attach_confirm.user_id,
-                                                   dynamic_static_channel_id,
-                                                   22,
-                                                   RDP_AUTH_REDIRECTION_CHANNEL_NAME,
-                                                   0,
-                                                   &client_security,
-                                                   &channel_plaintext,
-                                                   response,
-                                                   sizeof(response)));
-    SCHECK(librdp_server_peer_send_auth_redirection_response(
-               peer,
-               22,
-               RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION,
-               0,
-               NULL,
-               0) == LIBRDP_STATUS_OK);
-    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
-                                                              response,
-                                                              sizeof(response),
-                                                              &client_security,
-                                                              &channel_plaintext,
-                                                              dynamic_static_channel_id,
-                                                              22,
-                                                              &dvc_data_response));
-    SCHECK(rdp_auth_redirection_parse_response(dvc_data_response.data,
-                                               dvc_data_response.data_len,
-                                               &auth_response) == LIBRDP_STATUS_OK);
-    SCHECK(auth_response.call_id == RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION &&
-           auth_response.status == 0 &&
-           auth_response.payload_len == 0);
-
     SCHECK(librdp_server_peer_send_clipboard_monitor_ready(peer, clipboard_channel_id) == LIBRDP_STATUS_OK);
     SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
                                                           response,
@@ -4584,7 +4550,7 @@ int test_server_loopback_standard_activation_sequence(void)
            server_metrics.static_channel_out >= 6);
     SCHECK(server_metrics.static_channel_bytes_in > 4 && server_metrics.static_channel_bytes_out >= 4);
     SCHECK(server_metrics.dynamic_channel_in == 11);
-    SCHECK(server_metrics.dynamic_channel_out == 48);
+    SCHECK(server_metrics.dynamic_channel_out == 47);
     SCHECK(server_metrics.dynamic_channel_bytes_in == 65u + webauthn_response_wire_len &&
            server_metrics.dynamic_channel_bytes_out > 64);
     SCHECK(server_metrics.udp_datagrams_in == 2);

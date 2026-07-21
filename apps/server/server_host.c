@@ -218,6 +218,8 @@ server_host* server_host_new(const server_host_config* config)
     host->input_policy = config->input_policy;
     host->trace_callback = config->trace_callback;
     host->trace_user_data = config->trace_user_data;
+    host->channel_callback = config->channel_callback;
+    host->channel_user_data = config->channel_user_data;
     host->extension_callback = config->extension_callback;
     host->extension_user_data = config->extension_user_data;
     host->state = SERVER_HOST_NEW;
@@ -2047,6 +2049,13 @@ static librdp_status server_host_prepare_peer_slot(
     status = librdp_server_peer_set_input_callback(peer,
                                                    server_host_peer_input,
                                                    slot);
+    if (status == LIBRDP_STATUS_OK && host->channel_callback)
+    {
+        status = librdp_server_peer_set_channel_callback(
+            peer,
+            host->channel_callback,
+            host->channel_user_data);
+    }
     if (status == LIBRDP_STATUS_OK && host->extension_callback)
     {
         status = librdp_server_peer_set_extension_callback(

@@ -55,6 +55,8 @@ struct server_host
     uint8_t provider_started[SERVER_PLATFORM_PROVIDER_COUNT];
     server_host_trace_callback trace_callback;
     void* trace_user_data;
+    librdp_server_channel_callback channel_callback;
+    void* channel_user_data;
     librdp_server_extension_callback extension_callback;
     void* extension_user_data;
     uint64_t trace_sequence;

@@ -240,6 +240,8 @@ librdp_status librdp_server_peer_cancel_extension(librdp_server_peer* peer,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
         return LIBRDP_STATUS_STATE;
+    if (family == LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION)
+        rdp_server_auth_redirection_retire_pending(peer);
     state->pending_open = 0;
     state->closing = 0;
     state->pending_requests = 0;
@@ -257,6 +259,11 @@ librdp_status librdp_server_peer_record_extension_timeout(librdp_server_peer* pe
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
         return LIBRDP_STATUS_STATE;
+    if (family == LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION)
+    {
+        rdp_server_auth_redirection_retire_pending(peer);
+        state->pending_requests = 0u;
+    }
     if (state->timeout_count != UINT32_MAX)
         state->timeout_count++;
     state->last_status = LIBRDP_STATUS_TIMEOUT;
@@ -1671,6 +1678,209 @@ librdp_status librdp_server_peer_send_cr2_window_node_create(librdp_server_peer*
     return status;
 }
 
+static int rdp_server_auth_redirection_package_matches_call(uint32_t package,
+                                                            uint32_t call_id)
+{
+    if (!rdp_auth_redirection_call_id_valid(call_id) ||
+        call_id == RDP_AUTH_REDIRECTION_CALL_INVALID)
+        return 0;
+    if (call_id >= RDP_AUTH_REDIRECTION_CALL_KERB_MINIMUM &&
+        call_id <= RDP_AUTH_REDIRECTION_CALL_KERB_MAXIMUM)
+        return package == RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS;
+    if (call_id >= RDP_AUTH_REDIRECTION_CALL_NTLM_MINIMUM &&
+        call_id <= RDP_AUTH_REDIRECTION_CALL_NTLM_MAXIMUM)
+        return package == RDP_AUTH_REDIRECTION_PACKAGE_NTLM;
+    return package == RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS ||
+           package == RDP_AUTH_REDIRECTION_PACKAGE_NTLM;
+}
+
+static void rdp_server_auth_redirection_clear_buffer(rdp_buffer* buffer)
+{
+    if (!buffer)
+        return;
+    if (buffer->data && buffer->capacity > 0u)
+        OPENSSL_cleanse(buffer->data, buffer->capacity);
+    rdp_buffer_free(buffer);
+}
+
+static librdp_status rdp_server_auth_redirection_encode(
+    librdp_server_peer* peer,
+    uint32_t package,
+    const void* payload,
+    size_t payload_len,
+    rdp_buffer* outer)
+{
+    rdp_buffer encoded;
+    rdp_buffer encrypted;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !outer || (!payload && payload_len > 0u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->selected_protocol != RDP_X224_PROTOCOL_NLA ||
+        !peer->credssp_security_ready || !peer->nla_authenticated)
+        return LIBRDP_STATUS_STATE;
+    rdp_buffer_init(&encoded);
+    rdp_buffer_init(&encrypted);
+    status = rdp_auth_redirection_write_encoded_payload(&encoded,
+                                                         package,
+                                                         payload,
+                                                         payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_ntlm_wrap(&peer->credssp_security,
+                                       encoded.data,
+                                       encoded.length,
+                                       &encrypted);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_write_outer_packet(outer,
+                                                         encrypted.data,
+                                                         encrypted.length);
+    rdp_server_auth_redirection_clear_buffer(&encrypted);
+    rdp_server_auth_redirection_clear_buffer(&encoded);
+    return status;
+}
+
+/*
+ * Decode the protected RDPEAR envelope before generic extension dispatch.
+ * Decrypted bytes stay in caller-owned storage for exactly the callback
+ * lifetime; malformed, unauthenticated, or package-unknown packets never
+ * reach an application callback.
+ */
+librdp_status rdp_server_auth_redirection_decode(
+    librdp_server_peer* peer,
+    const void* data,
+    size_t data_len,
+    rdp_buffer* plaintext,
+    uint32_t* package,
+    const uint8_t** payload,
+    size_t* payload_len)
+{
+    rdp_auth_redirection_outer_packet outer;
+    rdp_auth_redirection_encoded_payload encoded;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !data || !plaintext || !package || !payload || !payload_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *package = RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN;
+    *payload = NULL;
+    *payload_len = 0u;
+    if (peer->selected_protocol != RDP_X224_PROTOCOL_NLA ||
+        !peer->credssp_security_ready || !peer->nla_authenticated)
+        return LIBRDP_STATUS_STATE;
+    memset(&outer, 0, sizeof(outer));
+    memset(&encoded, 0, sizeof(encoded));
+    status = rdp_auth_redirection_parse_outer_packet(data, data_len, &outer);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_ntlm_unwrap(&peer->credssp_security,
+                                         outer.payload,
+                                         outer.payload_len,
+                                         plaintext);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_parse_encoded_payload(plaintext->data,
+                                                             plaintext->length,
+                                                             &encoded);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        *package = encoded.package;
+        *payload = encoded.payload;
+        *payload_len = encoded.payload_len;
+    }
+    return status;
+}
+
+void rdp_server_auth_redirection_reset(librdp_server_peer* peer)
+{
+    if (!peer)
+        return;
+    peer->auth_redirection_pending_channel_id = 0u;
+    peer->auth_redirection_pending_package = RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN;
+    peer->auth_redirection_pending_call_id = 0u;
+    peer->auth_redirection_retired_channel_id = 0u;
+    peer->auth_redirection_retired_package = RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN;
+    peer->auth_redirection_retired_call_id = 0u;
+    peer->auth_redirection_pending = 0u;
+    peer->auth_redirection_retired = 0u;
+}
+
+void rdp_server_auth_redirection_retire_pending(librdp_server_peer* peer)
+{
+    if (!peer || !peer->auth_redirection_pending)
+        return;
+    peer->auth_redirection_retired_channel_id =
+        peer->auth_redirection_pending_channel_id;
+    peer->auth_redirection_retired_package =
+        peer->auth_redirection_pending_package;
+    peer->auth_redirection_retired_call_id =
+        peer->auth_redirection_pending_call_id;
+    peer->auth_redirection_retired = 1u;
+    peer->auth_redirection_pending_channel_id = 0u;
+    peer->auth_redirection_pending_package = RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN;
+    peer->auth_redirection_pending_call_id = 0u;
+    peer->auth_redirection_pending = 0u;
+}
+
+librdp_status librdp_server_peer_send_auth_redirection_call(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t package,
+    uint32_t call_id,
+    const void* payload_data,
+    size_t payload_len)
+{
+    rdp_buffer call;
+    rdp_buffer outer;
+    librdp_server_extension_state* state = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || (!payload_data && payload_len > 0u) ||
+        !rdp_server_auth_redirection_package_matches_call(package, call_id))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->auth_redirection_pending)
+        return LIBRDP_STATUS_STATE;
+    if (!rdp_server_dynamic_channel_open_named(peer,
+                                               dynamic_channel_id,
+                                               RDP_AUTH_REDIRECTION_CHANNEL_NAME))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&call);
+    rdp_buffer_init(&outer);
+    status = rdp_auth_redirection_write_call(&call,
+                                             call_id,
+                                             payload_data,
+                                             payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_auth_redirection_encode(peer,
+                                                    package,
+                                                    call.data,
+                                                    call.length,
+                                                    &outer);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_AUTH_REDIRECTION_CHANNEL_NAME,
+                                                      &outer);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        peer->auth_redirection_pending_channel_id = dynamic_channel_id;
+        peer->auth_redirection_pending_package = package;
+        peer->auth_redirection_pending_call_id = call_id;
+        peer->auth_redirection_pending = 1u;
+        state = rdp_server_extension_state_mut(
+            peer,
+            LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION);
+        if (state && state->pending_requests != UINT32_MAX)
+            state->pending_requests++;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.auth_redirection.call",
+                        "dvc_channel_id=%u package=%u call_id=%u payload_len=%u",
+                        dynamic_channel_id,
+                        package,
+                        call_id,
+                        (unsigned)payload_len);
+    }
+    rdp_server_auth_redirection_clear_buffer(&outer);
+    rdp_server_auth_redirection_clear_buffer(&call);
+    return status;
+}
+
 librdp_status librdp_server_peer_send_auth_redirection_response(librdp_server_peer* peer,
                                                                 uint32_t dynamic_channel_id,
                                                                 uint32_t call_id,
@@ -1679,20 +1889,33 @@ librdp_status librdp_server_peer_send_auth_redirection_response(librdp_server_pe
                                                                 size_t payload_len)
 {
     rdp_buffer payload;
+    rdp_buffer outer;
     librdp_status status = LIBRDP_STATUS_OK;
 
     rdp_buffer_init(&payload);
+    rdp_buffer_init(&outer);
     status = rdp_auth_redirection_write_response(&payload,
                                                  call_id,
                                                  status_code,
                                                  payload_data,
                                                  payload_len);
     if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_auth_redirection_encode(
+            peer,
+            call_id >= RDP_AUTH_REDIRECTION_CALL_NTLM_MINIMUM &&
+                    call_id <= RDP_AUTH_REDIRECTION_CALL_NTLM_MAXIMUM
+                ? RDP_AUTH_REDIRECTION_PACKAGE_NTLM
+                : RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS,
+            payload.data,
+            payload.length,
+            &outer);
+    if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_dynamic_named_buffer(peer,
                                                       dynamic_channel_id,
                                                       RDP_AUTH_REDIRECTION_CHANNEL_NAME,
-                                                      &payload);
-    rdp_buffer_free(&payload);
+                                                      &outer);
+    rdp_server_auth_redirection_clear_buffer(&outer);
+    rdp_server_auth_redirection_clear_buffer(&payload);
     return status;
 }
 

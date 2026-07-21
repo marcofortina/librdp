@@ -24,4 +24,17 @@ librdp_status rdp_server_send_dynamic_named_buffer(librdp_server_peer* peer,
                                                          const char* expected_name,
                                                          const rdp_buffer* buffer);
 
+librdp_status rdp_server_auth_redirection_decode(
+    librdp_server_peer* peer,
+    const void* data,
+    size_t data_len,
+    rdp_buffer* plaintext,
+    uint32_t* package,
+    const uint8_t** payload,
+    size_t* payload_len);
+
+void rdp_server_auth_redirection_reset(librdp_server_peer* peer);
+
+void rdp_server_auth_redirection_retire_pending(librdp_server_peer* peer);
+
 #endif

@@ -653,6 +653,8 @@ if(LIBRDP_BUILD_TESTS)
         COMMAND test_server_client_smoke tls)
     add_test(NAME server_client_smoke_nla
              COMMAND test_server_client_smoke nla)
+    add_test(NAME server_client_smoke_auth_redirection
+             COMMAND test_server_client_smoke auth-redirection)
     add_test(NAME server_client_smoke_input_touch
              COMMAND test_server_client_input_smoke touch)
     add_test(NAME server_client_smoke_input_touch_fallback
@@ -929,6 +931,7 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_standard_ipv6
         server_client_smoke_tls
         server_client_smoke_nla
+        server_client_smoke_auth_redirection
         server_client_smoke_input_touch
         server_client_smoke_input_touch_fallback
         server_client_smoke_input_pen

@@ -21,6 +21,7 @@
 #include "server/server_peer.h"
 #include "server/server_protocol.h"
 #include "server/server_security.h"
+#include "server/server_extensions.h"
 
 #include "common/buffer.h"
 #include "common/charset.h"
@@ -254,6 +255,8 @@ static void rdp_server_extension_state_mark_close(librdp_server_peer* peer,
     state->pending_requests = 0;
     if (state->close_count != UINT32_MAX)
         state->close_count++;
+    if (family == LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION)
+        rdp_server_auth_redirection_reset(peer);
 }
 
 static void rdp_server_extension_state_mark_tx(librdp_server_peer* peer,
@@ -324,6 +327,7 @@ void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_
         rdp_buffer_free(&peer->dynamic_channels[i].fragment);
     }
     memset(peer->dynamic_channels, 0, sizeof(peer->dynamic_channels));
+    rdp_server_auth_redirection_reset(peer);
     peer->dynamic_channel_count = 0;
     peer->dynamic_channel_static_index = UINT16_MAX;
     peer->dynamic_channels_ready = 0;
@@ -3323,32 +3327,128 @@ static librdp_status rdp_server_dynamic_apply_channel_state(librdp_server_peer* 
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Dispatches one complete DVC message after family-specific decoding. Auth
+ * Redirection payloads are unwrapped exactly once and accepted only when they
+ * match the pending or retired call; decode and correlation failures stop
+ * generic dispatch. Decrypted storage is cleansed on every exit path.
+ */
 static librdp_status rdp_server_dynamic_emit_reassembled(librdp_server_peer* peer,
                                                          rdp_server_dynamic_channel* channel,
                                                          const uint8_t* data,
                                                          size_t data_len)
 {
+    rdp_auth_redirection_response_message auth_response;
+    rdp_buffer auth_plaintext;
+    const uint8_t* extension_data = data;
+    size_t extension_data_len = data_len;
+    uint32_t auth_package = RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN;
+    int auth_message = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!peer || !channel || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_server_dynamic_apply_channel_state(peer, channel, data, data_len);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_server_emit_extension_event(peer,
-                                             channel->name,
-                                             strlen(channel->name),
-                                             rdp_server_dynamic_static_channel_id(peer),
-                                             channel->channel_id,
-                                             channel->priority,
-                                             data,
-                                             data_len);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    rdp_server_metric_add(&peer->metrics.dynamic_channel_in, 1u);
-    rdp_server_metric_add(&peer->metrics.dynamic_channel_bytes_in, (uint64_t)data_len);
-    rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_DATA, data, data_len);
-    return LIBRDP_STATUS_OK;
+    rdp_buffer_init(&auth_plaintext);
+    memset(&auth_response, 0, sizeof(auth_response));
+    auth_message = strcmp(channel->name, RDP_AUTH_REDIRECTION_CHANNEL_NAME) == 0;
+    if (auth_message)
+    {
+        status = rdp_server_auth_redirection_decode(peer,
+                                                    data,
+                                                    data_len,
+                                                    &auth_plaintext,
+                                                    &auth_package,
+                                                    &extension_data,
+                                                    &extension_data_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_auth_redirection_parse_response_message(
+                extension_data,
+                extension_data_len,
+                &auth_response);
+        if (status == LIBRDP_STATUS_OK &&
+            peer->auth_redirection_retired &&
+            channel->channel_id == peer->auth_redirection_retired_channel_id &&
+            auth_package == peer->auth_redirection_retired_package &&
+            auth_response.response.call_id ==
+                peer->auth_redirection_retired_call_id)
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "server.auth_redirection.response.late",
+                            "dvc_channel_id=%u package=%u call_id=%u",
+                            channel->channel_id,
+                            auth_package,
+                            auth_response.response.call_id);
+            peer->auth_redirection_retired = 0u;
+            status = LIBRDP_STATUS_AGAIN;
+        }
+        else if (status == LIBRDP_STATUS_OK &&
+                 (!peer->auth_redirection_pending ||
+                  channel->channel_id !=
+                      peer->auth_redirection_pending_channel_id ||
+                  auth_package != peer->auth_redirection_pending_package ||
+                  auth_response.response.call_id !=
+                      peer->auth_redirection_pending_call_id))
+        {
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        if (status == LIBRDP_STATUS_AGAIN)
+        {
+            rdp_server_metric_add(&peer->metrics.dynamic_channel_in, 1u);
+            rdp_server_metric_add(&peer->metrics.dynamic_channel_bytes_in,
+                                  (uint64_t)data_len);
+            if (auth_plaintext.data && auth_plaintext.capacity > 0u)
+                OPENSSL_cleanse(auth_plaintext.data,
+                                auth_plaintext.capacity);
+            rdp_buffer_free(&auth_plaintext);
+            return LIBRDP_STATUS_OK;
+        }
+        if (status == LIBRDP_STATUS_OK)
+        {
+            librdp_server_extension_state* state =
+                rdp_server_extension_state_mut(
+                    peer,
+                    LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION);
+
+            peer->auth_redirection_pending_channel_id = 0u;
+            peer->auth_redirection_pending_package =
+                RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN;
+            peer->auth_redirection_pending_call_id = 0u;
+            peer->auth_redirection_pending = 0u;
+            if (state && state->pending_requests > 0u)
+                state->pending_requests--;
+        }
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_dynamic_apply_channel_state(peer,
+                                                        channel,
+                                                        data,
+                                                        data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_emit_extension_event(
+            peer,
+            channel->name,
+            strlen(channel->name),
+            rdp_server_dynamic_static_channel_id(peer),
+            channel->channel_id,
+            channel->priority,
+            extension_data,
+            extension_data_len);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_server_metric_add(&peer->metrics.dynamic_channel_in, 1u);
+        rdp_server_metric_add(&peer->metrics.dynamic_channel_bytes_in,
+                              (uint64_t)data_len);
+        rdp_server_emit_dynamic_channel_event(
+            peer,
+            channel,
+            LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_DATA,
+            data,
+            data_len);
+    }
+    if (auth_plaintext.data && auth_plaintext.capacity > 0u)
+        OPENSSL_cleanse(auth_plaintext.data, auth_plaintext.capacity);
+    rdp_buffer_free(&auth_plaintext);
+    return status;
 }
 
 /*
@@ -3362,6 +3462,10 @@ static int rdp_server_dynamic_provider_ready(
     librdp_feature feature)
 {
     if (!peer)
+        return 0;
+    if (family == LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION &&
+        (peer->selected_protocol != RDP_X224_PROTOCOL_NLA ||
+         !peer->credssp_security_ready || !peer->nla_authenticated))
         return 0;
     if (family == LIBRDP_SERVER_EXTENSION_UNKNOWN)
         return 1;
