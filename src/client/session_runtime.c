@@ -539,6 +539,7 @@ void rdp_session_trace_policy_clear(librdp_session* session)
     session->trace_policy_configured = 0;
     session->trace_sequence = 0;
     session->trace_first_ns = 0;
+    session->trace_unsafe_warning_emitted = false;
 }
 
 static rdp_trace_level rdp_session_trace_level_internal(librdp_trace_level level)
@@ -601,6 +602,7 @@ void rdp_session_trace_scope_begin(librdp_session* session, rdp_trace_session_sc
     scope->trace_id = session->trace_id;
     scope->sequence = &session->trace_sequence;
     scope->first_ns = &session->trace_first_ns;
+    scope->unsafe_warning_emitted = &session->trace_unsafe_warning_emitted;
     rdp_trace_push_session(scope);
 }
 

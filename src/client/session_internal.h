@@ -1064,6 +1064,7 @@ struct librdp_session
     FILE* trace_file;
     uint64_t trace_sequence;
     uint64_t trace_first_ns;
+    bool trace_unsafe_warning_emitted;
 };
 
 

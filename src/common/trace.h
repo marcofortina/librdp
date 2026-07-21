@@ -78,6 +78,7 @@ typedef struct rdp_trace_session_scope
     const char* trace_id;
     uint64_t* sequence;
     uint64_t* first_ns;
+    bool* unsafe_warning_emitted;
 } rdp_trace_session_scope;
 
 bool rdp_trace_parse_bool_value(const char* value);

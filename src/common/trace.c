@@ -35,6 +35,7 @@ typedef struct rdp_trace_config
     bool transport;
     bool protocol;
     bool unsafe_hexdump;
+    bool unsafe_warning_emitted;
     size_t hex_limit;
     rdp_trace_level level;
     bool initialized;
@@ -111,6 +112,7 @@ void rdp_trace_refresh_from_env(void)
     g_trace.transport = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_TRANSPORT"));
     g_trace.protocol = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_PROTOCOL"));
     g_trace.unsafe_hexdump = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_UNSAFE"));
+    g_trace.unsafe_warning_emitted = false;
     g_trace.hex_limit = rdp_trace_parse_hex_limit_value(getenv("LIBRDP_TRACE_HEX_BYTES"));
     g_trace.level = rdp_trace_parse_level_value(getenv("LIBRDP_TRACE_LEVEL"));
     g_trace.initialized = true;
@@ -417,6 +419,7 @@ void rdp_trace_hexdump(const char* event,
     size_t dumped = 0;
     bool unsafe = false;
     bool redacted = false;
+    bool* unsafe_warning_emitted = NULL;
     uint64_t now = 0;
     uint64_t elapsed_us = 0;
     unsigned long long seq = 0;
@@ -432,6 +435,19 @@ void rdp_trace_hexdump(const char* event,
 
     unsafe = g_trace_scope ? g_trace_scope->unsafe_hexdump :
         (g_trace.initialized ? g_trace.unsafe_hexdump : rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_UNSAFE")));
+    unsafe_warning_emitted =
+        (g_trace_scope && g_trace_scope->unsafe_warning_emitted) ?
+            g_trace_scope->unsafe_warning_emitted :
+            &g_trace.unsafe_warning_emitted;
+    if (unsafe && sensitivity != RDP_TRACE_SENSITIVITY_HEADER &&
+        !*unsafe_warning_emitted)
+    {
+        *unsafe_warning_emitted = true;
+        rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                              RDP_TRACE_LEVEL_WARN,
+                              "trace.unsafe_payloads.enabled",
+                              "sensitive_payloads=visible");
+    }
     limit = g_trace_scope ? g_trace_scope->hex_limit :
         (g_trace.initialized ? g_trace.hex_limit : rdp_trace_parse_hex_limit_value(getenv("LIBRDP_TRACE_HEX_BYTES")));
     if (!unsafe && sensitivity != RDP_TRACE_SENSITIVITY_HEADER && limit > RDP_TRACE_REDACTED_HEADER_BYTES)

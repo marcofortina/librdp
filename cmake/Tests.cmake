@@ -510,6 +510,11 @@ if(LIBRDP_BUILD_TESTS)
         ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_TRANSPORT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=trace;LIBRDP_TRACE_HEX_BYTES=0"
         TIMEOUT 30
     )
+    add_test(NAME smoke_trace_sensitive_payloads
+        COMMAND test_core trace-privacy-smoke)
+    set_tests_properties(smoke_trace_sensitive_payloads PROPERTIES
+        TIMEOUT 30
+    )
     add_test(NAME core_features COMMAND test_core features)
     add_test(NAME core_channels COMMAND test_core channels)
     add_test(NAME smoke_webauthn_mock

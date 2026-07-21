@@ -209,6 +209,8 @@ int test_client_core_named(const char* name)
         return run_limits();
     if (strcmp(name, "allocation-fault-smoke") == 0)
         return test_allocation_failure_boundaries();
+    if (strcmp(name, "trace-privacy-smoke") == 0)
+        return test_trace();
     if (strcmp(name, "worker-stall-smoke") == 0)
         return test_worker_backend_stalls();
     if (strcmp(name, "features") == 0)

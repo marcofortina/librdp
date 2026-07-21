@@ -39,28 +39,25 @@ static void trace_protocol_hexdump(void)
     unsetenv("LIBRDP_TRACE_HEX_BYTES");
 }
 
-static void trace_sensitive_hexdumps(void)
+static void trace_emit_sensitive_hexdumps(void)
 {
     const uint8_t x224_request[] =
         "TPKT-X224-Cookie: mstshash=LIBRDP_IDENTITY_CANARY";
     const uint8_t password[] = "HDR:LIBRDP_PASSWORD_CANARY";
     const uint8_t token[] = "HDR:LIBRDP_CREDSSP_TOKEN_CANARY";
     const uint8_t clipboard[] = "HDR:LIBRDP_CLIPBOARD_CANARY";
-    const uint8_t input[] = "HDR:LIBRDP_INPUT_CANARY";
+    const uint8_t input[] = "HDR:LIBRDP_INPUT_CANARY:\xe2\x82\xac";
+    const uint8_t file[] = "HDR:LIBRDP_FILE_CANARY";
     const uint8_t apdu[] = "HDR:LIBRDP_APDU_CANARY";
     const uint8_t usb[] = "HDR:LIBRDP_USB_CANARY";
     const uint8_t audio[] = "HDR:LIBRDP_AUDIO_CANARY";
     const uint8_t media[] = "HDR:LIBRDP_MEDIA_CANARY";
+    const uint8_t camera[] = "HDR:LIBRDP_CAMERA_CANARY";
     const uint8_t client_data[] = "HDR:LIBRDP_WEBAUTHN_CLIENT_DATA_CANARY";
     const uint8_t assertion[] = "HDR:LIBRDP_WEBAUTHN_ASSERTION_CANARY";
     const uint8_t pin[] = "HDR:LIBRDP_WEBAUTHN_PIN_CANARY";
     const uint8_t authenticator[] = "HDR:LIBRDP_WEBAUTHN_AUTHENTICATOR_CANARY";
 
-    setenv("LIBRDP_TRACE_PROTOCOL", "1", 1);
-    setenv("LIBRDP_TRACE_LEVEL", "trace", 1);
-    setenv("LIBRDP_TRACE_HEX_BYTES", "96", 1);
-    unsetenv("LIBRDP_TRACE_UNSAFE");
-    rdp_trace_reset_for_tests();
     rdp_trace_hexdump("x224.negotiation.request",
                       RDP_TRACE_SENSITIVITY_AUTH,
                       x224_request,
@@ -72,10 +69,15 @@ static void trace_sensitive_hexdumps(void)
                       clipboard,
                       sizeof(clipboard) - 1u);
     rdp_trace_hexdump("client.input.send", RDP_TRACE_SENSITIVITY_INPUT, input, sizeof(input) - 1u);
+    rdp_trace_hexdump("client.rdpdr.file.data", RDP_TRACE_SENSITIVITY_FILE, file, sizeof(file) - 1u);
     rdp_trace_hexdump("client.smartcard.apdu", RDP_TRACE_SENSITIVITY_APDU, apdu, sizeof(apdu) - 1u);
     rdp_trace_hexdump("client.usb.urb", RDP_TRACE_SENSITIVITY_USB, usb, sizeof(usb) - 1u);
     rdp_trace_hexdump("client.audio.pdu", RDP_TRACE_SENSITIVITY_AUDIO, audio, sizeof(audio) - 1u);
     rdp_trace_hexdump("client.media.pdu", RDP_TRACE_SENSITIVITY_VIDEO, media, sizeof(media) - 1u);
+    rdp_trace_hexdump("client.rdpecam.sample.response",
+                      RDP_TRACE_SENSITIVITY_VIDEO,
+                      camera,
+                      sizeof(camera) - 1u);
     rdp_trace_hexdump("client.webauthn.client_data",
                       RDP_TRACE_SENSITIVITY_AUTH,
                       client_data,
@@ -92,9 +94,34 @@ static void trace_sensitive_hexdumps(void)
                       RDP_TRACE_SENSITIVITY_AUTH,
                       authenticator,
                       sizeof(authenticator) - 1u);
+}
+
+static void trace_sensitive_hexdumps(void)
+{
+    setenv("LIBRDP_TRACE_PROTOCOL", "1", 1);
+    setenv("LIBRDP_TRACE_LEVEL", "trace", 1);
+    setenv("LIBRDP_TRACE_HEX_BYTES", "96", 1);
+    unsetenv("LIBRDP_TRACE_UNSAFE");
+    rdp_trace_reset_for_tests();
+    trace_emit_sensitive_hexdumps();
     unsetenv("LIBRDP_TRACE_PROTOCOL");
     unsetenv("LIBRDP_TRACE_LEVEL");
     unsetenv("LIBRDP_TRACE_HEX_BYTES");
+}
+
+static void trace_sensitive_hexdumps_strict(void)
+{
+    rdp_trace_session_scope scope;
+
+    memset(&scope, 0, sizeof(scope));
+    scope.categories = RDP_TRACE_PROTOCOL;
+    scope.level = RDP_TRACE_LEVEL_TRACE;
+    scope.hex_limit = 96u;
+    scope.sink = LIBRDP_TRACE_SINK_STDERR;
+    rdp_trace_reset_for_tests();
+    rdp_trace_push_session(&scope);
+    trace_emit_sensitive_hexdumps();
+    rdp_trace_pop_session(&scope);
 }
 
 static void trace_sensitive_hexdumps_unsafe(void)
@@ -143,6 +170,7 @@ int test_trace(void)
 {
     rdp_trace_session_scope outer_scope;
     rdp_trace_session_scope inner_scope;
+    const char* unsafe_warning = NULL;
     char output[4096];
 
     CHECK(rdp_trace_parse_bool_value("1"));
@@ -234,16 +262,34 @@ int test_trace(void)
     CHECK(strstr(output, "LIBRDP_CREDSSP_TOKEN_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_CLIPBOARD_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_INPUT_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_FILE_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_APDU_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_USB_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_AUDIO_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_MEDIA_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_CAMERA_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_WEBAUTHN_CLIENT_DATA_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_WEBAUTHN_ASSERTION_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_WEBAUTHN_PIN_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_WEBAUTHN_AUTHENTICATOR_CANARY") == NULL);
     CHECK(strstr(output, "4c49425244505f50415353574f52445f43414e415259") == NULL);
     CHECK(strstr(output, "4c49425244505f494e5055545f43414e415259") == NULL);
+    CHECK(capture_stderr(trace_sensitive_hexdumps_strict, output, sizeof(output)));
+    CHECK(strstr(output, "redacted=1 unsafe=0") != NULL);
+    CHECK(strstr(output, "LIBRDP_PASSWORD_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_CREDSSP_TOKEN_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_CLIPBOARD_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_INPUT_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_FILE_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_APDU_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_USB_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_AUDIO_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_MEDIA_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_CAMERA_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_WEBAUTHN_CLIENT_DATA_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_WEBAUTHN_ASSERTION_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_WEBAUTHN_PIN_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_WEBAUTHN_AUTHENTICATOR_CANARY") == NULL);
     CHECK(rdp_session_trace_sensitivity_for_event("client.webauthn.response") ==
           RDP_TRACE_SENSITIVITY_AUTH);
     CHECK(rdp_session_trace_sensitivity_for_event("client.auth_redirection.response") ==
@@ -252,9 +298,15 @@ int test_trace(void)
           RDP_TRACE_SENSITIVITY_VIDEO);
 
     CHECK(capture_stderr(trace_sensitive_hexdumps_unsafe, output, sizeof(output)));
+    unsafe_warning = strstr(output, "event=trace.unsafe_payloads.enabled level=warn");
+    CHECK(unsafe_warning != NULL);
+    CHECK(strstr(unsafe_warning + 1, "event=trace.unsafe_payloads.enabled level=warn") == NULL);
+    CHECK(strstr(output, "message=\"sensitive_payloads=visible\"") != NULL);
     CHECK(strstr(output, "sensitivity=auth redacted=0 unsafe=1") != NULL);
     CHECK(strstr(output, "LIBRDP_PASSWORD_CANARY") != NULL);
     CHECK(strstr(output, "LIBRDP_INPUT_CANARY") != NULL);
+    CHECK(strstr(output, "LIBRDP_FILE_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_CAMERA_CANARY") == NULL);
     return 0;
 }
 
