@@ -464,6 +464,7 @@ if(LIBRDP_BUILD_TESTS)
         test_x11_viewer_audio
         test_x11_pipewire_live_smoke
         test_x11_viewer_camera
+        test_x11_camera_live_smoke
         test_x11_viewer_keyboard
         test_x11_viewer_clipboard
         test_x11_viewer_display

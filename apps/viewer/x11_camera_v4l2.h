@@ -55,6 +55,7 @@ typedef struct x11_camera_mock x11_camera_mock;
 x11_camera_mock* x11_camera_mock_new(int permission_denied, int unplugged, size_t frame_len);
 void x11_camera_mock_free(x11_camera_mock* mock);
 int x11_camera_mock_start(x11_camera_mock* mock, const librdp_video_capture_media* media);
+void x11_camera_mock_stop(x11_camera_mock* mock);
 int x11_camera_mock_read_sample(x11_camera_mock* mock, uint8_t** data, size_t* data_len);
 void x11_camera_mock_get_stats(const x11_camera_mock* mock, x11_camera_capture_stats* stats);
 #endif

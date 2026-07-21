@@ -789,6 +789,14 @@ int x11_camera_mock_start(x11_camera_mock* mock, const librdp_video_capture_medi
     return 1;
 }
 
+void x11_camera_mock_stop(x11_camera_mock* mock)
+{
+    if (!mock)
+        return;
+    mock->started = 0;
+    mock->stats.streaming = 0;
+}
+
 /*
  * Purpose: emulate one camera sample request with the same failure policy as
  * the V4L2 path. Invariant: returned data is caller-owned and oversized frames

@@ -257,6 +257,27 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         librdp_apply_sanitizer_link_options(test_x11_viewer_camera)
         add_test(NAME x11_viewer_camera COMMAND test_x11_viewer_camera)
         set_tests_properties(x11_viewer_camera PROPERTIES TIMEOUT 30)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            add_executable(test_x11_camera_live_smoke
+                tests/test_x11_camera_live_smoke.c
+                apps/viewer/x11_camera_v4l2.c
+                apps/viewer/x11_trace.c
+            )
+            target_include_directories(test_x11_camera_live_smoke PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+            )
+            librdp_apply_system_definitions(test_x11_camera_live_smoke)
+            librdp_apply_x11_camera_backends(test_x11_camera_live_smoke)
+            librdp_apply_warning_options(test_x11_camera_live_smoke)
+            librdp_apply_sanitizer_compile_options(test_x11_camera_live_smoke)
+            librdp_apply_sanitizer_link_options(test_x11_camera_live_smoke)
+            add_test(NAME x11_camera_live_smoke COMMAND test_x11_camera_live_smoke)
+            set_tests_properties(x11_camera_live_smoke PROPERTIES
+                SKIP_RETURN_CODE 77
+                TIMEOUT 30
+            )
+        endif()
         add_executable(test_x11_viewer_keyboard
             tests/test_x11_viewer_keyboard.c
             apps/common/x11_keymap.c
