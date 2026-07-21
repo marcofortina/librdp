@@ -286,6 +286,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_video_capture_stream_index camera_stream_request;
     rdp_video_capture_sample camera_sample;
     librdp_video_capture_media camera_media;
+    rdp_webauthn_request webauthn_request;
     rdp_webauthn_response webauthn_response;
     rdp_remote_programs_handshake_ex rail_handshake;
     rdp_remote_programs_exec_result rail_exec_result;
@@ -427,6 +428,17 @@ int test_server_loopback_standard_activation_sequence(void)
     static const uint8_t rail_app_utf16[] = {'a', 0, 'p', 0, 'p', 0, 0, 0};
     static const uint8_t camera_name_utf16[] = {'C', 0, 'a', 0, 'm', 0, 0, 0};
     static const uint8_t participant_name_utf16[] = {'G', 0, 'u', 0, 'e', 0, 's', 0, 't', 0};
+    static const uint8_t webauthn_request_data[] = {
+        RDP_WEBAUTHN_CMD_GET_ASSERTION,
+        0xa0u
+    };
+    static const uint8_t webauthn_response_data[] = {0xa1u, 0x01u, 0x01u};
+    static const uint8_t webauthn_transaction_id[RDP_WEBAUTHN_GUID_LENGTH] = {
+        0x10u, 0x11u, 0x12u, 0x13u,
+        0x14u, 0x15u, 0x16u, 0x17u,
+        0x18u, 0x19u, 0x1au, 0x1bu,
+        0x1cu, 0x1du, 0x1eu, 0x1fu
+    };
     static const uint8_t cr2_clear_color[16] = {
         0x10, 0x20, 0x30, 0x40, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0
@@ -439,6 +451,7 @@ int test_server_loopback_standard_activation_sequence(void)
     uint32_t audio_input_open_result = 0;
     uint16_t audio_output_confirm_timestamp = 0;
     uint8_t audio_output_confirm_block = 0;
+    size_t webauthn_response_wire_len = 0;
     uint32_t cr2_versions[1] = {RDP_COMPOSITED_PROTOCOL_VERSION};
     const uint32_t cr2_window_resource = 0x12u;
     const uint32_t cr2_content_resource = 0x13u;
@@ -3256,11 +3269,15 @@ int test_server_loopback_standard_activation_sequence(void)
                                                    &channel_plaintext,
                                                    response,
                                                    sizeof(response)));
-    SCHECK(librdp_server_peer_send_webauthn_response(peer,
-                                                     19,
-                                                     0,
-                                                     "ok",
-                                                     2) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_send_webauthn_request(
+               peer,
+               19,
+               RDP_WEBAUTHN_COMMAND_WEB_AUTHN,
+               RDP_WEBAUTHN_FLAG_UV_PREFERRED,
+               webauthn_request_data,
+               sizeof(webauthn_request_data),
+               "example.test",
+               webauthn_transaction_id) == LIBRDP_STATUS_OK);
     SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
                                                               response,
                                                               sizeof(response),
@@ -3269,17 +3286,53 @@ int test_server_loopback_standard_activation_sequence(void)
                                                               dynamic_static_channel_id,
                                                               19,
                                                               &dvc_data_response));
-    SCHECK(rdp_webauthn_parse_response(dvc_data_response.data,
-                                       dvc_data_response.data_len,
+    SCHECK(rdp_webauthn_parse_request(dvc_data_response.data,
+                                      dvc_data_response.data_len,
+                                      &webauthn_request) == LIBRDP_STATUS_OK);
+    SCHECK(webauthn_request.command == RDP_WEBAUTHN_COMMAND_WEB_AUTHN &&
+           webauthn_request.flags == RDP_WEBAUTHN_FLAG_UV_PREFERRED &&
+           webauthn_request.request_len == sizeof(webauthn_request_data) &&
+           memcmp(webauthn_request.request,
+                  webauthn_request_data,
+                  sizeof(webauthn_request_data)) == 0 &&
+           webauthn_request.rp_id_len == sizeof("example.test") - 1u &&
+           memcmp(webauthn_request.rp_id,
+                  "example.test",
+                  sizeof("example.test") - 1u) == 0 &&
+           webauthn_request.transaction_id_len == sizeof(webauthn_transaction_id) &&
+           memcmp(webauthn_request.transaction_id,
+                  webauthn_transaction_id,
+                  sizeof(webauthn_transaction_id)) == 0);
+
+    media_payload.length = 0;
+    SCHECK(rdp_webauthn_write_authenticator_response(&media_payload,
+                                                     0u,
+                                                     0u,
+                                                     webauthn_response_data,
+                                                     sizeof(webauthn_response_data)) == LIBRDP_STATUS_OK);
+    webauthn_response_wire_len = media_payload.length;
+    SCHECK(rdp_webauthn_parse_response(media_payload.data,
+                                       media_payload.length,
                                        &webauthn_response) == LIBRDP_STATUS_OK);
-    SCHECK(webauthn_response.hresult == 0 &&
-           webauthn_response.payload_len == 2 &&
-           memcmp(webauthn_response.payload, "ok", 2) == 0);
+    SCHECK(webauthn_response.hresult == 0u && webauthn_response.payload_len > 0u);
+    extension_count_before_media = runtime_context.extension_count;
+    SCHECK(server_runtime_send_client_dynamic(&dynamic_path, 19, &media_payload));
+    SCHECK(runtime_context.extension_count == extension_count_before_media + 1u &&
+           runtime_context.last_extension_family == LIBRDP_SERVER_EXTENSION_WEBAUTHN &&
+           runtime_context.last_extension_message_type == 0u &&
+           runtime_context.last_extension_flags == 1u);
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_WEBAUTHN,
                                                  &feature_status) == LIBRDP_STATUS_OK);
     SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
            feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    SCHECK(librdp_server_extension_state_init(&extension_state) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_extension_state(peer,
+                                                  LIBRDP_SERVER_EXTENSION_WEBAUTHN,
+                                                  &extension_state) == LIBRDP_STATUS_OK);
+    SCHECK(extension_state.rx_messages == 1u && extension_state.tx_messages == 1u);
+    SCHECK(librdp_server_peer_close_dynamic_channel(peer, 19) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_complete_dynamic_close(&dynamic_path, 19));
 
     SCHECK(test_server_open_client_dynamic_channel(client_fd,
                                                    peer,
@@ -4530,9 +4583,10 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(server_metrics.static_channel_in == 9 &&
            server_metrics.static_channel_out >= 6);
     SCHECK(server_metrics.static_channel_bytes_in > 4 && server_metrics.static_channel_bytes_out >= 4);
-    SCHECK(server_metrics.dynamic_channel_in == 10);
+    SCHECK(server_metrics.dynamic_channel_in == 11);
     SCHECK(server_metrics.dynamic_channel_out == 48);
-    SCHECK(server_metrics.dynamic_channel_bytes_in == 65 && server_metrics.dynamic_channel_bytes_out > 64);
+    SCHECK(server_metrics.dynamic_channel_bytes_in == 65u + webauthn_response_wire_len &&
+           server_metrics.dynamic_channel_bytes_out > 64);
     SCHECK(server_metrics.udp_datagrams_in == 2);
     SCHECK(server_metrics.udp_datagrams_out == 2);
     SCHECK(server_metrics.udp_ack_vector_out == 2);

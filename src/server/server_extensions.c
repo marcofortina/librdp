@@ -1505,6 +1505,35 @@ librdp_status librdp_server_peer_send_camera_sample(librdp_server_peer* peer,
     return status;
 }
 
+librdp_status librdp_server_peer_send_webauthn_request(librdp_server_peer* peer,
+                                                       uint32_t dynamic_channel_id,
+                                                       uint32_t command,
+                                                       uint32_t flags,
+                                                       const void* request_data,
+                                                       size_t request_len,
+                                                       const char* rp_id,
+                                                       const void* transaction_id)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_webauthn_write_request(&payload,
+                                        command,
+                                        flags,
+                                        request_data,
+                                        request_len,
+                                        rp_id,
+                                        transaction_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_WEBAUTHN_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
 librdp_status librdp_server_peer_send_webauthn_response(librdp_server_peer* peer,
                                                         uint32_t dynamic_channel_id,
                                                         uint32_t hresult,

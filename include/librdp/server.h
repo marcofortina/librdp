@@ -4128,6 +4128,46 @@ LIBRDP_API librdp_status librdp_server_peer_send_camera_sample(librdp_server_pee
                                                                size_t sample_len);
 
 /**
+ * @brief Send a WebAuthn operation request to the client provider.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open WebAuthn dynamic channel id.
+ * @param[in] command WebAuthn channel command.
+ * @param[in] flags Request policy flags; use zero for commands without flags.
+ * @param[in] request Borrowed command payload; may be NULL only when
+ * request_len is zero.
+ * @param[in] request_len Number of bytes in request.
+ * @param[in] rp_id Optional borrowed relying-party identifier. Pass NULL only
+ * for commands that do not carry a relying-party identifier.
+ * @param[in] transaction_id Optional borrowed 16-byte transaction identifier.
+ * Pass NULL only for commands that do not require correlation.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for an
+ * invalid command, flags, payload, identifier, or non-WebAuthn channel;
+ * LIBRDP_STATUS_STATE when the peer is not ACTIVE; allocation or transport
+ * errors from the send path.
+ *
+ * The function copies the serialized request before returning. All input
+ * pointers remain owned by the caller. The correlated response is delivered
+ * through the peer extension callback on the serialized peer dispatch thread.
+ *
+ * @note The application is responsible for request correlation and timeout or
+ * cancellation policy.
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Request data and transaction identifiers can contain sensitive
+ * authentication material and are redacted by the default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_webauthn_request(librdp_server_peer* peer,
+                                                                  uint32_t dynamic_channel_id,
+                                                                  uint32_t command,
+                                                                  uint32_t flags,
+                                                                  const void* request,
+                                                                  size_t request_len,
+                                                                  const char* rp_id,
+                                                                  const void* transaction_id);
+
+/**
  * @brief Send a WebAuthn channel response.
  *
  * @param[in,out] peer Active peer; must not be NULL.
