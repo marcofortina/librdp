@@ -149,7 +149,8 @@ void rdp_server_record_status(librdp_server_peer* peer,
     peer->last_status.state = peer->state;
     rdp_server_copy_token(peer->last_status.phase, sizeof(peer->last_status.phase), phase);
     rdp_server_copy_token(peer->last_status.message, sizeof(peer->last_status.message), message);
-    if (status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT)
+    if (status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT ||
+        status == LIBRDP_STATUS_CLOSED)
         return;
     if (librdp_server_event_init(&event) != LIBRDP_STATUS_OK)
         return;

@@ -62,6 +62,29 @@ typedef struct test_server_drive_context
     int valid;
 } test_server_drive_context;
 
+typedef struct test_server_terminal_context
+{
+    uint32_t closed;
+    uint32_t errors;
+} test_server_terminal_context;
+
+static void test_server_terminal_callback(
+    librdp_server_peer* peer,
+    const librdp_server_event* event,
+    void* user_data)
+{
+    test_server_terminal_context* context =
+        (test_server_terminal_context*)user_data;
+
+    if (!peer || !event || !context)
+        return;
+    if (event->type == LIBRDP_SERVER_EVENT_STATE_CHANGED &&
+        event->new_state == LIBRDP_SERVER_PEER_CLOSED)
+        context->closed++;
+    else if (event->type == LIBRDP_SERVER_EVENT_ERROR)
+        context->errors++;
+}
+
 static void test_server_write_u32(uint8_t* data, uint32_t value)
 {
     data[0] = (uint8_t)(value & 0xffu);
@@ -414,6 +437,47 @@ static int test_server_disconnect_ultimatum(void)
     return valid;
 }
 
+/*
+ * A transport FIN may be reported as readable data, POLLHUP, or both across
+ * supported kernels. All variants are an orderly peer close and must not emit
+ * an error event or leave the peer in FAILED.
+ */
+static int test_server_transport_eof(void)
+{
+    test_server_peer_fixture fixture;
+    test_server_terminal_context context;
+    librdp_server_status server_status;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int valid = 0;
+
+    memset(&context, 0, sizeof(context));
+    if (!test_server_peer_fixture_open(&fixture))
+        return 0;
+    if (librdp_server_peer_set_event_callback(
+            fixture.peer,
+            test_server_terminal_callback,
+            &context) == LIBRDP_STATUS_OK)
+    {
+        close(fixture.client_fd);
+        fixture.client_fd = -1;
+        status = librdp_server_peer_run_once(fixture.peer, 1000);
+        if (librdp_server_status_init(&server_status) ==
+                LIBRDP_STATUS_OK &&
+            librdp_server_peer_get_last_status(
+                fixture.peer,
+                &server_status) == LIBRDP_STATUS_OK)
+        {
+            valid = status == LIBRDP_STATUS_CLOSED &&
+                    server_status.status == LIBRDP_STATUS_CLOSED &&
+                    librdp_server_peer_get_state(fixture.peer) ==
+                        LIBRDP_SERVER_PEER_CLOSED &&
+                    context.closed == 1u && context.errors == 0u;
+        }
+    }
+    test_server_peer_fixture_close(&fixture);
+    return valid;
+}
+
 int test_server_lifecycle_focused(void)
 {
     test_server_peer_fixture fixture;
@@ -432,6 +496,7 @@ int test_server_lifecycle_focused(void)
     SCHECK(librdp_server_peer_close(fixture.peer) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_pollfds(fixture.peer, NULL, 0, &count) == LIBRDP_STATUS_STATE);
     test_server_peer_fixture_close(&fixture);
+    SCHECK(test_server_transport_eof());
     return 0;
 }
 

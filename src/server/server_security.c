@@ -926,7 +926,7 @@ librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
         if (poll_result < 0)
             return errno == EINTR ? LIBRDP_STATUS_TIMEOUT : LIBRDP_STATUS_IO_ERROR;
     }
-    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
+    if ((pfd.revents & POLLNVAL) != 0)
     {
         rdp_server_set_state(peer, LIBRDP_SERVER_PEER_FAILED);
         return LIBRDP_STATUS_IO_ERROR;
