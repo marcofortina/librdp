@@ -513,6 +513,7 @@ int test_multitransport_provider_lifecycle(void)
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     librdp_multitransport_provider provider;
+    librdp_error_info error_info;
     multitransport_provider_capture capture;
     rdp_transport peer_transport;
     rdp_buffer request;
@@ -748,6 +749,13 @@ int test_multitransport_provider_lifecycle(void)
               &peer_transport,
               23u,
               RDP_MULTITRANSPORT_HRESULT_ABORT) == 0);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(session),
+                                 &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_UNSUPPORTED);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_BACKEND);
+    CHECK(error_info.phase != NULL &&
+          strcmp(error_info.phase, "client.multitransport.provider") == 0);
     CHECK(capture.releases == 4u && capture.established_releases == 2u);
     CHECK(capture.valid);
     CHECK(capture.side_fds[0][0] < 0 && capture.side_fds[0][1] < 0 &&

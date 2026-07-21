@@ -29,6 +29,16 @@ static int run_timeouts(void)
     return test_connect_timeout();
 }
 
+static int run_error_boundaries(void)
+{
+    if (test_connect_timeout() != 0 ||
+        test_idle_transport_eof() != 0 ||
+        test_connect_cancellation() != 0 ||
+        test_reconnect_success() != 0)
+        return 1;
+    return test_multitransport_provider_lifecycle();
+}
+
 static int run_resolution(void)
 {
     return test_resolution_failure();
@@ -199,6 +209,8 @@ int test_client_core_named(const char* name)
         return run_settings();
     if (strcmp(name, "timeouts") == 0)
         return run_timeouts();
+    if (strcmp(name, "error-boundaries-smoke") == 0)
+        return run_error_boundaries();
     if (strcmp(name, "resolution") == 0)
         return run_resolution();
     if (strcmp(name, "activation-timeout") == 0)

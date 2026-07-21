@@ -1831,6 +1831,7 @@ int test_connect_cancellation(void)
 {
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
+    librdp_error_info error_info;
     cancel_thread_capture cancel_capture;
     pthread_t cancel_thread;
     struct timespec started;
@@ -1868,6 +1869,13 @@ int test_connect_cancellation(void)
     CHECK(cancel_capture.status == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CANCELLED);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_DISCONNECTED);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(session),
+                                 &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_CANCELLED);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_CLIENT);
+    CHECK(error_info.phase != NULL &&
+          strcmp(error_info.phase, "client.cancel") == 0);
 
     librdp_session_free(session);
     librdp_settings_free(settings);
@@ -2140,6 +2148,7 @@ int test_reconnect_success(void)
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     librdp_reconnect_policy policy;
+    librdp_error_info error_info;
     librdp_channel_handle stale_handle = 0;
     librdp_channel_info stale_info;
     librdp_metrics metrics;
@@ -2174,6 +2183,11 @@ int test_reconnect_success(void)
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(session),
+                                 &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_OK);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_NONE);
     for (i = 0; i < 6u; i++)
         CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_channel_open(session,
@@ -2214,6 +2228,11 @@ int test_reconnect_success(void)
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(session),
+                                 &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_OK);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_NONE);
     CHECK(session->pointer_cache[
               RDP_SESSION_POINTER_CACHE_SLOTS - 1u].active == 0u);
     CHECK(session->pointer_cache[

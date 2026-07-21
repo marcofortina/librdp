@@ -130,6 +130,19 @@ static librdp_status rdp_session_multitransport_finish_slot(
                         (unsigned long long)slot->request.request_token);
         return LIBRDP_STATUS_OK;
     }
+    if (status == LIBRDP_STATUS_OK &&
+        session->multitransport_provider_set)
+    {
+        rdp_session_set_last_error(
+            session,
+            result,
+            0,
+            LIBRDP_ERROR_COMPONENT_BACKEND,
+            "client.multitransport.provider",
+            result == LIBRDP_STATUS_TIMEOUT ?
+                "multitransport provider timed out" :
+                "multitransport provider rejected side transport");
+    }
     rdp_session_multitransport_release_slot(session, slot, accepted);
     return status;
 }
