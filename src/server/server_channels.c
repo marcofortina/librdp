@@ -299,6 +299,77 @@ static void rdp_server_extension_state_mark_rx(librdp_server_peer* peer,
     rdp_server_metric_add(&state->rx_bytes, (uint64_t)event->payload_len);
 }
 
+void rdp_server_multitransport_reset(librdp_server_peer* peer)
+{
+    if (!peer)
+        return;
+    peer->multitransport_negotiated = 0u;
+    peer->multitransport_udp_active = 0u;
+    peer->multitransport_udp2_active = 0u;
+    memset(peer->multitransport_udp_selected,
+           0,
+           sizeof(peer->multitransport_udp_selected));
+    memset(peer->multitransport_udp_window_started,
+           0,
+           sizeof(peer->multitransport_udp_window_started));
+    memset(peer->multitransport_udp_fallback_tcp,
+           0,
+           sizeof(peer->multitransport_udp_fallback_tcp));
+    memset(peer->multitransport_udp_receive_window,
+           0,
+           sizeof(peer->multitransport_udp_receive_window));
+    memset(peer->multitransport_udp_next_receive_sequence,
+           0,
+           sizeof(peer->multitransport_udp_next_receive_sequence));
+    memset(peer->multitransport_udp_last_receive_sequence,
+           0,
+           sizeof(peer->multitransport_udp_last_receive_sequence));
+    peer->multitransport_udp2_window_started = 0u;
+    peer->multitransport_udp2_fallback_tcp = 0u;
+    peer->multitransport_udp2_log_window_size = 0u;
+    peer->multitransport_udp2_next_receive_sequence = 0u;
+    peer->multitransport_udp2_last_receive_sequence = 0u;
+    peer->multitransport_udp2_last_peer_ack_sequence = 0u;
+    peer->multitransport_flags = 0u;
+}
+
+/* Match a Soft-Sync tunnel request to the exact GCC mode advertised by peer. */
+int rdp_server_multitransport_tunnel_allowed(
+    const librdp_server_peer* peer,
+    uint32_t tunnel_type)
+{
+    if (!peer || !peer->multitransport_negotiated)
+        return 0;
+    if (tunnel_type == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE)
+        return (peer->multitransport_flags &
+                RDP_GCC_MULTITRANSPORT_UDP_FECR) != 0u;
+    if (tunnel_type == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY)
+        return (peer->multitransport_flags &
+                RDP_GCC_MULTITRANSPORT_UDP_FECL) != 0u;
+    return 0;
+}
+
+/* Keep public feature state aligned with usable, non-fallback receive modes. */
+static void rdp_server_multitransport_refresh_udp_active(
+    librdp_server_peer* peer)
+{
+    uint8_t active = 0u;
+
+    if (!peer)
+        return;
+    for (size_t mode = 0u; mode < 2u; mode++)
+    {
+        if (peer->multitransport_udp_selected[mode] &&
+            peer->multitransport_udp_window_started[mode] &&
+            !peer->multitransport_udp_fallback_tcp[mode])
+        {
+            active = 1u;
+            break;
+        }
+    }
+    peer->multitransport_udp_active = active;
+}
+
 void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_events)
 {
     if (!peer)
@@ -333,6 +404,7 @@ void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_
     peer->dynamic_channels_ready = 0;
     peer->dynamic_channel_capabilities_sent = 0;
     peer->dynamic_channel_version = 0u;
+    rdp_server_multitransport_reset(peer);
     rdp_server_graphics_frame_state_reset(peer);
 }
 
@@ -2501,6 +2573,8 @@ librdp_status librdp_server_peer_process_udp2_datagram(librdp_server_peer* peer,
     if ((peer->requested_features & (uint32_t)LIBRDP_FEATURE_UDP2_TRANSPORT) == 0 ||
         !peer->multitransport_negotiated)
         return LIBRDP_STATUS_UNSUPPORTED;
+    if (peer->multitransport_udp2_fallback_tcp)
+        return LIBRDP_STATUS_UNSUPPORTED;
     next_window_started = peer->multitransport_udp2_window_started;
     next_fallback_tcp = peer->multitransport_udp2_fallback_tcp;
     next_log_window_size = peer->multitransport_udp2_log_window_size;
@@ -2664,6 +2738,7 @@ librdp_status librdp_server_peer_process_udp2_datagram(librdp_server_peer* peer,
     else if (metric_tcp_fallback > 0)
     {
         peer->multitransport_udp2_fallback_tcp = next_fallback_tcp;
+        peer->multitransport_udp2_active = 0u;
         rdp_server_metric_add(&peer->metrics.udp2_tcp_fallbacks, metric_tcp_fallback);
     }
     if (status != LIBRDP_STATUS_OK)
@@ -2756,8 +2831,8 @@ static librdp_status rdp_server_select_soft_sync_tunnels(librdp_server_peer* pee
             break;
         if (!rdp_server_soft_sync_channels_open(peer, &list))
             continue;
-        if (list.tunnel_type != RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE &&
-            list.tunnel_type != RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY)
+        if (!rdp_server_multitransport_tunnel_allowed(peer,
+                                                      list.tunnel_type))
             continue;
         if (!rdp_server_tunnel_type_present(tunnel_types, *tunnel_count, list.tunnel_type))
         {
@@ -2833,6 +2908,32 @@ librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
                                                       size_t response_capacity,
                                                       size_t* response_len)
 {
+    return librdp_server_peer_process_udp_datagram_mode(peer,
+                                                        1,
+                                                        datagram,
+                                                        datagram_len,
+                                                        response,
+                                                        response_capacity,
+                                                        response_len);
+}
+
+/*
+ * Advance the receive window selected by reliable without sharing sequence or
+ * fallback state with the other tunnel. Parsing and response sizing are
+ * transactional: no receive state or success metric commits until a complete
+ * ACK fits the caller buffer. Reliable forward gaps outside the advertised
+ * window latch TCP fallback; lossy gaps remain accepted and are counted as
+ * dropped, while stale packets are counted as reordered.
+ */
+librdp_status librdp_server_peer_process_udp_datagram_mode(
+    librdp_server_peer* peer,
+    int reliable,
+    const void* datagram,
+    size_t datagram_len,
+    void* response,
+    size_t response_capacity,
+    size_t* response_len)
+{
     const uint8_t* bytes = (const uint8_t*)datagram;
     rdp_udp_fec_header header;
     rdp_udp_payload_prefix prefix;
@@ -2850,7 +2951,10 @@ librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
     uint64_t metric_ack_vector_in = 0;
     uint64_t metric_pending_from_peer = 0;
     uint64_t metric_pending = 0;
+    uint64_t metric_dropped = 0;
+    uint64_t metric_reordered = 0;
     uint64_t metric_tcp_fallback = 0;
+    size_t mode = reliable ? 1u : 0u;
     size_t offset = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -2863,6 +2967,9 @@ librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
     if ((peer->requested_features & (uint32_t)LIBRDP_FEATURE_UDP_TRANSPORT) == 0 ||
         !peer->multitransport_negotiated)
         return LIBRDP_STATUS_UNSUPPORTED;
+    if (!peer->multitransport_udp_selected[mode] ||
+        peer->multitransport_udp_fallback_tcp[mode])
+        return LIBRDP_STATUS_UNSUPPORTED;
 
     memset(&header, 0, sizeof(header));
     memset(&prefix, 0, sizeof(prefix));
@@ -2872,11 +2979,11 @@ librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
     memset(&syn_ex, 0, sizeof(syn_ex));
     memset(&ack_of_ack, 0, sizeof(ack_of_ack));
     rdp_buffer_init(&response_packet);
-    next_window_started = peer->multitransport_udp_window_started;
-    next_fallback_tcp = peer->multitransport_udp_fallback_tcp;
-    next_receive_window = peer->multitransport_udp_receive_window;
-    next_receive_sequence = peer->multitransport_udp_next_receive_sequence;
-    next_last_receive_sequence = peer->multitransport_udp_last_receive_sequence;
+    next_window_started = peer->multitransport_udp_window_started[mode];
+    next_fallback_tcp = peer->multitransport_udp_fallback_tcp[mode];
+    next_receive_window = peer->multitransport_udp_receive_window[mode];
+    next_receive_sequence = peer->multitransport_udp_next_receive_sequence[mode];
+    next_last_receive_sequence = peer->multitransport_udp_last_receive_sequence[mode];
 
     status = rdp_udp_parse_fec_header(datagram, datagram_len, &header);
     if (status == LIBRDP_STATUS_OK)
@@ -2901,7 +3008,10 @@ librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
     if (status == LIBRDP_STATUS_OK &&
         (header.flags & (RDP_UDP_FLAG_SYN | RDP_UDP_FLAG_SYNLOSSY)) != 0)
     {
-        if (datagram_len - offset != 8u)
+        if ((reliable && (header.flags & RDP_UDP_FLAG_SYNLOSSY) != 0) ||
+            (!reliable && (header.flags & RDP_UDP_FLAG_SYN) != 0))
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else if (datagram_len - offset != 8u)
             status = LIBRDP_STATUS_PROTOCOL_ERROR;
         else
             status = rdp_udp_parse_syn_data(bytes + offset, datagram_len - offset, &syn);
@@ -2965,7 +3075,19 @@ librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
                 next_receive_sequence = sequence + 1u;
                 next_last_receive_sequence = sequence;
             }
-            else if (distance < 0x80000000u && distance <= window &&
+            else if (distance >= 0x80000000u)
+            {
+                metric_reordered++;
+                if (!reliable)
+                    metric_dropped++;
+            }
+            else if (!reliable)
+            {
+                next_receive_sequence = sequence + 1u;
+                next_last_receive_sequence = sequence;
+                metric_dropped += distance;
+            }
+            else if (distance <= window &&
                      distance <= RDP_SERVER_UDP_MAX_REPORTABLE_PENDING)
             {
                 next_receive_sequence = sequence + 1u;
@@ -2983,7 +3105,7 @@ librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
             status = rdp_server_udp_write_ack_vector_response(&response_packet,
                                                               sequence,
                                                               window,
-                                                              (uint32_t)metric_pending);
+                                                              reliable ? (uint32_t)metric_pending : 0u);
     }
     if (status == LIBRDP_STATUS_OK && response_packet.length > response_capacity)
     {
@@ -2995,17 +3117,19 @@ librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
         if (response_packet.length > 0)
             memcpy(response, response_packet.data, response_packet.length);
         *response_len = response_packet.length;
-        peer->multitransport_udp_window_started = next_window_started;
-        peer->multitransport_udp_fallback_tcp = next_fallback_tcp;
-        peer->multitransport_udp_receive_window = next_receive_window;
-        peer->multitransport_udp_next_receive_sequence = next_receive_sequence;
-        peer->multitransport_udp_last_receive_sequence = next_last_receive_sequence;
-        peer->multitransport_udp_active = 1;
+        peer->multitransport_udp_window_started[mode] = next_window_started;
+        peer->multitransport_udp_fallback_tcp[mode] = next_fallback_tcp;
+        peer->multitransport_udp_receive_window[mode] = next_receive_window;
+        peer->multitransport_udp_next_receive_sequence[mode] = next_receive_sequence;
+        peer->multitransport_udp_last_receive_sequence[mode] = next_last_receive_sequence;
+        rdp_server_multitransport_refresh_udp_active(peer);
         rdp_server_metric_add(&peer->metrics.pdu_in, 1u);
         rdp_server_metric_add(&peer->metrics.udp_datagrams_in, 1u);
         rdp_server_metric_add(&peer->metrics.udp_bytes_in, (uint64_t)datagram_len);
         rdp_server_metric_add(&peer->metrics.udp_ack_vector_in, metric_ack_vector_in);
         rdp_server_metric_add(&peer->metrics.udp_pending_packets, metric_pending_from_peer + metric_pending);
+        rdp_server_metric_add(&peer->metrics.udp_dropped_packets, metric_dropped);
+        rdp_server_metric_add(&peer->metrics.udp_reordered_packets, metric_reordered);
         if (response_packet.length > 0)
         {
             rdp_server_metric_add(&peer->metrics.pdu_out, 1u);
@@ -3016,9 +3140,20 @@ librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
     }
     else if (metric_tcp_fallback > 0)
     {
-        peer->multitransport_udp_fallback_tcp = next_fallback_tcp;
+        peer->multitransport_udp_fallback_tcp[mode] = next_fallback_tcp;
+        rdp_server_multitransport_refresh_udp_active(peer);
         rdp_server_metric_add(&peer->metrics.udp_tcp_fallbacks, metric_tcp_fallback);
     }
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "server.udp.datagram",
+                        "mode=%s wire_len=%u response_len=%u pending=%llu dropped=%llu reordered=%llu",
+                        reliable ? "reliable" : "lossy",
+                        (unsigned)datagram_len,
+                        (unsigned)response_packet.length,
+                        (unsigned long long)metric_pending,
+                        (unsigned long long)metric_dropped,
+                        (unsigned long long)metric_reordered);
     if (status != LIBRDP_STATUS_OK)
         rdp_server_record_status(peer,
                                  status,
@@ -3834,7 +3969,15 @@ librdp_status rdp_server_handle_dynamic_channel_message(librdp_server_peer* peer
         if (status == LIBRDP_STATUS_OK)
             status = rdp_server_send_dynamic_packet(peer, &response);
         if (status == LIBRDP_STATUS_OK && tunnel_count > 0)
-            peer->multitransport_udp_active = 1;
+        {
+            for (uint32_t i = 0u; i < tunnel_count; i++)
+            {
+                if (tunnel_types[i] == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE)
+                    peer->multitransport_udp_selected[1] = 1u;
+                else if (tunnel_types[i] == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY)
+                    peer->multitransport_udp_selected[0] = 1u;
+            }
+        }
     }
     else
         status = LIBRDP_STATUS_UNSUPPORTED;

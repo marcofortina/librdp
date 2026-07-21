@@ -184,11 +184,12 @@ struct librdp_server_peer
     uint8_t multitransport_negotiated;
     uint8_t multitransport_udp_active;
     uint8_t multitransport_udp2_active;
-    uint8_t multitransport_udp_window_started;
-    uint8_t multitransport_udp_fallback_tcp;
-    uint16_t multitransport_udp_receive_window;
-    uint32_t multitransport_udp_next_receive_sequence;
-    uint32_t multitransport_udp_last_receive_sequence;
+    uint8_t multitransport_udp_selected[2];
+    uint8_t multitransport_udp_window_started[2];
+    uint8_t multitransport_udp_fallback_tcp[2];
+    uint16_t multitransport_udp_receive_window[2];
+    uint32_t multitransport_udp_next_receive_sequence[2];
+    uint32_t multitransport_udp_last_receive_sequence[2];
     uint8_t multitransport_udp2_window_started;
     uint8_t multitransport_udp2_fallback_tcp;
     uint8_t multitransport_udp2_log_window_size;

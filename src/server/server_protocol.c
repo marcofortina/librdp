@@ -198,10 +198,6 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
             server_config.message_channel_id =
                 peer->message_channel_id;
         }
-        peer->multitransport_negotiated = 0;
-        peer->multitransport_udp_active = 0;
-        peer->multitransport_udp2_active = 0;
-        peer->multitransport_flags = 0;
         if (client_data.has_multitransport &&
             (peer->requested_features & (uint32_t)LIBRDP_FEATURE_MULTITRANSPORT) != 0 &&
             (peer->requested_features &
@@ -209,8 +205,8 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
         {
             uint32_t flags = client_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_SERVER_KNOWN_FLAGS;
 
-            if ((flags & (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL)) ==
-                (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL))
+            if ((flags & (RDP_GCC_MULTITRANSPORT_UDP_FECR |
+                          RDP_GCC_MULTITRANSPORT_UDP_FECL)) != 0u)
             {
                 server_config.enable_multitransport = 1;
                 server_config.multitransport_flags =

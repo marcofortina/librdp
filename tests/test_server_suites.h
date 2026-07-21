@@ -34,6 +34,7 @@ int test_server_lifecycle_focused(void);
 int test_server_protocol_order_focused(void);
 int test_server_desktop_limits_focused(void);
 int test_server_extension_lifecycle_focused(void);
+int test_server_multitransport_focused(void);
 int test_server_channels_focused(void);
 int test_server_drive_metadata_focused(void);
 int test_server_graphics_focused(void);

@@ -30,6 +30,13 @@ void rdp_server_extension_state_mark_open(librdp_server_peer* peer,
 
 void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_events);
 
+void rdp_server_multitransport_reset(librdp_server_peer* peer);
+
+/* Return non-zero only for a tunnel mode advertised during GCC negotiation. */
+int rdp_server_multitransport_tunnel_allowed(
+    const librdp_server_peer* peer,
+    uint32_t tunnel_type);
+
 void rdp_server_dynamic_channels_cancel_pending_family(
     librdp_server_peer* peer,
     librdp_server_extension_family family);

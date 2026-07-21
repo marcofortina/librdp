@@ -900,6 +900,8 @@ typedef struct librdp_server_metrics
     uint64_t udp2_reordered_packets; /**< UDP2 duplicate or reordered data packets accepted without delivery. */
     uint64_t udp2_tcp_fallbacks; /**< UDP2 datagrams rejected because the receive gap exceeded the negotiated window. */
     uint64_t udp2_last_rtt_us; /**< Last measured UDP2 RTT in microseconds, or zero until an RTT sample exists. */
+    uint64_t udp_dropped_packets; /**< Lossy RDPEUDP gaps and stale datagrams intentionally dropped. */
+    uint64_t udp_reordered_packets; /**< Duplicate or reordered RDPEUDP datagrams observed. */
 } librdp_server_metrics;
 
 /**
@@ -2403,6 +2405,54 @@ LIBRDP_API librdp_status librdp_server_peer_process_udp_datagram(librdp_server_p
                                                                  void* response,
                                                                  size_t response_capacity,
                                                                  size_t* response_len);
+
+/**
+ * @brief Process one RDPEUDP side-transport datagram in a selected mode.
+ *
+ * This is the mode-aware form of
+ * librdp_server_peer_process_udp_datagram(). The application owns the UDP
+ * socket and its TLS or DTLS protection, associates that transport with peer,
+ * and passes a decrypted RDPEUDP record after Soft-Sync selected the matching
+ * reliable or lossy tunnel. Reliable mode reports receive gaps through SACK
+ * and selects TCP fallback for an out-of-window forward jump. Lossy mode
+ * accepts forward gaps, accounts missing packets as dropped, and keeps an
+ * independent receive window.
+ *
+ * @param[in,out] peer Active peer associated with the protected side
+ * transport; must not be NULL.
+ * @param[in] reliable Non-zero selects the reliable tunnel; zero selects the
+ * lossy tunnel.
+ * @param[in] datagram Borrowed RDPEUDP wire datagram; must not be NULL.
+ * @param[in] datagram_len Number of bytes in datagram; must be non-zero.
+ * @param[out] response Caller-owned response buffer. May be NULL only when
+ * response_capacity is zero.
+ * @param[in] response_capacity Number of bytes available in response.
+ * @param[out] response_len Number of response bytes written, or required bytes
+ * when the response buffer is too small; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK when accepted; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments; LIBRDP_STATUS_STATE when peer is not ACTIVE;
+ * LIBRDP_STATUS_UNSUPPORTED when the requested mode was not selected for this
+ * peer or has fallen back to TCP; LIBRDP_STATUS_LIMIT_EXCEEDED when response is
+ * too small; LIBRDP_STATUS_PROTOCOL_ERROR for malformed data or an
+ * out-of-window reliable datagram; allocation errors from temporary buffers.
+ *
+ * @note Thread-safety: call from the serialized peer owner context. Passing
+ * datagrams from another connection violates the application-owned transport
+ * association and is rejected unless that peer independently negotiated the
+ * same mode.
+ * @warning The datagram can contain redirected channel traffic. Do not log its
+ * body or transport security material outside the redacted trace path.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_process_udp_datagram_mode(
+    librdp_server_peer* peer,
+    int reliable,
+    const void* datagram,
+    size_t datagram_len,
+    void* response,
+    size_t response_capacity,
+    size_t* response_len);
 
 /**
  * @brief Process one UDP2 side-transport datagram for an active peer.

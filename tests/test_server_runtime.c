@@ -2043,12 +2043,15 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(rdp_buffer_append_u8(&dvc_packet,
                                 (uint8_t)(RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_REQUEST << 4)) == LIBRDP_STATUS_OK);
     SCHECK(rdp_buffer_append_u8(&dvc_packet, 0) == LIBRDP_STATUS_OK);
-    SCHECK(rdp_buffer_append_u32_le(&dvc_packet, 18u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u32_le(&dvc_packet, 28u) == LIBRDP_STATUS_OK);
     SCHECK(rdp_buffer_append_u16_le(&dvc_packet,
                                     RDP_DYNAMIC_CHANNEL_SOFT_SYNC_TCP_FLUSHED |
                                         RDP_DYNAMIC_CHANNEL_SOFT_SYNC_CHANNEL_LIST_PRESENT) == LIBRDP_STATUS_OK);
-    SCHECK(rdp_buffer_append_u16_le(&dvc_packet, 1u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u16_le(&dvc_packet, 2u) == LIBRDP_STATUS_OK);
     SCHECK(rdp_buffer_append_u32_le(&dvc_packet, RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u16_le(&dvc_packet, 1u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u32_le(&dvc_packet, 7u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u32_le(&dvc_packet, RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY) == LIBRDP_STATUS_OK);
     SCHECK(rdp_buffer_append_u16_le(&dvc_packet, 1u) == LIBRDP_STATUS_OK);
     SCHECK(rdp_buffer_append_u32_le(&dvc_packet, 7u) == LIBRDP_STATUS_OK);
     SCHECK(test_server_send_encrypted_channel_payload(
@@ -2071,25 +2074,32 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(rdp_dynamic_channel_parse_soft_sync_response(dvc_payload,
                                                        dvc_payload_len,
                                                        &soft_sync_response) == LIBRDP_STATUS_OK);
-    SCHECK(soft_sync_response.tunnel_count == 1);
+    SCHECK(soft_sync_response.tunnel_count == 2);
     {
-        uint32_t tunnel_type = 0;
+        uint32_t reliable_tunnel = 0;
+        uint32_t lossy_tunnel = 0;
 
         SCHECK(rdp_dynamic_channel_soft_sync_response_get_tunnel(&soft_sync_response,
                                                                  0,
-                                                                 &tunnel_type) == LIBRDP_STATUS_OK);
-        SCHECK(tunnel_type == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE);
+                                                                 &reliable_tunnel) == LIBRDP_STATUS_OK);
+        SCHECK(rdp_dynamic_channel_soft_sync_response_get_tunnel(&soft_sync_response,
+                                                                 1,
+                                                                 &lossy_tunnel) == LIBRDP_STATUS_OK);
+        SCHECK(reliable_tunnel == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE &&
+               lossy_tunnel == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY);
     }
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_MULTITRANSPORT,
                                                  &feature_status) == LIBRDP_STATUS_OK);
-    SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
-           feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    SCHECK(feature_status.requested && feature_status.negotiated &&
+           !feature_status.active &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NOT_ACTIVE);
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_UDP_TRANSPORT,
                                                  &feature_status) == LIBRDP_STATUS_OK);
-    SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
-           feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    SCHECK(feature_status.requested && feature_status.negotiated &&
+           !feature_status.active &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NOT_ACTIVE);
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_UDP2_TRANSPORT,
                                                  &feature_status) == LIBRDP_STATUS_OK);
@@ -2133,6 +2143,11 @@ int test_server_loopback_standard_activation_sequence(void)
                                     &udp2_ack_received,
                                     &udp2_ack_lost) == LIBRDP_STATUS_OK);
     SCHECK(udp2_ack_received == 1 && udp2_ack_lost == 0);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_UDP_TRANSPORT,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated &&
+           feature_status.active && feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     udp_wire.length = 0;
     memset(&udp_header, 0, sizeof(udp_header));
     memset(&udp_source, 0, sizeof(udp_source));
@@ -2181,6 +2196,81 @@ int test_server_loopback_standard_activation_sequence(void)
                                                    &udp_response_len) == LIBRDP_STATUS_PROTOCOL_ERROR);
     SCHECK(udp_response_len == 0);
     SCHECK(runtime_context.error_event_count == error_count_before_udp2 + 1u);
+    SCHECK(librdp_server_peer_process_udp_datagram(peer,
+                                                   udp_wire.data,
+                                                   udp_wire.length,
+                                                   udp_response,
+                                                   sizeof(udp_response),
+                                                   &udp_response_len) == LIBRDP_STATUS_UNSUPPORTED);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_UDP_TRANSPORT,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated &&
+           !feature_status.active &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NOT_ACTIVE);
+
+    udp_wire.length = 0;
+    memset(&udp_header, 0, sizeof(udp_header));
+    memset(&udp_source, 0, sizeof(udp_source));
+    udp_header.receive_window_size = 16u;
+    udp_header.flags = RDP_UDP_FLAG_DATA;
+    udp_source.coded_sequence = 0x200u;
+    udp_source.source_start = 0x200u;
+    SCHECK(rdp_udp_write_fec_header(&udp_wire, &udp_header) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_udp_write_payload_prefix(&udp_wire,
+                                        (uint16_t)(8u + sizeof("lossy") - 1u)) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_udp_write_source_payload_header(&udp_wire, &udp_source) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append(&udp_wire, "lossy", sizeof("lossy") - 1u) == LIBRDP_STATUS_OK);
+    udp_response_len = 0;
+    SCHECK(librdp_server_peer_process_udp_datagram_mode(peer,
+                                                        0,
+                                                        udp_wire.data,
+                                                        udp_wire.length,
+                                                        udp_response,
+                                                        sizeof(udp_response),
+                                                        &udp_response_len) == LIBRDP_STATUS_OK);
+    SCHECK(udp_response_len > 8u);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_UDP_TRANSPORT,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated &&
+           feature_status.active &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    udp_wire.length = 0;
+    memset(&udp_header, 0, sizeof(udp_header));
+    memset(&udp_source, 0, sizeof(udp_source));
+    udp_header.receive_window_size = 16u;
+    udp_header.flags = RDP_UDP_FLAG_DATA;
+    udp_source.coded_sequence = 0x203u;
+    udp_source.source_start = 0x203u;
+    SCHECK(rdp_udp_write_fec_header(&udp_wire, &udp_header) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_udp_write_payload_prefix(&udp_wire,
+                                        (uint16_t)(8u + sizeof("lossy") - 1u)) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_udp_write_source_payload_header(&udp_wire, &udp_source) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append(&udp_wire, "lossy", sizeof("lossy") - 1u) == LIBRDP_STATUS_OK);
+    udp_response_len = 0;
+    SCHECK(librdp_server_peer_process_udp_datagram_mode(peer,
+                                                        0,
+                                                        udp_wire.data,
+                                                        udp_wire.length,
+                                                        udp_response,
+                                                        sizeof(udp_response),
+                                                        &udp_response_len) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_udp_parse_ack_vector(udp_response + 8u,
+                                    udp_response_len - 8u,
+                                    &udp_ack_vector) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_udp_ack_vector_count(&udp_ack_vector,
+                                    &udp2_ack_received,
+                                    &udp2_ack_lost) == LIBRDP_STATUS_OK);
+    SCHECK(udp2_ack_received == 1u && udp2_ack_lost == 0u);
+    udp_response_len = 0;
+    SCHECK(librdp_server_peer_process_udp_datagram_mode(peer,
+                                                        0,
+                                                        udp_wire.data,
+                                                        udp_wire.length,
+                                                        udp_response,
+                                                        sizeof(udp_response),
+                                                        &udp_response_len) == LIBRDP_STATUS_OK);
 
     {
         static const uint8_t udp2_data[] = {0x51u, 0x52u, 0x53u, 0x54u};
@@ -2312,11 +2402,18 @@ int test_server_loopback_standard_activation_sequence(void)
                                                         &udp2_response_len) == LIBRDP_STATUS_PROTOCOL_ERROR);
         SCHECK(udp2_response_len == 0);
         SCHECK(runtime_context.error_event_count == error_count_before_udp2 + 1u);
+        SCHECK(librdp_server_peer_process_udp2_datagram(peer,
+                                                        udp2_wire.data,
+                                                        udp2_wire.length,
+                                                        udp2_response,
+                                                        sizeof(udp2_response),
+                                                        &udp2_response_len) == LIBRDP_STATUS_UNSUPPORTED);
         SCHECK(librdp_server_peer_get_feature_status(peer,
                                                      LIBRDP_FEATURE_UDP2_TRANSPORT,
                                                      &feature_status) == LIBRDP_STATUS_OK);
-        SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
-               feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+        SCHECK(feature_status.requested && feature_status.negotiated &&
+               !feature_status.active &&
+               feature_status.reason == LIBRDP_FEATURE_REASON_NOT_ACTIVE);
     }
 
     dvc_packet.length = 0;
@@ -4611,11 +4708,13 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(server_metrics.dynamic_channel_out == 47);
     SCHECK(server_metrics.dynamic_channel_bytes_in == 65u + webauthn_response_wire_len &&
            server_metrics.dynamic_channel_bytes_out > 64);
-    SCHECK(server_metrics.udp_datagrams_in == 2);
-    SCHECK(server_metrics.udp_datagrams_out == 2);
-    SCHECK(server_metrics.udp_ack_vector_out == 2);
+    SCHECK(server_metrics.udp_datagrams_in == 5);
+    SCHECK(server_metrics.udp_datagrams_out == 5);
+    SCHECK(server_metrics.udp_ack_vector_out == 5);
     SCHECK(server_metrics.udp_pending_packets == 1);
     SCHECK(server_metrics.udp_tcp_fallbacks == 1);
+    SCHECK(server_metrics.udp_dropped_packets == 3);
+    SCHECK(server_metrics.udp_reordered_packets == 1);
     SCHECK(server_metrics.udp2_datagrams_in == 3);
     SCHECK(server_metrics.udp2_datagrams_out == 3);
     SCHECK(server_metrics.udp2_ack_out == 2);
