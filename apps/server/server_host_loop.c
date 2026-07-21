@@ -415,7 +415,8 @@ static librdp_status server_host_dispatch_peer(
         status =
             librdp_server_peer_dispatch_pending(group->peer->protocol);
     (*work)++;
-    if (status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT)
+    if (status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT ||
+        status == LIBRDP_STATUS_CLOSED)
         return LIBRDP_STATUS_OK;
     server_host_mark_peer_failed(group->peer);
     return LIBRDP_STATUS_OK;
@@ -535,6 +536,8 @@ static void server_host_dispatch_frames(server_host* host,
                                    (uint64_t)(rect_count - presented),
                                    1u);
         }
+        else if (status == LIBRDP_STATUS_CLOSED)
+            slot->state = SERVER_HOST_PEER_CLOSED;
         else if (status != LIBRDP_STATUS_OK)
             server_host_mark_peer_failed(slot);
     }

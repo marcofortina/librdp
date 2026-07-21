@@ -1858,6 +1858,12 @@ librdp_status server_host_dispatch_peer_input(
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!server_host_event_is_native_input(event->type))
         return LIBRDP_STATUS_UNSUPPORTED;
+    /* Activation Synchronize controls protocol sequencing, not native key state. */
+    if (event->type == LIBRDP_SERVER_INPUT_SYNCHRONIZE &&
+        slot->state != SERVER_HOST_PEER_ACTIVE)
+    {
+        return LIBRDP_STATUS_OK;
+    }
     if (slot->state != SERVER_HOST_PEER_ACTIVE || !slot->input_owner ||
         host->input_owner_id != slot->id ||
         host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] !=

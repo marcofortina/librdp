@@ -1518,6 +1518,37 @@ static librdp_status accept_loopback_peer(server_host* host)
     return server_host_accept_pending(host);
 }
 
+/* An orderly transport FIN is a closed peer, not a failed host workload. */
+static int test_host_orderly_peer_close(void)
+{
+    server_host_config config;
+    server_host_metrics metrics;
+    server_host* host = NULL;
+    mock_platform_context mock;
+    int client = -1;
+
+    server_host_config_init(&config);
+    configure_mock_platform(&config, &mock);
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    client = connect_loopback(server_host_local_port(host));
+    CHECK(client >= 0);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_peer_count(host) == 1u);
+    CHECK(close(client) == 0);
+    client = -1;
+    CHECK(server_host_run_once(host, 1000) == LIBRDP_STATUS_OK);
+    CHECK(server_host_peer_count(host) == 0u);
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.peers_closed == 1u);
+    CHECK(metrics.peers_failed == 0u);
+    CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    server_host_free(host);
+    return 0;
+}
+
 static void configure_mock_platform(server_host_config* config,
                                     mock_platform_context* mock)
 {
@@ -1999,11 +2030,15 @@ static int test_host_input_ownership(void)
     first_slot = server_host_find_peer_slot(host, first.id);
     second_slot = server_host_find_peer_slot(host, second.id);
     CHECK(first_slot != NULL && second_slot != NULL);
+    CHECK(librdp_server_input_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_INPUT_SYNCHRONIZE;
+    CHECK(server_host_dispatch_peer_input(first_slot, &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(mock.injections == 0u);
     CHECK(server_host_set_input_owner(host, first.id) == LIBRDP_STATUS_OK);
     CHECK(server_host_input_owner(host) == first.id);
     first_slot->state = SERVER_HOST_PEER_ACTIVE;
     second_slot->state = SERVER_HOST_PEER_ACTIVE;
-    CHECK(librdp_server_input_event_init(&event) == LIBRDP_STATUS_OK);
     event.type = LIBRDP_SERVER_INPUT_SCANCODE_KEY;
     event.param1 = 0x1eu;
     CHECK(server_host_dispatch_peer_input(first_slot, &event) ==
@@ -2431,6 +2466,8 @@ int main(void)
     if (test_host_trace_metrics() != 0)
         return 1;
     if (test_host_input_ownership() != 0)
+        return 1;
+    if (test_host_orderly_peer_close() != 0)
         return 1;
     if (test_host_reconnect_cleanup() != 0)
         return 1;
