@@ -757,7 +757,7 @@ static pid_t interop_start_client(const char* executable,
         arguments[argument_count++] = (char*)"/cert:deny";
     arguments[argument_count++] = (char*)"/size:640x480";
     arguments[argument_count++] = drive;
-    arguments[argument_count++] = (char*)"/gfx:off";
+    arguments[argument_count++] = (char*)"-gfx";
     arguments[argument_count++] = (char*)"-multitransport";
     arguments[argument_count++] = (char*)"-heartbeat";
     arguments[argument_count++] = (char*)"/network:lan";
