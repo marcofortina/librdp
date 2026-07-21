@@ -1216,6 +1216,7 @@ librdp_status x11_managed_broker_cancel(
     x11_managed_broker* broker)
 {
     unsigned char value = 1u;
+    ssize_t written = 0;
     size_t index = 0u;
 
     if (!broker)
@@ -1238,7 +1239,16 @@ librdp_status x11_managed_broker_cancel(
     }
     pthread_mutex_unlock(&broker->mutex);
     if (broker->wake_write_fd >= 0)
-        (void)write(broker->wake_write_fd, &value, 1u);
+    {
+        do
+        {
+            written = write(broker->wake_write_fd, &value, 1u);
+        } while (written < 0 && errno == EINTR);
+        if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+            return LIBRDP_STATUS_IO_ERROR;
+        if (written == 0)
+            return LIBRDP_STATUS_IO_ERROR;
+    }
     return LIBRDP_STATUS_OK;
 }
 

@@ -32,10 +32,43 @@ def executable(path: Path) -> None:
         raise RuntimeError(f"installed path has elevated mode bits: {path}")
 
 
-def contains_path(binary: Path, expected: Path) -> None:
-    if os.fsencode(str(expected)) not in binary.read_bytes():
+def check_configured_paths(
+    broker: Path,
+    environment: dict[str, str],
+    supervisor: Path,
+    agent: Path,
+) -> None:
+    invalid = subprocess.run(
+        [str(broker), "--desktop", "/bin/true", "--check-config"],
+        check=False,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    if invalid.returncode != 2 or "event=config.failed" not in invalid.stderr:
         raise RuntimeError(
-            f"{binary} does not contain configured helper path {expected}"
+            "installed broker did not reject an incomplete policy cleanly"
+        )
+    result = subprocess.run(
+        [
+            str(broker),
+            "--desktop",
+            "/bin/true",
+            "--security",
+            "standard",
+            "--allow-standard-security",
+            "--check-config",
+        ],
+        check=True,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    expected = f"supervisor={supervisor} agent={agent}"
+    if expected not in result.stdout:
+        raise RuntimeError(
+            f"installed broker reported unexpected helper paths: "
+            f"{result.stdout.strip()}"
         )
 
 
@@ -46,6 +79,7 @@ def main() -> int:
     parser.add_argument("--destdir", required=True, type=Path)
     parser.add_argument("--bindir", required=True, type=Path)
     parser.add_argument("--sbindir", required=True, type=Path)
+    parser.add_argument("--libdir", required=True, type=Path)
     parser.add_argument("--libexecdir", required=True, type=Path)
     parser.add_argument("--datadir", required=True, type=Path)
     parser.add_argument("--mandir", required=True, type=Path)
@@ -102,9 +136,20 @@ def main() -> int:
 
     configured_agent = args.libexecdir / "librdp-session-agent"
     configured_supervisor = args.libexecdir / "librdp-session-supervisor"
-    contains_path(broker, configured_agent)
-    contains_path(broker, configured_supervisor)
-    contains_path(supervisor, configured_agent)
+    loader_path = staged_path(args.destdir, args.libdir)
+    for variable in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        previous = environment.get(variable, "")
+        environment[variable] = (
+            f"{loader_path}{os.pathsep}{previous}"
+            if previous
+            else str(loader_path)
+        )
+    check_configured_paths(
+        broker,
+        environment,
+        configured_supervisor,
+        configured_agent,
+    )
 
     config = staged_path(
         args.destdir, args.datadir / "librdp-session-broker.conf.example"

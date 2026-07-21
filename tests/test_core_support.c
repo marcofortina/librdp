@@ -536,10 +536,13 @@ int read_exact_fd(int fd, void* data, size_t length)
     uint8_t* out = (uint8_t*)data;
     size_t offset = 0;
 
+    if (!out && length != 0u)
+        return 0;
     while (offset < length)
     {
-        ssize_t got = read(fd, out + offset, length - offset);
-        if (got <= 0)
+        size_t remaining = length - offset;
+        ssize_t got = read(fd, out + offset, remaining);
+        if (got <= 0 || (size_t)got > remaining)
             return 0;
         offset += (size_t)got;
     }
@@ -552,10 +555,13 @@ static int write_exact_fd(int fd, const void* data, size_t length)
     const uint8_t* in = (const uint8_t*)data;
     size_t offset = 0;
 
+    if (!in && length != 0u)
+        return 0;
     while (offset < length)
     {
-        ssize_t wrote = write(fd, in + offset, length - offset);
-        if (wrote <= 0)
+        size_t remaining = length - offset;
+        ssize_t wrote = write(fd, in + offset, remaining);
+        if (wrote <= 0 || (size_t)wrote > remaining)
             return 0;
         offset += (size_t)wrote;
     }

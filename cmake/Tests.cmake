@@ -27,6 +27,7 @@ if(LIBRDP_BUILD_TESTS)
                 --destdir ${CMAKE_CURRENT_BINARY_DIR}/app-install-layout
                 --bindir ${CMAKE_INSTALL_FULL_BINDIR}
                 --sbindir ${CMAKE_INSTALL_FULL_SBINDIR}
+                --libdir ${CMAKE_INSTALL_FULL_LIBDIR}
                 --libexecdir ${LIBRDP_X11_SESSION_LIBEXEC_DIR}
                 --datadir ${CMAKE_INSTALL_FULL_DATADIR}/librdp
                 --mandir ${CMAKE_INSTALL_FULL_MANDIR}

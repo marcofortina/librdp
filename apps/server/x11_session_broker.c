@@ -165,12 +165,18 @@ static void x11_session_broker_parse_error(
     error->line = 0u;
     error->key[0] = '\0';
     error->detail[0] = '\0';
-    length = key ? strlen(key) : 0u;
-    if (length < sizeof(error->key))
-        memcpy(error->key, key, length + 1u);
-    length = detail ? strlen(detail) : 0u;
-    if (length < sizeof(error->detail))
-        memcpy(error->detail, detail, length + 1u);
+    if (key)
+    {
+        length = strlen(key);
+        if (length < sizeof(error->key))
+            memcpy(error->key, key, length + 1u);
+    }
+    if (detail)
+    {
+        length = strlen(detail);
+        if (length < sizeof(error->detail))
+            memcpy(error->detail, detail, length + 1u);
+    }
 }
 
 /*
@@ -302,9 +308,11 @@ int main(int argc, char** argv)
     {
         fprintf(stdout,
                 "librdp x11-session-broker event=config.valid "
-                "security=%s\n",
+                "security=%s supervisor=%s agent=%s\n",
                 x11_session_broker_security_name(
-                    policy.security_mode));
+                    policy.security_mode),
+                policy.supervisor_path,
+                policy.agent_path);
         return 0;
     }
     broker = x11_managed_broker_new(&policy, &status);

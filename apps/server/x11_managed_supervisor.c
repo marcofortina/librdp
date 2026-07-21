@@ -82,11 +82,17 @@ static uint64_t x11_managed_supervisor_now_ns(void)
 static void x11_managed_supervisor_signal(int signal_number)
 {
     unsigned char value = (unsigned char)signal_number;
+    ssize_t written = 0;
+    int saved_errno = errno;
 
     if (signal_number != SIGCHLD)
         x11_managed_supervisor_cancelled = 1;
     if (x11_managed_supervisor_signal_fd >= 0)
-        (void)write(x11_managed_supervisor_signal_fd, &value, 1u);
+    {
+        written = write(x11_managed_supervisor_signal_fd, &value, 1u);
+        (void)written;
+    }
+    errno = saved_errno;
 }
 
 static int x11_managed_supervisor_set_fd_flags(int descriptor,
