@@ -49,6 +49,7 @@ set(LIBRDP_CHANNEL_SOURCES
     src/channels/dynamic_channel.c
     src/channels/echo_channel.c
     src/channels/filesystem_redirection.c
+    src/channels/geometry_tracking.c
     src/channels/graphics_pipeline.c
     src/channels/input_channel.c
     src/channels/mouse_cursor.c

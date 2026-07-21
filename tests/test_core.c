@@ -49,7 +49,7 @@ static int run_features(void)
     if (test_telemetry_runtime_privacy() != 0 ||
         test_multiparty_runtime_lifecycle() != 0 ||
         test_optional_feature_runtime_paths() != 0 ||
-        test_video_geometry_runtime_lifecycle() != 0 ||
+        test_geometry_tracking_runtime_lifecycle() != 0 ||
         test_feature_runtime_gates() != 0)
         return 1;
     return test_client_feature_status_reason_contract();
@@ -195,7 +195,7 @@ int test_client_core_named(const char* name)
     if (strcmp(name, "features") == 0)
         return run_features();
     if (strcmp(name, "video-geometry-smoke") == 0)
-        return test_video_geometry_runtime_lifecycle();
+        return test_geometry_tracking_runtime_lifecycle();
     if (strcmp(name, "channels") == 0)
         return run_channels();
     if (strcmp(name, "display-resize-smoke") == 0)
@@ -253,7 +253,7 @@ int test_client_core(void)
     if (test_telemetry_runtime_privacy() != 0 ||
         test_multiparty_runtime_lifecycle() != 0 ||
         test_optional_feature_runtime_paths() != 0 ||
-        test_video_geometry_runtime_lifecycle() != 0 ||
+        test_geometry_tracking_runtime_lifecycle() != 0 ||
         test_feature_runtime_gates() != 0 ||
         test_client_feature_status_reason_contract() != 0)
         return 1;

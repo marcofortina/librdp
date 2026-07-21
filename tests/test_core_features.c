@@ -486,99 +486,104 @@ int test_telemetry_runtime_privacy(void)
     return 0;
 }
 
-typedef struct video_geometry_trace_capture
+typedef struct geometry_tracking_trace_capture
 {
     uint32_t created;
     uint32_t updated;
-    uint32_t deleted;
+    uint32_t cleared;
     uint32_t stale;
-    rdp_video_redirection_rect initial_rect;
-    rdp_video_redirection_rect updated_rect;
+    rdp_geometry_tracking_rect initial_rect;
+    rdp_geometry_tracking_rect updated_rect;
     uint32_t initial_rect_valid;
     uint32_t updated_rect_valid;
-    uint32_t active_after_delete;
+    uint32_t active_after_clear;
     uint32_t active_after_stale;
-} video_geometry_trace_capture;
+} geometry_tracking_trace_capture;
 
-static const rdp_session_video_geometry* find_video_geometry_trace_entry(
+static const rdp_session_geometry_mapping* find_geometry_tracking_entry(
     const librdp_session* session,
-    uint64_t video_window_id)
+    uint64_t mapping_id)
 {
     uint32_t i = 0u;
 
     if (!session)
         return NULL;
-    for (i = 0u; i < RDP_SESSION_VIDEO_GEOMETRIES; i++)
+    for (i = 0u; i < RDP_SESSION_GEOMETRY_MAPPINGS; i++)
     {
-        if (session->video_geometries[i].active &&
-            session->video_geometries[i].video_window_id == video_window_id)
-            return &session->video_geometries[i];
+        if (session->geometry_mappings[i].active &&
+            session->geometry_mappings[i].mapping_id == mapping_id)
+            return &session->geometry_mappings[i];
     }
     return NULL;
 }
 
-static void on_video_geometry_trace(librdp_session* session,
-                                    const librdp_trace_record* record,
-                                    void* user_data)
+static void on_geometry_tracking_trace(librdp_session* session,
+                                       const librdp_trace_record* record,
+                                       void* user_data)
 {
-    video_geometry_trace_capture* capture =
-        (video_geometry_trace_capture*)user_data;
+    geometry_tracking_trace_capture* capture =
+        (geometry_tracking_trace_capture*)user_data;
 
     if (!session || !record || !record->event || !record->message || !capture)
         return;
     if (getenv("LIBRDP_TEST_TRACE_OUTPUT") && record->line)
         fprintf(stderr, "%s\n", record->line);
-    if (strcmp(record->event, "client.tsmf.geometry") != 0)
-        return;
-    if (strstr(record->message, "action=new"))
+    if (strcmp(record->event, "client.geometry.update") == 0 &&
+        strstr(record->message, "action=created"))
     {
-        const rdp_session_video_geometry* geometry =
-            find_video_geometry_trace_entry(session, 0x1020304050607080u);
+        const rdp_session_geometry_mapping* mapping =
+            find_geometry_tracking_entry(session,
+                                         UINT64_C(0x1020304050607080));
 
-        if (geometry && geometry->visible_rect_count == 1u)
+        if (mapping && mapping->rect_count > 0u)
         {
-            capture->initial_rect = geometry->visible_rects[0];
+            capture->initial_rect = mapping->rects[0];
             capture->initial_rect_valid = 1u;
         }
         capture->created++;
     }
-    else if (strstr(record->message, "action=update"))
+    else if (strcmp(record->event, "client.geometry.update") == 0 &&
+             strstr(record->message, "action=updated"))
     {
-        const rdp_session_video_geometry* geometry =
-            find_video_geometry_trace_entry(session, 0x1020304050607080u);
+        const rdp_session_geometry_mapping* mapping =
+            find_geometry_tracking_entry(session,
+                                         UINT64_C(0x1020304050607080));
 
-        if (geometry && geometry->visible_rect_count == 1u)
+        if (mapping && mapping->rect_count == 1u)
         {
-            capture->updated_rect = geometry->visible_rects[0];
+            capture->updated_rect = mapping->rects[0];
             capture->updated_rect_valid = 1u;
         }
         capture->updated++;
     }
-    else if (strstr(record->message, "action=delete"))
+    else if (strcmp(record->event, "client.geometry.clear") == 0 &&
+             strstr(record->message, "action=removed"))
     {
-        capture->active_after_delete = session->video_geometry_active_count;
-        capture->deleted++;
+        capture->active_after_clear =
+            session->geometry_tracking_active_count;
+        capture->cleared++;
     }
-    else if (strstr(record->message, "action=stale"))
+    else if (strcmp(record->event, "client.geometry.clear") == 0 &&
+             strstr(record->message, "action=ignored"))
     {
-        capture->active_after_stale = session->video_geometry_active_count;
+        capture->active_after_stale =
+            session->geometry_tracking_active_count;
         capture->stale++;
     }
 }
 
 /*
- * Coverage: drives video geometry creation, visible-region clipping, update,
- * deletion, stale post-delete traffic, identifier reuse, and disconnect
- * cleanup. It catches region resurrection, partial state commits, and retained
- * rectangle storage after the dynamic channel is gone.
+ * Coverage: drives RDPEGT mapping creation, region replacement, clear, stale
+ * clear, identifier reuse, feature state and disconnect cleanup. It catches
+ * partial state commits and retained rectangle storage after channel teardown.
  */
-int test_video_geometry_runtime_lifecycle(void)
+int test_geometry_tracking_runtime_lifecycle(void)
 {
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     librdp_trace_policy trace_policy;
     librdp_feature_status feature_status;
-    video_geometry_trace_capture capture;
+    geometry_tracking_trace_capture capture;
     uint16_t test_port = 0u;
     pid_t server_pid = -1;
     int child_status = 0;
@@ -615,53 +620,56 @@ int test_video_geometry_runtime_lifecycle(void)
                               LIBRDP_TRACE_CATEGORY_PROTOCOL;
     trace_policy.level = LIBRDP_TRACE_LEVEL_DEBUG;
     trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
-    trace_policy.callback = on_video_geometry_trace;
+    trace_policy.callback = on_geometry_tracking_trace;
     trace_policy.callback_user_data = &capture;
     trace_policy.trace_id = "video-geometry-runtime";
     CHECK(librdp_session_set_trace_policy(session, &trace_policy) ==
           LIBRDP_STATUS_OK);
 
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
-    for (i = 0u; i < 32u && session->video_geometry_update_count < 5u; i++)
+    for (i = 0u;
+         i < 32u && session->geometry_tracking_update_count < 5u;
+         i++)
     {
         status = librdp_session_run_once(session, 1000);
         CHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT);
     }
-    CHECK(session->video_geometry_update_count == 5u);
-    CHECK(session->video_geometry_active_count == 1u);
-    CHECK(session->video_geometry_stale_count == 1u);
-    CHECK(session->video_geometry_clipped_count == 2u);
-    for (i = 0u; i < RDP_SESSION_VIDEO_GEOMETRIES; i++)
+    CHECK(session->geometry_tracking_update_count == 5u);
+    CHECK(session->geometry_tracking_active_count == 1u);
+    CHECK(session->geometry_tracking_stale_count == 1u);
+    for (i = 0u; i < RDP_SESSION_GEOMETRY_MAPPINGS; i++)
     {
-        const rdp_session_video_geometry* geometry =
-            &session->video_geometries[i];
+        const rdp_session_geometry_mapping* mapping =
+            &session->geometry_mappings[i];
 
-        if (!geometry->active)
+        if (!mapping->active)
             continue;
         active_entries++;
-        CHECK(geometry->video_window_id == 0x8877665544332211u);
-        CHECK(geometry->last_message_id == 5u);
-        CHECK(geometry->info.left == 20u && geometry->info.top == 30u);
-        CHECK(geometry->info.width == 160u && geometry->info.height == 90u);
-        CHECK(geometry->visible_rect_count == 0u);
-        CHECK(geometry->visible_rects == NULL);
+        CHECK(mapping->mapping_id == UINT64_C(0x8877665544332211));
+        CHECK(mapping->top_level_id == UINT64_C(0x1112131415161718));
+        CHECK(mapping->local_bounds.left == 20 &&
+              mapping->local_bounds.top == 30 &&
+              mapping->local_bounds.right == 180 &&
+              mapping->local_bounds.bottom == 120);
+        CHECK(mapping->rect_count == 0u);
+        CHECK(mapping->rects == NULL);
     }
     CHECK(active_entries == 1u);
     CHECK(capture.created == 2u);
     CHECK(capture.updated == 1u);
-    CHECK(capture.deleted == 1u);
+    CHECK(capture.cleared == 1u);
     CHECK(capture.stale == 1u);
     CHECK(capture.initial_rect_valid);
-    CHECK(capture.initial_rect.top == 100u &&
-          capture.initial_rect.left == 100u &&
-          capture.initial_rect.bottom == 200u &&
-          capture.initial_rect.right == 300u);
+    CHECK(capture.initial_rect.left == 100 &&
+          capture.initial_rect.top == 100 &&
+          capture.initial_rect.right == 300 &&
+          capture.initial_rect.bottom == 200);
     CHECK(capture.updated_rect_valid);
-    CHECK(capture.updated_rect.top == 120u &&
-          capture.updated_rect.left == 130u &&
-          capture.updated_rect.bottom == 180u &&
-          capture.updated_rect.right == 250u);
-    CHECK(capture.active_after_delete == 0u);
+    CHECK(capture.updated_rect.left == 130 &&
+          capture.updated_rect.top == 120 &&
+          capture.updated_rect.right == 250 &&
+          capture.updated_rect.bottom == 180);
+    CHECK(capture.active_after_clear == 0u);
     CHECK(capture.active_after_stale == 0u);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_GEOMETRY_TRACKING,
@@ -674,14 +682,13 @@ int test_video_geometry_runtime_lifecycle(void)
           feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
 
     CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
-    CHECK(session->video_geometry_update_count == 0u);
-    CHECK(session->video_geometry_active_count == 0u);
-    CHECK(session->video_geometry_stale_count == 0u);
-    CHECK(session->video_geometry_clipped_count == 0u);
-    for (i = 0u; i < RDP_SESSION_VIDEO_GEOMETRIES; i++)
+    CHECK(session->geometry_tracking_update_count == 0u);
+    CHECK(session->geometry_tracking_active_count == 0u);
+    CHECK(session->geometry_tracking_stale_count == 0u);
+    for (i = 0u; i < RDP_SESSION_GEOMETRY_MAPPINGS; i++)
     {
-        CHECK(!session->video_geometries[i].active);
-        CHECK(session->video_geometries[i].visible_rects == NULL);
+        CHECK(!session->geometry_mappings[i].active);
+        CHECK(session->geometry_mappings[i].rects == NULL);
     }
 
     librdp_session_free(session);

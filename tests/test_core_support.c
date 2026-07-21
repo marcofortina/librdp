@@ -2157,9 +2157,11 @@ static int build_dynamic_channel_create_telemetry_packet(rdp_buffer* out)
     return build_dynamic_channel_create_named_packet(out, RDP_TELEMETRY_DVC_CHANNEL_NAME);
 }
 
-static int build_dynamic_channel_create_video_redirection_packet(rdp_buffer* out)
+static int build_dynamic_channel_create_geometry_tracking_packet(rdp_buffer* out)
 {
-    return build_dynamic_channel_create_named_packet(out, RDP_VIDEO_REDIRECTION_CHANNEL_NAME);
+    return build_dynamic_channel_create_named_packet(
+        out,
+        RDP_GEOMETRY_TRACKING_CHANNEL_NAME);
 }
 
 static int build_dynamic_channel_data_first_packet(rdp_buffer* out)
@@ -2212,141 +2214,143 @@ static int build_dynamic_channel_telemetry_packet(rdp_buffer* out)
     return ok;
 }
 
-static const uint8_t geometry_presentation_id[16] = {
-    0x10u, 0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u,
-    0x18u, 0x19u, 0x1au, 0x1bu, 0x1cu, 0x1du, 0x1eu, 0x1fu
-};
-
-static int build_dynamic_channel_geometry_packet(
+static int build_dynamic_channel_geometry_update_packet(
     rdp_buffer* out,
-    uint32_t message_id,
-    const rdp_video_redirection_geometry_info* info,
-    const rdp_video_redirection_rect* rects,
+    uint64_t mapping_id,
+    uint64_t top_level_id,
+    const rdp_geometry_tracking_rect* local_bounds,
+    const rdp_geometry_tracking_rect* top_level_bounds,
+    const rdp_geometry_tracking_rect* region_bounds,
+    const rdp_geometry_tracking_rect* rects,
     uint32_t rect_count)
 {
-    rdp_buffer geometry;
-    rdp_buffer visible;
     rdp_buffer update;
     int ok = 0;
-    uint32_t i = 0;
 
-    if (!out || !info || (!rects && rect_count > 0))
+    if (!out || !local_bounds || !top_level_bounds ||
+        (rect_count > 0u && (!region_bounds || !rects)))
         return 0;
-    rdp_buffer_init(&geometry);
-    rdp_buffer_init(&visible);
     rdp_buffer_init(&update);
-    for (i = 0; i < rect_count; i++)
-    {
-        if (rdp_video_redirection_write_rect(&visible,
-                                             rects[i].top,
-                                             rects[i].left,
-                                             rects[i].bottom,
-                                             rects[i].right) != LIBRDP_STATUS_OK)
-        {
-            rdp_buffer_free(&update);
-            rdp_buffer_free(&visible);
-            rdp_buffer_free(&geometry);
-            return 0;
-        }
-    }
-    ok = rdp_video_redirection_write_geometry_info(&geometry, info) == LIBRDP_STATUS_OK &&
-         rdp_video_redirection_write_geometry_update(&update,
-                                                     message_id,
-                                                     geometry_presentation_id,
-                                                     geometry.data,
-                                                     (uint32_t)geometry.length,
-                                                     visible.data,
-                                                     (uint32_t)visible.length) == LIBRDP_STATUS_OK &&
+    ok = rdp_geometry_tracking_write_update(&update,
+                                            mapping_id,
+                                            top_level_id,
+                                            local_bounds,
+                                            top_level_bounds,
+                                            region_bounds,
+                                            rects,
+                                            rect_count) == LIBRDP_STATUS_OK &&
          build_dynamic_channel_data_payload_packet(out, update.data, update.length);
     rdp_buffer_free(&update);
-    rdp_buffer_free(&visible);
-    rdp_buffer_free(&geometry);
     return ok;
 }
 
-static int write_dynamic_channel_geometry_packet(
+static int write_dynamic_channel_geometry_update_packet(
     int fd,
-    uint32_t message_id,
-    const rdp_video_redirection_geometry_info* info,
-    const rdp_video_redirection_rect* rects,
+    uint64_t mapping_id,
+    uint64_t top_level_id,
+    const rdp_geometry_tracking_rect* local_bounds,
+    const rdp_geometry_tracking_rect* top_level_bounds,
+    const rdp_geometry_tracking_rect* region_bounds,
+    const rdp_geometry_tracking_rect* rects,
     uint32_t rect_count)
 {
     rdp_buffer packet;
     int ok = 0;
 
     rdp_buffer_init(&packet);
-    ok = build_dynamic_channel_geometry_packet(&packet,
-                                               message_id,
-                                               info,
-                                               rects,
-                                               rect_count) &&
+    ok = build_dynamic_channel_geometry_update_packet(&packet,
+                                                      mapping_id,
+                                                      top_level_id,
+                                                      local_bounds,
+                                                      top_level_bounds,
+                                                      region_bounds,
+                                                      rects,
+                                                      rect_count) &&
          write_exact_fd(fd, packet.data, packet.length);
     rdp_buffer_free(&packet);
     return ok;
 }
 
+static int write_dynamic_channel_geometry_clear_packet(int fd,
+                                                       uint64_t mapping_id)
+{
+    rdp_buffer clear;
+    rdp_buffer packet;
+    int ok = 0;
+
+    rdp_buffer_init(&clear);
+    rdp_buffer_init(&packet);
+    ok = rdp_geometry_tracking_write_clear(&clear, mapping_id) ==
+             LIBRDP_STATUS_OK &&
+         build_dynamic_channel_data_payload_packet(&packet,
+                                                   clear.data,
+                                                   clear.length) &&
+         write_exact_fd(fd, packet.data, packet.length);
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&clear);
+    return ok;
+}
+
 /*
- * Drive geometry state through create, clipped visible-region update, delete,
- * stale update, and identifier reuse while keeping the socket open until the
- * client has inspected and disconnected the session.
+ * Drive RDPEGT state through create, update, clear, stale clear, and mapping
+ * replacement while keeping the socket open for client-side inspection.
  */
 static int run_geometry_tracking_runtime_server_scenario(int fd)
 {
-    static const rdp_video_redirection_rect initial_rects[] = {
-        {90u, 90u, 210u, 310u},
-        {300u, 400u, 340u, 450u}
+    static const rdp_geometry_tracking_rect initial_rects[] = {
+        {100, 100, 300, 200},
+        {400, 300, 450, 340}
     };
-    static const rdp_video_redirection_rect update_rects[] = {
-        {120u, 130u, 180u, 250u}
+    static const rdp_geometry_tracking_rect update_rects[] = {
+        {130, 120, 250, 180}
     };
-    rdp_video_redirection_geometry_info info;
+    static const rdp_geometry_tracking_rect initial_bounds = {
+        100, 100, 300, 200
+    };
+    static const rdp_geometry_tracking_rect updated_bounds = {
+        120, 110, 280, 190
+    };
+    static const rdp_geometry_tracking_rect replacement_bounds = {
+        20, 30, 180, 120
+    };
 
-    memset(&info, 0, sizeof(info));
-    info.video_window_id = 0x1020304050607080u;
-    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_NEW |
-                        RDP_VIDEO_REDIRECTION_WINDOW_VISRGN;
-    info.width = 200u;
-    info.height = 100u;
-    info.left = 100u;
-    info.top = 100u;
-    if (!write_dynamic_channel_geometry_packet(fd,
-                                               1u,
-                                               &info,
-                                               initial_rects,
-                                               2u))
+    if (!write_dynamic_channel_geometry_update_packet(
+            fd,
+            UINT64_C(0x1020304050607080),
+            UINT64_C(0x0102030405060708),
+            &initial_bounds,
+            &initial_bounds,
+            &initial_bounds,
+            initial_rects,
+            2u))
         return 0;
-
-    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_VISRGN;
-    if (!write_dynamic_channel_geometry_packet(fd,
-                                               2u,
-                                               &info,
-                                               update_rects,
-                                               1u))
+    if (!write_dynamic_channel_geometry_update_packet(
+            fd,
+            UINT64_C(0x1020304050607080),
+            UINT64_C(0x0102030405060708),
+            &updated_bounds,
+            &updated_bounds,
+            &updated_bounds,
+            update_rects,
+            1u))
         return 0;
-
-    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_DELETED;
-    info.width = 0u;
-    info.height = 0u;
-    if (!write_dynamic_channel_geometry_packet(fd, 3u, &info, NULL, 0u))
+    if (!write_dynamic_channel_geometry_clear_packet(
+            fd,
+            UINT64_C(0x1020304050607080)))
         return 0;
-
-    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_VISRGN;
-    info.width = 200u;
-    info.height = 100u;
-    if (!write_dynamic_channel_geometry_packet(fd,
-                                               4u,
-                                               &info,
-                                               update_rects,
-                                               1u))
+    if (!write_dynamic_channel_geometry_clear_packet(
+            fd,
+            UINT64_C(0x1020304050607080)))
         return 0;
-
-    info.video_window_id = 0x8877665544332211u;
-    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_NEW;
-    info.left = 20u;
-    info.top = 30u;
-    info.width = 160u;
-    info.height = 90u;
-    return write_dynamic_channel_geometry_packet(fd, 5u, &info, NULL, 0u);
+    return write_dynamic_channel_geometry_update_packet(
+        fd,
+        UINT64_C(0x8877665544332211),
+        UINT64_C(0x1112131415161718),
+        &replacement_bounds,
+        &replacement_bounds,
+        &replacement_bounds,
+        NULL,
+        0u);
 }
 
 static int build_dynamic_channel_webauthn_request_packet(rdp_buffer* out, const char* rp_id)
@@ -5117,7 +5121,7 @@ int start_handshake_server_full(uint16_t* port,
 	                    }
 	                    else if (dynamic_channel_scenario == DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME)
 	                    {
-	                        if (!build_dynamic_channel_create_video_redirection_packet(&dvc_create) ||
+	                        if (!build_dynamic_channel_create_geometry_tracking_packet(&dvc_create) ||
 	                            !write_exact_fd(client, dvc_create.data, dvc_create.length))
 	                        {
 	                            _exit(5);

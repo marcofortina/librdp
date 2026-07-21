@@ -282,6 +282,10 @@ if(LIBRDP_BUILD_TESTS)
         tests/test_audio_virtual_smoke.c
     )
     librdp_configure_test_executable(test_audio_virtual_smoke)
+    add_executable(test_video_virtual_smoke
+        tests/test_video_virtual_smoke.c
+    )
+    librdp_configure_test_executable(test_video_virtual_smoke)
     if(LIBRDP_CUPS_FOUND)
         add_executable(test_printer_cups_smoke
             tests/test_printer_cups_smoke.c
@@ -623,6 +627,11 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME audio_virtual_smoke
              COMMAND test_audio_virtual_smoke)
     set_tests_properties(audio_virtual_smoke PROPERTIES
+        TIMEOUT 15
+    )
+    add_test(NAME video_virtual_smoke
+             COMMAND test_video_virtual_smoke)
+    set_tests_properties(video_virtual_smoke PROPERTIES
         TIMEOUT 15
     )
     if(TARGET test_printer_cups_smoke)

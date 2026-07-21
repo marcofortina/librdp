@@ -29,6 +29,7 @@
 #include "channels/dynamic_channel.h"
 #include "channels/echo_channel.h"
 #include "channels/filesystem_redirection.h"
+#include "channels/geometry_tracking.h"
 #include "channels/multiparty.h"
 #include "channels/printer_redirection.h"
 #include "channels/remote_programs.h"

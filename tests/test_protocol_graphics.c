@@ -22,6 +22,7 @@
 #include "channels/dynamic_channel.h"
 #include "channels/echo_channel.h"
 #include "channels/filesystem_redirection.h"
+#include "channels/geometry_tracking.h"
 #include "channels/graphics_pipeline.h"
 #include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
@@ -2321,6 +2322,147 @@ static int test_video_redirection_channel(void)
     rdp_buffer_free(&payload);
     rdp_buffer_free(&nested);
 #undef PCHECK_VIDEO_PARSE_PRESERVES
+    return 0;
+}
+
+/*
+ * Coverage: validates RDPEGT update/clear vectors, signed coordinates, exact
+ * nested lengths and preservation of the last valid result on malformed data.
+ */
+static int test_geometry_tracking_channel(void)
+{
+    static const rdp_geometry_tracking_rect local_bounds = {
+        -20, -10, 620, 350
+    };
+    static const rdp_geometry_tracking_rect top_level_bounds = {
+        100, 200, 740, 560
+    };
+    static const rdp_geometry_tracking_rect region_bounds = {
+        0, 0, 640, 360
+    };
+    static const rdp_geometry_tracking_rect rects[] = {
+        {0, 0, 320, 180},
+        {320, 180, 640, 360}
+    };
+    rdp_geometry_tracking_packet packet;
+    rdp_geometry_tracking_packet valid_packet;
+    rdp_geometry_tracking_rect rect;
+    rdp_buffer buffer;
+    size_t length = 0u;
+
+    memset(&packet, 0, sizeof(packet));
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_geometry_tracking_write_update(
+               &buffer,
+               UINT64_C(0x1020304050607080),
+               UINT64_C(0x8877665544332211),
+               &local_bounds,
+               &top_level_bounds,
+               &region_bounds,
+               rects,
+               2u) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 137u);
+    PCHECK(rdp_geometry_tracking_parse(buffer.data,
+                                       buffer.length,
+                                       &packet) == LIBRDP_STATUS_OK);
+    PCHECK(packet.declared_length == 136u &&
+           packet.version == RDP_GEOMETRY_TRACKING_VERSION_1 &&
+           packet.mapping_id == UINT64_C(0x1020304050607080) &&
+           packet.top_level_id == UINT64_C(0x8877665544332211) &&
+           packet.update_type == RDP_GEOMETRY_TRACKING_UPDATE &&
+           packet.rect_count == 2u &&
+           packet.local_bounds.left == -20 &&
+           packet.local_bounds.top == -10);
+    PCHECK(rdp_geometry_tracking_get_rect(&packet, 1u, &rect) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rect.left == 320 && rect.top == 180 &&
+           rect.right == 640 && rect.bottom == 360);
+    PCHECK(rdp_geometry_tracking_get_rect(&packet, 2u, &rect) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    valid_packet = packet;
+    length = buffer.length;
+    for (size_t i = 0u; i < length; i++)
+    {
+        PCHECK(rdp_geometry_tracking_parse(buffer.data, i, &packet) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&packet, &valid_packet, sizeof(packet)) == 0);
+    }
+
+    buffer.data[0] ^= 1u;
+    PCHECK(rdp_geometry_tracking_parse(buffer.data, length, &packet) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(memcmp(&packet, &valid_packet, sizeof(packet)) == 0);
+    buffer.data[0] ^= 1u;
+    buffer.data[20] = 1u;
+    PCHECK(rdp_geometry_tracking_parse(buffer.data, length, &packet) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[20] = 0u;
+    buffer.data[64] = 3u;
+    PCHECK(rdp_geometry_tracking_parse(buffer.data, length, &packet) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[64] = RDP_GEOMETRY_TRACKING_TYPE_REGION;
+    buffer.data[80] = 3u;
+    PCHECK(rdp_geometry_tracking_parse(buffer.data, length, &packet) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[80] = 2u;
+    buffer.data[116] = 0xffu;
+    buffer.data[117] = 0xffu;
+    buffer.data[118] = 0xffu;
+    buffer.data[119] = 0xffu;
+    PCHECK(rdp_geometry_tracking_parse(buffer.data, length, &packet) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_geometry_tracking_write_update(
+               &buffer,
+               UINT64_C(0x1020304050607080),
+               0u,
+               &local_bounds,
+               &top_level_bounds,
+               &region_bounds,
+               NULL,
+               0u) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 105u);
+    PCHECK(rdp_geometry_tracking_parse(buffer.data,
+                                       buffer.length,
+                                       &packet) == LIBRDP_STATUS_OK);
+    PCHECK(packet.update_type == RDP_GEOMETRY_TRACKING_UPDATE &&
+           packet.geometry_buffer_len ==
+               RDP_GEOMETRY_TRACKING_REGION_HEADER_SIZE &&
+           packet.rect_count == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_geometry_tracking_write_update(
+               &buffer,
+               UINT64_C(0x1020304050607080),
+               0u,
+               &local_bounds,
+               &top_level_bounds,
+               NULL,
+               NULL,
+               0u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_geometry_tracking_write_clear(
+               &buffer,
+               UINT64_C(0x1020304050607080)) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 73u);
+    PCHECK(rdp_geometry_tracking_parse(buffer.data,
+                                       buffer.length,
+                                       &packet) == LIBRDP_STATUS_OK);
+    PCHECK(packet.update_type == RDP_GEOMETRY_TRACKING_CLEAR &&
+           packet.geometry_buffer_len == 0u &&
+           packet.rect_count == 0u);
+    memset(buffer.data + 20u,
+           0xff,
+           RDP_GEOMETRY_TRACKING_FIXED_SIZE - 20u);
+    PCHECK(rdp_geometry_tracking_parse(buffer.data,
+                                       buffer.length,
+                                       &packet) == LIBRDP_STATUS_OK);
+    PCHECK(packet.update_type == RDP_GEOMETRY_TRACKING_CLEAR &&
+           packet.mapping_id == UINT64_C(0x1020304050607080));
+    rdp_buffer_free(&buffer);
     return 0;
 }
 
@@ -5033,6 +5175,8 @@ int test_protocol_graphics_vectors(void)
     if (test_composited_remoting_channel() != 0)
         return 1;
     if (test_video_redirection_channel() != 0)
+        return 1;
+    if (test_geometry_tracking_channel() != 0)
         return 1;
     if (test_video_optimized_channel() != 0)
         return 1;

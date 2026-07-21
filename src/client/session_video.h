@@ -35,8 +35,15 @@ librdp_status rdp_session_handle_video_optimized_data_message(librdp_session* se
                                                               uint32_t channel_id,
                                                               const uint8_t* data,
                                                               size_t data_len);
+librdp_status rdp_session_handle_geometry_tracking_message(librdp_session* session,
+                                                           uint32_t channel_id,
+                                                           const uint8_t* data,
+                                                           size_t data_len);
 void rdp_session_video_redirection_reset(librdp_session* session);
 void rdp_session_video_optimized_reset(librdp_session* session);
+void rdp_session_geometry_tracking_reset(librdp_session* session);
+int rdp_session_geometry_mapping_available(const librdp_session* session,
+                                           uint64_t mapping_id);
 int rdp_session_video_runtime_active(const librdp_session* session);
 
 #endif

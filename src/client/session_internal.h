@@ -26,6 +26,7 @@
 #include "channels/dynamic_channel.h"
 #include "channels/echo_channel.h"
 #include "channels/filesystem_redirection.h"
+#include "channels/geometry_tracking.h"
 #include "channels/graphics_pipeline.h"
 #include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
@@ -123,6 +124,7 @@ typedef struct rdp_session_usb_worker rdp_session_usb_worker;
 #define RDP_SESSION_VOLUME_LABEL_MAX_BYTES 129u
 #define RDP_SESSION_VIDEO_STREAMS 32u
 #define RDP_SESSION_VIDEO_GEOMETRIES RDP_SESSION_VIDEO_STREAMS
+#define RDP_SESSION_GEOMETRY_MAPPINGS RDP_SESSION_MAX_GRAPHICS_SURFACES
 #define RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS 16u
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_WIDTH 640u
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_HEIGHT 480u
@@ -633,6 +635,8 @@ typedef struct rdp_session_video_optimized_presentation
 {
     uint8_t active;
     uint8_t presentation_id;
+    uint8_t recovery_notified;
+    uint8_t sequence_initialized;
     uint8_t frame_rate;
     uint16_t average_bitrate_kbps;
     uint32_t source_width;
@@ -650,6 +654,18 @@ typedef struct rdp_session_video_optimized_presentation
     uint16_t last_packets_in_sample;
     uint8_t last_flags;
 } rdp_session_video_optimized_presentation;
+
+typedef struct rdp_session_geometry_mapping
+{
+    uint8_t active;
+    uint64_t mapping_id;
+    uint64_t top_level_id;
+    rdp_geometry_tracking_rect local_bounds;
+    rdp_geometry_tracking_rect top_level_bounds;
+    rdp_geometry_tracking_rect region_bounds;
+    uint32_t rect_count;
+    rdp_geometry_tracking_rect* rects;
+} rdp_session_geometry_mapping;
 
 typedef struct rdp_session_clipboard_file_entry
 {
@@ -861,6 +877,11 @@ struct librdp_session
     uint32_t video_geometry_active_count;
     uint32_t video_geometry_stale_count;
     uint32_t video_geometry_clipped_count;
+    uint32_t geometry_tracking_channel_id;
+    uint8_t geometry_tracking_channel_id_bytes;
+    uint32_t geometry_tracking_update_count;
+    uint32_t geometry_tracking_active_count;
+    uint32_t geometry_tracking_stale_count;
     rdp_license_client_state license_state;
     rdp_license_crypto_context license_crypto;
     uint8_t multitransport_negotiated;
@@ -904,6 +925,7 @@ struct librdp_session
     rdp_composited_render_tree composited_tree;
     rdp_session_video_stream video_streams[RDP_SESSION_VIDEO_STREAMS];
     rdp_session_video_geometry video_geometries[RDP_SESSION_VIDEO_GEOMETRIES];
+    rdp_session_geometry_mapping geometry_mappings[RDP_SESSION_GEOMETRY_MAPPINGS];
     rdp_session_video_optimized_presentation video_optimized_presentations[RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS];
     rdp_session_redirected_file redirected_files[RDP_SESSION_MAX_REDIRECTED_FILES];
     rdp_printer_backend printer_backend;

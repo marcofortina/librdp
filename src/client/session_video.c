@@ -17,6 +17,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void rdp_session_geometry_mapping_clear(
+    rdp_session_geometry_mapping* mapping);
+static rdp_session_geometry_mapping* rdp_session_geometry_mapping_find(
+    librdp_session* session,
+    uint64_t mapping_id);
+static rdp_session_geometry_mapping* rdp_session_geometry_mapping_unused(
+    librdp_session* session);
+
 static void rdp_session_video_geometry_counter_add(uint32_t* counter, uint32_t value)
 {
     if (!counter)
@@ -342,6 +350,155 @@ void rdp_session_video_optimized_reset(librdp_session* session)
     memset(session->video_optimized_presentations, 0, sizeof(session->video_optimized_presentations));
 }
 
+void rdp_session_geometry_tracking_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    for (uint32_t i = 0; i < RDP_SESSION_GEOMETRY_MAPPINGS; i++)
+        rdp_session_geometry_mapping_clear(&session->geometry_mappings[i]);
+    session->geometry_tracking_channel_id = 0;
+    session->geometry_tracking_channel_id_bytes = 0;
+    session->geometry_tracking_update_count = 0;
+    session->geometry_tracking_active_count = 0;
+    session->geometry_tracking_stale_count = 0;
+}
+
+/*
+ * Commit a complete mapped geometry only after every rectangle has been
+ * validated and copied. Clear for an unknown mapping is intentionally ignored
+ * while still contributing to stale-message diagnostics.
+ */
+librdp_status rdp_session_handle_geometry_tracking_message(
+    librdp_session* session,
+    uint32_t channel_id,
+    const uint8_t* data,
+    size_t data_len)
+{
+    rdp_geometry_tracking_packet packet;
+    rdp_session_geometry_mapping* mapping = NULL;
+    rdp_session_geometry_mapping next;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t created = 0;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&packet, 0, sizeof(packet));
+    status = rdp_geometry_tracking_parse(data, data_len, &packet);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.geometry.invalid",
+                        "dvc_channel_id=%u payload_len=%u status=%s",
+                        channel_id,
+                        (unsigned)data_len,
+                        librdp_status_string(status));
+        return status;
+    }
+
+    mapping = rdp_session_geometry_mapping_find(session, packet.mapping_id);
+    rdp_session_video_geometry_counter_add(
+        &session->geometry_tracking_update_count,
+        1u);
+    if (packet.update_type == RDP_GEOMETRY_TRACKING_CLEAR)
+    {
+        if (!mapping)
+        {
+            rdp_session_video_geometry_counter_add(
+                &session->geometry_tracking_stale_count,
+                1u);
+            rdp_trace_event_level(
+                RDP_TRACE_CLIENT,
+                RDP_TRACE_LEVEL_DEBUG,
+                "client.geometry.clear",
+                "dvc_channel_id=%u mapping_id=%llu action=ignored active=%u stale=%u",
+                channel_id,
+                (unsigned long long)packet.mapping_id,
+                session->geometry_tracking_active_count,
+                session->geometry_tracking_stale_count);
+            return LIBRDP_STATUS_OK;
+        }
+        rdp_session_geometry_mapping_clear(mapping);
+        if (session->geometry_tracking_active_count > 0)
+            session->geometry_tracking_active_count--;
+        rdp_trace_event(
+            RDP_TRACE_CLIENT,
+            "client.geometry.clear",
+            "dvc_channel_id=%u mapping_id=%llu action=removed active=%u stale=%u",
+            channel_id,
+            (unsigned long long)packet.mapping_id,
+            session->geometry_tracking_active_count,
+            session->geometry_tracking_stale_count);
+        return LIBRDP_STATUS_OK;
+    }
+    if (packet.geometry_buffer_len >
+            session->limits.dynamic_channel_message_bytes ||
+        packet.rect_count >
+            session->limits.dynamic_channel_message_bytes /
+                sizeof(rdp_geometry_tracking_rect))
+        return rdp_session_limit_rejected(session);
+
+    memset(&next, 0, sizeof(next));
+    if (packet.rect_count > 0)
+    {
+        next.rects = (rdp_geometry_tracking_rect*)calloc(
+            packet.rect_count,
+            sizeof(*next.rects));
+        if (!next.rects)
+            return LIBRDP_STATUS_NO_MEMORY;
+        for (uint32_t i = 0; i < packet.rect_count; i++)
+        {
+            status = rdp_geometry_tracking_get_rect(&packet,
+                                                    i,
+                                                    &next.rects[i]);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                free(next.rects);
+                return status;
+            }
+        }
+    }
+    if (!mapping)
+    {
+        mapping = rdp_session_geometry_mapping_unused(session);
+        if (!mapping)
+        {
+            free(next.rects);
+            return rdp_session_limit_rejected(session);
+        }
+        created = 1u;
+    }
+    next.active = 1u;
+    next.mapping_id = packet.mapping_id;
+    next.top_level_id = packet.top_level_id;
+    next.local_bounds = packet.local_bounds;
+    next.top_level_bounds = packet.top_level_bounds;
+    next.region_bounds = packet.region_bounds;
+    next.rect_count = packet.rect_count;
+    rdp_session_geometry_mapping_clear(mapping);
+    *mapping = next;
+    if (created)
+    {
+        rdp_session_video_geometry_counter_add(
+            &session->geometry_tracking_active_count,
+            1u);
+    }
+    rdp_trace_event(
+        RDP_TRACE_CLIENT,
+        "client.geometry.update",
+        "dvc_channel_id=%u mapping_id=%llu action=%s top_level_id=%llu left=%d top=%d right=%d bottom=%d rects=%u active=%u",
+        channel_id,
+        (unsigned long long)packet.mapping_id,
+        created ? "created" : "updated",
+        (unsigned long long)packet.top_level_id,
+        packet.local_bounds.left,
+        packet.local_bounds.top,
+        packet.local_bounds.right,
+        packet.local_bounds.bottom,
+        packet.rect_count,
+        session->geometry_tracking_active_count);
+    return LIBRDP_STATUS_OK;
+}
+
 static rdp_session_video_optimized_presentation* rdp_session_video_optimized_find(librdp_session* session,
                                                                                   uint8_t presentation_id)
 {
@@ -381,22 +538,54 @@ static rdp_session_video_optimized_presentation* rdp_session_video_optimized_ups
     return NULL;
 }
 
-static int rdp_session_video_optimized_sample_sequence_valid(
+typedef enum rdp_session_video_sequence
+{
+    RDP_SESSION_VIDEO_SEQUENCE_VALID = 0,
+    RDP_SESSION_VIDEO_SEQUENCE_GAP = 1,
+    RDP_SESSION_VIDEO_SEQUENCE_INVALID = 2
+} rdp_session_video_sequence;
+
+static rdp_session_video_sequence rdp_session_video_optimized_sample_sequence(
     const rdp_session_video_optimized_presentation* presentation,
     const rdp_video_optimized_video_data* video)
 {
+    uint32_t expected_sample = 0;
+
     if (!presentation || !video)
-        return 0;
-    if (presentation->last_sample_number == 0)
-        return video->current_packet_index == 1u;
-    if (video->sample_number < presentation->last_sample_number)
-        return 0;
+        return RDP_SESSION_VIDEO_SEQUENCE_INVALID;
+    if (!presentation->sequence_initialized)
+    {
+        return (presentation->sample_count > 0 ||
+                video->sample_number == 1u) &&
+                       video->current_packet_index == 1u ?
+                   RDP_SESSION_VIDEO_SEQUENCE_VALID :
+                   RDP_SESSION_VIDEO_SEQUENCE_INVALID;
+    }
     if (video->sample_number == presentation->last_sample_number)
     {
-        return video->packets_in_sample == presentation->last_packets_in_sample &&
-               video->current_packet_index > presentation->last_packet_index;
+        if (video->packets_in_sample != presentation->last_packets_in_sample ||
+            video->current_packet_index <= presentation->last_packet_index)
+            return RDP_SESSION_VIDEO_SEQUENCE_INVALID;
+        return video->current_packet_index ==
+                       (uint16_t)(presentation->last_packet_index + 1u) ?
+                   RDP_SESSION_VIDEO_SEQUENCE_VALID :
+                   RDP_SESSION_VIDEO_SEQUENCE_GAP;
     }
-    return video->current_packet_index == 1u;
+    expected_sample = presentation->last_sample_number == UINT32_MAX ?
+                          1u :
+                          presentation->last_sample_number + 1u;
+    if (video->sample_number == expected_sample)
+    {
+        return presentation->last_packet_index ==
+                           presentation->last_packets_in_sample &&
+                       video->current_packet_index == 1u ?
+                   RDP_SESSION_VIDEO_SEQUENCE_VALID :
+                   RDP_SESSION_VIDEO_SEQUENCE_GAP;
+    }
+    if (video->sample_number > expected_sample &&
+        video->current_packet_index == 1u)
+        return RDP_SESSION_VIDEO_SEQUENCE_GAP;
+    return RDP_SESSION_VIDEO_SEQUENCE_INVALID;
 }
 
 static void rdp_session_video_optimized_remove(librdp_session* session, uint8_t presentation_id)
@@ -405,6 +594,77 @@ static void rdp_session_video_optimized_remove(librdp_session* session, uint8_t 
 
     if (entry)
         memset(entry, 0, sizeof(*entry));
+}
+
+static void rdp_session_video_optimized_sequence_reset(
+    rdp_session_video_optimized_presentation* presentation)
+{
+    if (!presentation)
+        return;
+    presentation->recovery_notified = 0;
+    presentation->sequence_initialized = 0;
+    presentation->last_timestamp = 0;
+    presentation->last_duration = 0;
+    presentation->last_sample_number = 0;
+    presentation->last_packet_index = 0;
+    presentation->last_packets_in_sample = 0;
+    presentation->last_flags = 0;
+}
+
+static void rdp_session_geometry_mapping_clear(
+    rdp_session_geometry_mapping* mapping)
+{
+    if (!mapping)
+        return;
+    free(mapping->rects);
+    memset(mapping, 0, sizeof(*mapping));
+}
+
+static rdp_session_geometry_mapping* rdp_session_geometry_mapping_find(
+    librdp_session* session,
+    uint64_t mapping_id)
+{
+    if (!session)
+        return NULL;
+    for (uint32_t i = 0; i < RDP_SESSION_GEOMETRY_MAPPINGS; i++)
+    {
+        if (session->geometry_mappings[i].active &&
+            session->geometry_mappings[i].mapping_id == mapping_id)
+            return &session->geometry_mappings[i];
+    }
+    return NULL;
+}
+
+int rdp_session_geometry_mapping_available(const librdp_session* session,
+                                           uint64_t mapping_id)
+{
+    if (!session)
+        return 0;
+    for (uint32_t i = 0; i < RDP_SESSION_GEOMETRY_MAPPINGS; i++)
+    {
+        if (session->geometry_mappings[i].active &&
+            session->geometry_mappings[i].mapping_id == mapping_id)
+            return 1;
+    }
+    return 0;
+}
+
+static rdp_session_geometry_mapping* rdp_session_geometry_mapping_unused(
+    librdp_session* session)
+{
+    uint32_t limit = 0;
+
+    if (!session)
+        return NULL;
+    limit = session->limits.surface_count;
+    if (limit > RDP_SESSION_GEOMETRY_MAPPINGS)
+        limit = RDP_SESSION_GEOMETRY_MAPPINGS;
+    for (uint32_t i = 0; i < limit; i++)
+    {
+        if (!session->geometry_mappings[i].active)
+            return &session->geometry_mappings[i];
+    }
+    return NULL;
 }
 
 static rdp_session_video_stream* rdp_session_video_stream_find(librdp_session* session,
@@ -780,6 +1040,51 @@ static librdp_status rdp_session_send_video_optimized_presentation_response(libr
 }
 
 /*
+ * Report packet loss or reordering once per recovery interval. The protocol
+ * reserves this notification for transport discontinuities so geometry and
+ * local resource-policy failures must not pass through this path.
+ */
+static librdp_status rdp_session_send_video_optimized_recovery(
+    librdp_session* session,
+    rdp_session_video_optimized_presentation* presentation,
+    const char* reason)
+{
+    rdp_buffer notification;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !presentation || !reason)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (presentation->recovery_notified)
+        return LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&notification);
+    status = rdp_video_optimized_write_client_notification(
+        &notification,
+        presentation->presentation_id,
+        RDP_VIDEO_OPTIMIZED_NOTIFICATION_NETWORK_ERROR,
+        NULL,
+        0);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_session_send_video_optimized_control(
+            session,
+            &notification,
+            "client.video_optimized.recovery");
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        presentation->recovery_notified = 1;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.recovery",
+                        "presentation_id=%u reason=%s",
+                        presentation->presentation_id,
+                        reason);
+    }
+    rdp_buffer_free(&notification);
+    return status;
+}
+
+/*
  * Handle video-optimized remoting control traffic. Presentation identifiers,
  * format negotiation, and stream state are validated before media payload
  * callbacks are enabled.
@@ -823,9 +1128,35 @@ librdp_status rdp_session_handle_video_optimized_control_message(librdp_session*
             return status;
         if (request.command == RDP_VIDEO_OPTIMIZED_COMMAND_START)
         {
-            rdp_session_video_optimized_presentation* entry =
-                rdp_session_video_optimized_upsert(session, request.presentation_id);
+            rdp_session_video_optimized_presentation* entry = NULL;
 
+            if (rdp_session_video_optimized_find(session,
+                                                 request.presentation_id))
+            {
+                rdp_trace_event_level(
+                    RDP_TRACE_CLIENT,
+                    RDP_TRACE_LEVEL_DEBUG,
+                    "client.video_optimized.presentation.ignored",
+                    "dvc_channel_id=%u presentation_id=%u reason=duplicate_start",
+                    channel_id,
+                    request.presentation_id);
+                return LIBRDP_STATUS_OK;
+            }
+            if (!rdp_session_geometry_mapping_available(
+                    session,
+                    request.geometry_mapping_id))
+            {
+                rdp_trace_event(
+                    RDP_TRACE_CLIENT,
+                    "client.video_optimized.presentation.ignored",
+                    "dvc_channel_id=%u presentation_id=%u reason=geometry_unavailable mapping_id=%llu",
+                    channel_id,
+                    request.presentation_id,
+                    (unsigned long long)request.geometry_mapping_id);
+                return LIBRDP_STATUS_OK;
+            }
+            entry = rdp_session_video_optimized_upsert(session,
+                                                       request.presentation_id);
             if (!entry)
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->frame_rate = request.frame_rate;
@@ -852,15 +1183,25 @@ librdp_status rdp_session_handle_video_optimized_control_message(librdp_session*
                                 request.extra_len);
             return status;
         }
+        if (!rdp_session_video_optimized_find(session,
+                                              request.presentation_id))
+        {
+            rdp_trace_event_level(
+                RDP_TRACE_CLIENT,
+                RDP_TRACE_LEVEL_DEBUG,
+                "client.video_optimized.presentation.ignored",
+                "dvc_channel_id=%u presentation_id=%u reason=unknown_stop",
+                channel_id,
+                request.presentation_id);
+            return LIBRDP_STATUS_OK;
+        }
         rdp_session_video_optimized_remove(session, request.presentation_id);
-        status = rdp_session_send_video_optimized_presentation_response(session, request.presentation_id);
-        if (status == LIBRDP_STATUS_OK)
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.video_optimized.presentation.stop",
-                            "dvc_channel_id=%u presentation_id=%u",
-                            channel_id,
-                            request.presentation_id);
-        return status;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.presentation.stop",
+                        "dvc_channel_id=%u presentation_id=%u",
+                        channel_id,
+                        request.presentation_id);
+        return LIBRDP_STATUS_OK;
     }
     if (header.packet_type == RDP_VIDEO_OPTIMIZED_PACKET_CLIENT_NOTIFICATION)
     {
@@ -920,14 +1261,21 @@ librdp_status rdp_session_handle_video_optimized_control_message(librdp_session*
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Validate one optimized-video fragment against presentation state, media
+ * limits, geometry availability and monotonic timestamps before exposing it
+ * to the application. Missing geometry drops a valid but unusable sample,
+ * while packet loss or reordering requests an intra frame for recovery.
+ */
 librdp_status rdp_session_handle_video_optimized_data_message(librdp_session* session,
-                                                                     rdp_session_dynamic_channel* entry,
-                                                                     uint32_t channel_id,
-                                                                     const uint8_t* data,
-                                                                     size_t data_len)
+                                                              rdp_session_dynamic_channel* entry,
+                                                              uint32_t channel_id,
+                                                              const uint8_t* data,
+                                                              size_t data_len)
 {
     rdp_video_optimized_video_data video;
     rdp_session_video_optimized_presentation* presentation = NULL;
+    rdp_session_video_sequence sequence = RDP_SESSION_VIDEO_SEQUENCE_VALID;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !entry || (!data && data_len > 0))
@@ -953,23 +1301,103 @@ librdp_status rdp_session_handle_video_optimized_data_message(librdp_session* se
                         channel_id,
                         video.presentation_id,
                         video.sample_number);
-        return LIBRDP_STATUS_STATE;
+        return LIBRDP_STATUS_OK;
     }
-    if (!rdp_session_video_optimized_sample_sequence_valid(presentation, &video))
+    if (!rdp_session_geometry_mapping_available(
+            session,
+            presentation->geometry_mapping_id))
     {
+        rdp_trace_event_level(
+            RDP_TRACE_CLIENT,
+            RDP_TRACE_LEVEL_DEBUG,
+            "client.video_optimized.sample.ignored",
+            "dvc_channel_id=%u presentation_id=%u reason=geometry_unavailable mapping_id=%llu sample_number=%u packet=%u",
+            channel_id,
+            video.presentation_id,
+            (unsigned long long)presentation->geometry_mapping_id,
+            video.sample_number,
+            video.current_packet_index);
+        return LIBRDP_STATUS_OK;
+    }
+    if (video.sample_len > session->limits.frame_bytes)
+    {
+        rdp_session_metric_add(&session->metrics.limits_rejected, 1);
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.video_optimized.sample.rejected",
-                        "dvc_channel_id=%u presentation_id=%u reason=sequence sample_number=%u packet=%u last_sample_number=%u last_packet=%u",
+                        "dvc_channel_id=%u presentation_id=%u reason=frame_limit sample_len=%u limit=%u",
                         channel_id,
                         video.presentation_id,
+                        video.sample_len,
+                        session->limits.frame_bytes);
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    if (presentation->recovery_notified)
+    {
+        if ((video.flags & RDP_VIDEO_OPTIMIZED_DATA_FLAG_KEYFRAME) == 0 ||
+            video.current_packet_index != 1u)
+        {
+            rdp_trace_event_level(
+                RDP_TRACE_CLIENT,
+                RDP_TRACE_LEVEL_DEBUG,
+                "client.video_optimized.sample.ignored",
+                "dvc_channel_id=%u presentation_id=%u reason=awaiting_keyframe sample_number=%u packet=%u",
+                channel_id,
+                video.presentation_id,
+                video.sample_number,
+                video.current_packet_index);
+            return LIBRDP_STATUS_OK;
+        }
+        rdp_session_video_optimized_sequence_reset(presentation);
+    }
+    sequence = rdp_session_video_optimized_sample_sequence(presentation,
+                                                           &video);
+    if (sequence != RDP_SESSION_VIDEO_SEQUENCE_VALID)
+    {
+        status = rdp_session_send_video_optimized_recovery(
+            session,
+            presentation,
+            sequence == RDP_SESSION_VIDEO_SEQUENCE_GAP ?
+                "packet_gap" :
+                "packet_order");
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.sample.ignored",
+                        "dvc_channel_id=%u presentation_id=%u reason=%s sample_number=%u packet=%u last_sample_number=%u last_packet=%u",
+                        channel_id,
+                        video.presentation_id,
+                        sequence == RDP_SESSION_VIDEO_SEQUENCE_GAP ?
+                            "packet_gap" :
+                            "packet_order",
                         video.sample_number,
                         video.current_packet_index,
                         presentation->last_sample_number,
                         presentation->last_packet_index);
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if ((video.flags & RDP_VIDEO_OPTIMIZED_DATA_FLAG_KEYFRAME) == 0 ||
+            video.current_packet_index != 1u)
+            return LIBRDP_STATUS_OK;
+        rdp_session_video_optimized_sequence_reset(presentation);
+    }
+    if ((video.flags & RDP_VIDEO_OPTIMIZED_DATA_FLAG_HAS_TIMESTAMPS) != 0 &&
+        presentation->sequence_initialized &&
+        video.timestamp < presentation->last_timestamp)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.sample.rejected",
+                        "dvc_channel_id=%u presentation_id=%u reason=timestamp sample_number=%u timestamp=%llu last_timestamp=%llu",
+                        channel_id,
+                        video.presentation_id,
+                        video.sample_number,
+                        (unsigned long long)video.timestamp,
+                        (unsigned long long)presentation->last_timestamp);
+        status = rdp_session_send_video_optimized_recovery(session,
+                                                           presentation,
+                                                           "timestamp_order");
+        return status;
     }
     presentation->sample_count++;
     presentation->sample_bytes += video.sample_len;
+    presentation->sequence_initialized = 1u;
     presentation->last_timestamp = video.timestamp;
     presentation->last_duration = video.duration;
     presentation->last_sample_number = video.sample_number;
@@ -1226,6 +1654,19 @@ librdp_status rdp_session_handle_video_redirection_message(librdp_session* sessi
                                 (unsigned long long)sample.sample_start_time,
                                 (unsigned long long)entry->last_sample_start);
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            if (sample.data_len > session->limits.frame_bytes)
+            {
+                rdp_session_metric_add(&session->metrics.limits_rejected, 1);
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.tsmf.sample.rejected",
+                                "dvc_channel_id=%u message_id=%u stream_id=%u reason=frame_limit sample_len=%u limit=%u",
+                                channel_id,
+                                stream.header.message_id,
+                                stream.stream_id,
+                                sample.data_len,
+                                session->limits.frame_bytes);
+                return LIBRDP_STATUS_LIMIT_EXCEEDED;
             }
             duration = sample.sample_end_time - sample.sample_start_time;
             entry->sample_count++;

@@ -279,6 +279,7 @@ void librdp_session_free(librdp_session* session)
     rdp_printer_backend_clear(&session->printer_backend);
     rdp_session_usb_redirection_reset(session);
     rdp_session_composited_reset(session);
+    rdp_session_geometry_tracking_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
@@ -481,6 +482,7 @@ librdp_status rdp_session_disconnect_inner(librdp_session* session)
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
     rdp_session_multitransport_reset(session, 0);
     rdp_session_composited_reset(session);
+    rdp_session_geometry_tracking_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);

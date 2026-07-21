@@ -1998,6 +1998,13 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     {
         status = rdp_session_handle_composited_message(session, channel_id, data, data_len);
     }
+    else if (strcmp(entry->name, RDP_GEOMETRY_TRACKING_CHANNEL_NAME) == 0)
+    {
+        status = rdp_session_handle_geometry_tracking_message(session,
+                                                              channel_id,
+                                                              data,
+                                                              data_len);
+    }
     else if (strcmp(entry->name, RDP_VIDEO_REDIRECTION_CHANNEL_NAME) == 0)
     {
         status = rdp_session_handle_video_redirection_message(session, entry, channel_id, data, data_len);
@@ -2380,6 +2387,23 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                             "dvc_channel_id=%u enabled=%u",
                             request.channel_id,
                             rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_TELEMETRY));
+        }
+        else if (request.name_len == sizeof(RDP_GEOMETRY_TRACKING_CHANNEL_NAME) - 1u &&
+                 memcmp(request.name,
+                        RDP_GEOMETRY_TRACKING_CHANNEL_NAME,
+                        request.name_len) == 0)
+        {
+            rdp_session_geometry_tracking_reset(session);
+            session->geometry_tracking_channel_id = request.channel_id;
+            session->geometry_tracking_channel_id_bytes = request.channel_id_bytes;
+            rdp_trace_event(
+                RDP_TRACE_CLIENT,
+                "client.geometry.channel",
+                "dvc_channel_id=%u enabled=%u",
+                request.channel_id,
+                rdp_session_feature_ready_for_negotiation(
+                    session,
+                    LIBRDP_FEATURE_GEOMETRY_TRACKING));
         }
         else if (request.name_len == sizeof(RDP_VIDEO_REDIRECTION_CHANNEL_NAME) - 1u &&
                  memcmp(request.name, RDP_VIDEO_REDIRECTION_CHANNEL_NAME, request.name_len) == 0)
@@ -2875,6 +2899,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             }
             if (entry->channel_id == session->composited_channel_id)
                 rdp_session_composited_reset(session);
+            if (entry->channel_id == session->geometry_tracking_channel_id)
+                rdp_session_geometry_tracking_reset(session);
             if (entry->channel_id == session->video_redirection_channel_id)
                 rdp_session_video_redirection_reset(session);
             if (entry->channel_id == session->video_optimized_control_channel_id ||
@@ -3353,6 +3379,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
     rdp_session_multitransport_reset(session, 1);
     rdp_session_composited_reset(session);
+    rdp_session_geometry_tracking_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
@@ -4444,6 +4471,7 @@ fail:
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
     rdp_session_multitransport_reset(session, 0);
     rdp_session_composited_reset(session);
+    rdp_session_geometry_tracking_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
@@ -6488,8 +6516,8 @@ librdp_status librdp_session_get_feature_status(const librdp_session* session,
             break;
         case LIBRDP_FEATURE_GEOMETRY_TRACKING:
             rdp_session_finish_feature_status(status,
-                                              session->video_redirection_channel_id != 0,
-                                              session->video_geometry_update_count != 0);
+                                              session->geometry_tracking_channel_id != 0,
+                                              session->geometry_tracking_active_count != 0);
             break;
         case LIBRDP_FEATURE_MULTIPARTY:
             rdp_session_finish_feature_status(status,

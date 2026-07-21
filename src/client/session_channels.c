@@ -498,6 +498,7 @@ static int rdp_session_dynamic_channel_is_internal_name(const char* name)
            strcmp(name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_TELEMETRY_DVC_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_COMPOSITED_CHANNEL_NAME) == 0 ||
+           strcmp(name, RDP_GEOMETRY_TRACKING_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_VIDEO_REDIRECTION_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL) == 0 ||
            strcmp(name, RDP_VIDEO_OPTIMIZED_DATA_CHANNEL) == 0 ||
@@ -522,11 +523,6 @@ static int rdp_session_dynamic_channel_request_name_equals(const rdp_dynamic_cha
     return request->name_len == name_len && memcmp(request->name, name, name_len) == 0;
 }
 
-static int rdp_session_dynamic_request_is_tsmf(const rdp_dynamic_channel_create_request* request)
-{
-    return rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_REDIRECTION_CHANNEL_NAME);
-}
-
 static int rdp_session_dynamic_channel_optional_feature(const rdp_dynamic_channel_create_request* request,
                                                         librdp_feature* feature)
 {
@@ -542,6 +538,10 @@ static int rdp_session_dynamic_channel_optional_feature(const rdp_dynamic_channe
         *feature = LIBRDP_FEATURE_DISPLAY_CONTROL;
     else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_COMPOSITED_CHANNEL_NAME))
         *feature = LIBRDP_FEATURE_CR2;
+    else if (rdp_session_dynamic_channel_request_name_equals(
+                 request,
+                 RDP_GEOMETRY_TRACKING_CHANNEL_NAME))
+        *feature = LIBRDP_FEATURE_GEOMETRY_TRACKING;
     else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_REDIRECTION_CHANNEL_NAME) ||
              rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL) ||
              rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_OPTIMIZED_DATA_CHANNEL))
@@ -572,9 +572,6 @@ uint32_t rdp_session_dynamic_channel_create_status(librdp_session* session,
     if (rdp_session_dynamic_channel_requires_credssp(request) &&
         (!session || !session->credssp_security_ready))
         return RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
-    if (rdp_session_dynamic_request_is_tsmf(request) && session &&
-        rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_GEOMETRY_TRACKING))
-        return RDP_DYNAMIC_CHANNEL_STATUS_OK;
     if (!rdp_session_dynamic_channel_optional_feature(request, &feature))
         return RDP_DYNAMIC_CHANNEL_STATUS_OK;
     memset(&feature_status, 0, sizeof(feature_status));
