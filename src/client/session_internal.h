@@ -138,6 +138,11 @@ typedef struct rdp_session_usb_worker rdp_session_usb_worker;
 #define RDP_SESSION_CLIPBOARD_MAX_PENDING_FILE_REQUESTS 64u
 #define RDP_SESSION_CLIPBOARD_FILE_RANGE_MAX (4u * 1024u * 1024u)
 #define RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED 1
+#define RDP_SESSION_MULTITRANSPORT_SLOT_COUNT 2u
+#define RDP_SESSION_MULTITRANSPORT_SLOT_EMPTY 0u
+#define RDP_SESSION_MULTITRANSPORT_SLOT_STARTING 1u
+#define RDP_SESSION_MULTITRANSPORT_SLOT_PENDING 2u
+#define RDP_SESSION_MULTITRANSPORT_SLOT_READY 3u
 #define RDP_SESSION_ECHO_CHANNEL_NAME RDP_ECHO_CHANNEL_NAME
 #define RDP_SESSION_DISPLAY_CONTROL_NAME RDP_DISPLAY_CONTROL_CHANNEL_NAME
 #define RDP_SESSION_CORE_INPUT_NAME RDP_CORE_INPUT_CHANNEL_NAME
@@ -685,6 +690,13 @@ typedef struct rdp_session_clipboard_file_request
     uint32_t requested;
 } rdp_session_clipboard_file_request;
 
+typedef struct rdp_session_multitransport_slot
+{
+    uint8_t state;
+    uint64_t deadline_ns;
+    librdp_multitransport_request request;
+} rdp_session_multitransport_slot;
+
 struct librdp_session
 {
     librdp_settings* settings;
@@ -914,6 +926,12 @@ struct librdp_session
     uint16_t multitransport_udp2_next_receive_sequence;
     uint16_t multitransport_udp2_last_receive_sequence;
     uint16_t multitransport_udp2_last_peer_ack_sequence;
+    uint8_t multitransport_bootstrap_required;
+    uint64_t multitransport_next_request_token;
+    librdp_multitransport_provider multitransport_provider;
+    uint8_t multitransport_provider_set;
+    rdp_session_multitransport_slot
+        multitransport_slots[RDP_SESSION_MULTITRANSPORT_SLOT_COUNT];
     librdp_multitransport_metrics multitransport_metrics;
     rdp_graphics_decompressor graphics_decompressor;
     rdp_graphics_decompressor bulk_rdp8_decompressor;

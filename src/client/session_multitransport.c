@@ -22,7 +22,130 @@
 #include "transport/multitransport.h"
 #include "transport/udp_transport.h"
 
+#include <limits.h>
+#include <openssl/crypto.h>
 #include <string.h>
+
+#define RDP_SESSION_MULTITRANSPORT_DEFAULT_TIMEOUT_MS 10000u
+
+static int rdp_session_multitransport_slot_index(
+    librdp_multitransport_protocol protocol)
+{
+    if (protocol == LIBRDP_MULTITRANSPORT_UDP_RELIABLE)
+        return 0;
+    if (protocol == LIBRDP_MULTITRANSPORT_UDP_LOSSY)
+        return 1;
+    return -1;
+}
+
+static uint64_t rdp_session_multitransport_next_token(
+    librdp_session* session)
+{
+    if (!session)
+        return 0u;
+    session->multitransport_next_request_token++;
+    if (session->multitransport_next_request_token == 0u)
+        session->multitransport_next_request_token = 1u;
+    return session->multitransport_next_request_token;
+}
+
+static void rdp_session_multitransport_release_slot(
+    librdp_session* session,
+    rdp_session_multitransport_slot* slot,
+    int established)
+{
+    librdp_multitransport_request request;
+    librdp_multitransport_release_callback release = NULL;
+    void* user_data = NULL;
+
+    if (!session || !slot || slot->state == RDP_SESSION_MULTITRANSPORT_SLOT_EMPTY)
+        return;
+    request = slot->request;
+    if (session->multitransport_provider_set)
+    {
+        release = session->multitransport_provider.release;
+        user_data = session->multitransport_provider.user_data;
+    }
+    OPENSSL_cleanse(slot, sizeof(*slot));
+    if (release)
+        release(session, &request, established, user_data);
+    OPENSSL_cleanse(&request, sizeof(request));
+}
+
+static librdp_status rdp_session_multitransport_send_response(
+    librdp_session* session,
+    uint32_t request_id,
+    uint32_t hresult)
+{
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&response);
+    status = rdp_multitransport_write_initiate_response(&response,
+                                                        request_id,
+                                                        hresult);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_message_channel_pdu(
+            session,
+            RDP_SEC_TRANSPORT_RSP,
+            &response,
+            "rdp.multitransport.response");
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "rdp.multitransport.response",
+                        "request_id=%u hresult=%u",
+                        request_id,
+                        hresult);
+    }
+    rdp_buffer_free(&response);
+    return status;
+}
+
+static librdp_status rdp_session_multitransport_finish_slot(
+    librdp_session* session,
+    rdp_session_multitransport_slot* slot,
+    librdp_status result)
+{
+    const int accepted = result == LIBRDP_STATUS_OK;
+    const uint32_t hresult = accepted ?
+                                 RDP_MULTITRANSPORT_HRESULT_OK :
+                                 RDP_MULTITRANSPORT_HRESULT_ABORT;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !slot || slot->state == RDP_SESSION_MULTITRANSPORT_SLOT_EMPTY)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_multitransport_send_response(session,
+                                                      slot->request.request_id,
+                                                      hresult);
+    if (status == LIBRDP_STATUS_OK && accepted)
+    {
+        slot->state = RDP_SESSION_MULTITRANSPORT_SLOT_READY;
+        slot->deadline_ns = 0u;
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.multitransport.ready",
+                        "request_id=%u protocol=%u request_token=%llu",
+                        slot->request.request_id,
+                        (unsigned)slot->request.protocol,
+                        (unsigned long long)slot->request.request_token);
+        return LIBRDP_STATUS_OK;
+    }
+    rdp_session_multitransport_release_slot(session, slot, accepted);
+    return status;
+}
+
+static int rdp_session_multitransport_request_matches(
+    const rdp_session_multitransport_slot* slot,
+    const rdp_multitransport_initiate_request* request)
+{
+    if (!slot || !request || slot->state == RDP_SESSION_MULTITRANSPORT_SLOT_EMPTY)
+        return 0;
+    return slot->request.request_id == request->request_id &&
+           (uint16_t)slot->request.protocol == request->requested_protocol &&
+           CRYPTO_memcmp(slot->request.security_cookie,
+                         request->security_cookie,
+                         RDP_MULTITRANSPORT_COOKIE_LENGTH) == 0;
+}
 
 static librdp_status rdp_session_multitransport_require(
     librdp_session* session,
@@ -104,8 +227,21 @@ static librdp_status rdp_session_udp_write_ack_vector(
 void rdp_session_multitransport_reset(librdp_session* session,
                                       int reset_metrics)
 {
+    size_t index = 0u;
+
     if (!session)
         return;
+    for (index = 0u; index < RDP_SESSION_MULTITRANSPORT_SLOT_COUNT; index++)
+    {
+        rdp_session_multitransport_slot* slot =
+            &session->multitransport_slots[index];
+        const int established =
+            slot->state == RDP_SESSION_MULTITRANSPORT_SLOT_READY;
+
+        rdp_session_multitransport_release_slot(session,
+                                                slot,
+                                                established);
+    }
     session->multitransport_negotiated = 0;
     session->multitransport_flags = 0;
     session->multitransport_udp_active = 0;
@@ -134,16 +270,17 @@ void rdp_session_multitransport_reset(librdp_session* session,
     session->multitransport_udp2_next_receive_sequence = 0;
     session->multitransport_udp2_last_receive_sequence = 0;
     session->multitransport_udp2_last_peer_ack_sequence = 0;
+    session->multitransport_bootstrap_required = 0u;
     if (reset_metrics)
         (void)librdp_multitransport_metrics_init(
             &session->multitransport_metrics);
 }
 
 /*
- * Process the primary Message Channel bootstrap record. The application-owned
- * side-transport contract cannot be completed synchronously by the core, so a
- * valid request receives the protocol-defined failure response and the TCP
- * transport remains authoritative. This path must never mark UDP active.
+ * Route the primary Message Channel bootstrap request to the application
+ * provider. A provider may finish synchronously or retain the opaque token for
+ * owner-thread completion; absent or failed providers produce the wire-defined
+ * E_ABORT response without weakening the primary TCP connection.
  */
 librdp_status rdp_session_handle_multitransport_message(
     librdp_session* session,
@@ -152,7 +289,10 @@ librdp_status rdp_session_handle_multitransport_message(
     size_t payload_len)
 {
     rdp_multitransport_initiate_request request;
-    rdp_buffer response;
+    rdp_session_multitransport_slot* slot = NULL;
+    librdp_multitransport_request provider_request;
+    librdp_status provider_status = LIBRDP_STATUS_UNSUPPORTED;
+    int slot_index = -1;
     uint32_t required_flag = 0u;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -174,32 +314,85 @@ librdp_status rdp_session_handle_multitransport_message(
     if (!session->multitransport_negotiated ||
         (session->multitransport_flags & required_flag) == 0u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    slot_index = rdp_session_multitransport_slot_index(
+        (librdp_multitransport_protocol)request.requested_protocol);
+    if (slot_index < 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    slot = &session->multitransport_slots[(size_t)slot_index];
+    session->multitransport_bootstrap_required = 1u;
+    if (slot->state != RDP_SESSION_MULTITRANSPORT_SLOT_EMPTY)
+    {
+        if (rdp_session_multitransport_request_matches(slot, &request))
+        {
+            if (slot->state == RDP_SESSION_MULTITRANSPORT_SLOT_READY)
+                return rdp_session_multitransport_send_response(
+                    session,
+                    request.request_id,
+                    RDP_MULTITRANSPORT_HRESULT_OK);
+            return LIBRDP_STATUS_OK;
+        }
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "rdp.multitransport.request.rejected",
+                        "request_id=%u protocol=%u reason=slot_busy",
+                        request.request_id,
+                        request.requested_protocol);
+        return rdp_session_multitransport_send_response(
+            session,
+            request.request_id,
+            RDP_MULTITRANSPORT_HRESULT_ABORT);
+    }
 
+    memset(&provider_request, 0, sizeof(provider_request));
+    provider_request.version = LIBRDP_MULTITRANSPORT_REQUEST_VERSION;
+    provider_request.size = (uint32_t)sizeof(provider_request);
+    provider_request.request_token =
+        rdp_session_multitransport_next_token(session);
+    provider_request.request_id = request.request_id;
+    provider_request.protocol =
+        (librdp_multitransport_protocol)request.requested_protocol;
+    memcpy(provider_request.security_cookie,
+           request.security_cookie,
+           sizeof(provider_request.security_cookie));
+    slot->state = RDP_SESSION_MULTITRANSPORT_SLOT_STARTING;
+    slot->request = provider_request;
     rdp_trace_event(RDP_TRACE_PROTOCOL,
                     "rdp.multitransport.request",
-                    "request_id=%u protocol=%u side_transport=unavailable",
+                    "request_id=%u protocol=%u provider=%s request_token=%llu",
                     request.request_id,
-                    request.requested_protocol);
-    rdp_buffer_init(&response);
-    status = rdp_multitransport_write_initiate_response(
-        &response,
-        request.request_id,
-        RDP_MULTITRANSPORT_HRESULT_ABORT);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_session_write_message_channel_pdu(
-            session,
-            RDP_SEC_TRANSPORT_RSP,
-            &response,
-            "rdp.multitransport.response");
-    if (status == LIBRDP_STATUS_OK)
+                    request.requested_protocol,
+                    session->multitransport_provider_set ? "configured" :
+                                                          "unavailable",
+                    (unsigned long long)provider_request.request_token);
+    if (session->multitransport_provider_set)
     {
-        rdp_trace_event(RDP_TRACE_PROTOCOL,
-                        "rdp.multitransport.response",
-                        "request_id=%u hresult=%u",
-                        request.request_id,
-                        RDP_MULTITRANSPORT_HRESULT_ABORT);
+        provider_status = session->multitransport_provider.start(
+            session,
+            &provider_request,
+            session->multitransport_provider.user_data);
     }
-    rdp_buffer_free(&response);
+    OPENSSL_cleanse(&provider_request, sizeof(provider_request));
+    if (provider_status == LIBRDP_STATUS_AGAIN)
+    {
+        const uint64_t now_ns = rdp_session_monotonic_ns();
+        const uint64_t timeout_ns =
+            (uint64_t)session->multitransport_provider.timeout_ms * 1000000u;
+
+        slot->state = RDP_SESSION_MULTITRANSPORT_SLOT_PENDING;
+        slot->deadline_ns = now_ns > UINT64_MAX - timeout_ns ?
+                                UINT64_MAX :
+                                now_ns + timeout_ns;
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.multitransport.pending",
+                        "request_id=%u protocol=%u request_token=%llu timeout_ms=%u",
+                        slot->request.request_id,
+                        (unsigned)slot->request.protocol,
+                        (unsigned long long)slot->request.request_token,
+                        session->multitransport_provider.timeout_ms);
+        return LIBRDP_STATUS_OK;
+    }
+    status = rdp_session_multitransport_finish_slot(session,
+                                                    slot,
+                                                    provider_status);
     return status;
 }
 
@@ -211,6 +404,150 @@ librdp_status librdp_multitransport_metrics_init(
     memset(metrics, 0, sizeof(*metrics));
     metrics->version = LIBRDP_MULTITRANSPORT_METRICS_VERSION;
     metrics->size = (uint32_t)sizeof(*metrics);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_multitransport_provider_init(
+    librdp_multitransport_provider* provider)
+{
+    if (!provider)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(provider, 0, sizeof(*provider));
+    provider->version = LIBRDP_MULTITRANSPORT_PROVIDER_VERSION;
+    provider->size = (uint32_t)sizeof(*provider);
+    provider->timeout_ms = RDP_SESSION_MULTITRANSPORT_DEFAULT_TIMEOUT_MS;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_session_set_multitransport_provider(
+    librdp_session* session,
+    const librdp_multitransport_provider* provider)
+{
+    size_t index = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_session_require_owner(
+        session,
+        "client.multitransport.provider.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (index = 0u; index < RDP_SESSION_MULTITRANSPORT_SLOT_COUNT; index++)
+    {
+        if (session->multitransport_slots[index].state !=
+            RDP_SESSION_MULTITRANSPORT_SLOT_EMPTY)
+            return LIBRDP_STATUS_STATE;
+    }
+    if (!provider)
+    {
+        OPENSSL_cleanse(&session->multitransport_provider,
+                        sizeof(session->multitransport_provider));
+        session->multitransport_provider_set = 0u;
+        return LIBRDP_STATUS_OK;
+    }
+    if (provider->version != LIBRDP_MULTITRANSPORT_PROVIDER_VERSION ||
+        provider->size < sizeof(*provider) || !provider->start ||
+        !provider->release ||
+        provider->timeout_ms == 0u ||
+        provider->timeout_ms >
+            LIBRDP_MULTITRANSPORT_PROVIDER_MAX_TIMEOUT_MS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    session->multitransport_provider = *provider;
+    session->multitransport_provider_set = 1u;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_session_complete_multitransport_request(
+    librdp_session* session,
+    uint64_t request_token,
+    librdp_status result)
+{
+    size_t index = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (request_token == 0u || result == LIBRDP_STATUS_AGAIN)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(
+        session,
+        "client.multitransport.complete.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (index = 0u; index < RDP_SESSION_MULTITRANSPORT_SLOT_COUNT; index++)
+    {
+        rdp_session_multitransport_slot* slot =
+            &session->multitransport_slots[index];
+
+        if (slot->state == RDP_SESSION_MULTITRANSPORT_SLOT_PENDING &&
+            slot->request.request_token == request_token)
+            return rdp_session_multitransport_finish_slot(session,
+                                                          slot,
+                                                          result);
+    }
+    return LIBRDP_STATUS_STATE;
+}
+
+int rdp_session_multitransport_next_timeout_ms(
+    const librdp_session* session)
+{
+    uint64_t now_ns = 0u;
+    uint64_t minimum_ns = UINT64_MAX;
+    uint64_t timeout_ms = 0u;
+    size_t index = 0u;
+
+    if (!session)
+        return -1;
+    now_ns = rdp_session_monotonic_ns();
+    for (index = 0u; index < RDP_SESSION_MULTITRANSPORT_SLOT_COUNT; index++)
+    {
+        const rdp_session_multitransport_slot* slot =
+            &session->multitransport_slots[index];
+
+        if (slot->state != RDP_SESSION_MULTITRANSPORT_SLOT_PENDING)
+            continue;
+        if (slot->deadline_ns <= now_ns)
+            return 0;
+        if (slot->deadline_ns - now_ns < minimum_ns)
+            minimum_ns = slot->deadline_ns - now_ns;
+    }
+    if (minimum_ns == UINT64_MAX)
+        return -1;
+    timeout_ms = minimum_ns / 1000000u;
+    if (minimum_ns % 1000000u != 0u)
+        timeout_ms++;
+    if (timeout_ms > (uint64_t)INT_MAX)
+        return INT_MAX;
+    return (int)timeout_ms;
+}
+
+librdp_status rdp_session_multitransport_check_timeout(
+    librdp_session* session)
+{
+    uint64_t now_ns = 0u;
+    size_t index = 0u;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    now_ns = rdp_session_monotonic_ns();
+    for (index = 0u; index < RDP_SESSION_MULTITRANSPORT_SLOT_COUNT; index++)
+    {
+        rdp_session_multitransport_slot* slot =
+            &session->multitransport_slots[index];
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (slot->state != RDP_SESSION_MULTITRANSPORT_SLOT_PENDING ||
+            slot->deadline_ns > now_ns)
+            continue;
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.multitransport.timeout",
+                        "request_id=%u protocol=%u request_token=%llu",
+                        slot->request.request_id,
+                        (unsigned)slot->request.protocol,
+                        (unsigned long long)slot->request.request_token);
+        status = rdp_session_multitransport_finish_slot(session,
+                                                        slot,
+                                                        LIBRDP_STATUS_TIMEOUT);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
     return LIBRDP_STATUS_OK;
 }
 
@@ -285,6 +622,14 @@ librdp_status librdp_session_process_udp_datagram(librdp_session* session,
     if ((reliable && !session->multitransport_udp_reliable_selected) ||
         (!reliable && !session->multitransport_udp_lossy_selected))
         return LIBRDP_STATUS_UNSUPPORTED;
+    if (session->multitransport_bootstrap_required)
+    {
+        const size_t slot_index = reliable ? 0u : 1u;
+
+        if (session->multitransport_slots[slot_index].state !=
+            RDP_SESSION_MULTITRANSPORT_SLOT_READY)
+            return LIBRDP_STATUS_UNSUPPORTED;
+    }
     if (session->multitransport_udp_fallback_tcp[mode])
         return LIBRDP_STATUS_UNSUPPORTED;
 
@@ -569,6 +914,12 @@ librdp_status librdp_session_process_udp2_datagram(librdp_session* session,
         "client.udp2.datagram.owner");
     if (status != LIBRDP_STATUS_OK)
         return status;
+    if (session->multitransport_bootstrap_required &&
+        session->multitransport_slots[0].state !=
+            RDP_SESSION_MULTITRANSPORT_SLOT_READY &&
+        session->multitransport_slots[1].state !=
+            RDP_SESSION_MULTITRANSPORT_SLOT_READY)
+        return LIBRDP_STATUS_UNSUPPORTED;
     if (session->multitransport_udp2_fallback_tcp)
         return LIBRDP_STATUS_UNSUPPORTED;
 

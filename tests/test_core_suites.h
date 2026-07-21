@@ -17,6 +17,7 @@ int test_core_devices(void);
 int test_static_channels(void);
 int test_network_autodetect_client_state(void);
 int test_multitransport_message_channel_fallback(void);
+int test_multitransport_provider_lifecycle(void);
 int test_clipboard_unmatched_responses(void);
 int test_trace(void);
 int test_buffer_stream(void);

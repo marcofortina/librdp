@@ -60,6 +60,7 @@ static int run_channels(void)
     if (test_static_channels() != 0 ||
         test_network_autodetect_client_state() != 0 ||
         test_multitransport_message_channel_fallback() != 0 ||
+        test_multitransport_provider_lifecycle() != 0 ||
         test_clipboard_unmatched_responses() != 0)
         return 1;
     if (test_dynamic_channel_duplicate_create() != 0 ||
@@ -205,7 +206,11 @@ int test_client_core_named(const char* name)
     if (strcmp(name, "webauthn-mock-smoke") == 0)
         return test_webauthn_mock_runtime_sequence();
     if (strcmp(name, "multitransport-smoke") == 0)
+    {
+        if (test_multitransport_provider_lifecycle() != 0)
+            return 1;
         return test_dynamic_channel_soft_sync_runtime();
+    }
     if (strcmp(name, "display-resize-smoke") == 0)
         return test_display_control_resize_frame_stability();
     if (strcmp(name, "display-layout-smoke") == 0)
@@ -249,6 +254,7 @@ int test_client_core(void)
     if (test_static_channels() != 0 ||
         test_network_autodetect_client_state() != 0 ||
         test_multitransport_message_channel_fallback() != 0 ||
+        test_multitransport_provider_lifecycle() != 0 ||
         test_clipboard_unmatched_responses() != 0)
         return 1;
     if (test_reconnect_policy() != 0 || test_connect_cancellation() != 0 ||

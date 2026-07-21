@@ -23,5 +23,9 @@ librdp_status rdp_session_handle_multitransport_message(
     uint16_t security_flags,
     const uint8_t* payload,
     size_t payload_len);
+int rdp_session_multitransport_next_timeout_ms(
+    const librdp_session* session);
+librdp_status rdp_session_multitransport_check_timeout(
+    librdp_session* session);
 
 #endif

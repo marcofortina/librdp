@@ -38,6 +38,178 @@ typedef struct unknown_channel_capture
     int valid;
 } unknown_channel_capture;
 
+typedef struct multitransport_provider_capture
+{
+    librdp_status next_status;
+    librdp_multitransport_request request;
+    int side_fds[2][2];
+    uint8_t bound_cookie[2][LIBRDP_MULTITRANSPORT_COOKIE_SIZE];
+    uint32_t starts;
+    uint32_t releases;
+    uint32_t established_releases;
+    uint8_t bound[2];
+    int valid;
+} multitransport_provider_capture;
+
+static librdp_status build_test_udp_data(rdp_buffer* datagram,
+                                         uint32_t sequence,
+                                         uint16_t receive_window,
+                                         const void* data,
+                                         size_t data_len);
+
+static int multitransport_capture_index(
+    librdp_multitransport_protocol protocol)
+{
+    if (protocol == LIBRDP_MULTITRANSPORT_UDP_RELIABLE)
+        return 0;
+    if (protocol == LIBRDP_MULTITRANSPORT_UDP_LOSSY)
+        return 1;
+    return -1;
+}
+
+/*
+ * Model the application-owned side transport with a datagram socket pair and
+ * retain the server cookie that a native provider binds to its TLS/DTLS
+ * context. No descriptor or security material crosses into the core.
+ */
+static librdp_status establish_test_side_transport(
+    multitransport_provider_capture* capture,
+    const librdp_multitransport_request* request)
+{
+    int index = 0;
+
+    if (!capture || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    index = multitransport_capture_index(request->protocol);
+    if (index < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (capture->bound[index] || capture->side_fds[index][0] >= 0 ||
+        capture->side_fds[index][1] >= 0)
+        return LIBRDP_STATUS_STATE;
+    if (socketpair(AF_UNIX, SOCK_DGRAM, 0, capture->side_fds[index]) != 0)
+        return LIBRDP_STATUS_IO_ERROR;
+    memcpy(capture->bound_cookie[index],
+           request->security_cookie,
+           sizeof(capture->bound_cookie[index]));
+    capture->bound[index] = 1u;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Capture the request and establish a provider-owned transport for immediate
+ * completions. Pending completions are established by the test before they
+ * are reported to the core.
+ */
+static librdp_status on_multitransport_start(
+    librdp_session* session,
+    const librdp_multitransport_request* request,
+    void* user_data)
+{
+    multitransport_provider_capture* capture =
+        (multitransport_provider_capture*)user_data;
+
+    (void)session;
+    if (!capture || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    capture->request = *request;
+    capture->starts++;
+    if (capture->next_status == LIBRDP_STATUS_OK)
+        return establish_test_side_transport(capture, request);
+    return capture->next_status;
+}
+
+/* Close provider resources and verify the cookie retained for security binding. */
+static void on_multitransport_release(
+    librdp_session* session,
+    const librdp_multitransport_request* request,
+    int established,
+    void* user_data)
+{
+    multitransport_provider_capture* capture =
+        (multitransport_provider_capture*)user_data;
+    int index = 0;
+
+    (void)session;
+    if (!capture || !request)
+        return;
+    index = multitransport_capture_index(request->protocol);
+    if (index < 0)
+    {
+        capture->valid = 0;
+        return;
+    }
+    capture->releases++;
+    if (established)
+    {
+        capture->established_releases++;
+        if (!capture->bound[index] ||
+            CRYPTO_memcmp(capture->bound_cookie[index],
+                          request->security_cookie,
+                          sizeof(capture->bound_cookie[index])) != 0)
+            capture->valid = 0;
+    }
+    else if (capture->bound[index])
+    {
+        capture->valid = 0;
+    }
+    if (capture->side_fds[index][0] >= 0)
+        close(capture->side_fds[index][0]);
+    if (capture->side_fds[index][1] >= 0)
+        close(capture->side_fds[index][1]);
+    capture->side_fds[index][0] = -1;
+    capture->side_fds[index][1] = -1;
+    OPENSSL_cleanse(capture->bound_cookie[index],
+                    sizeof(capture->bound_cookie[index]));
+    capture->bound[index] = 0u;
+}
+
+/* Decode one complete client Message Channel response and validate correlation. */
+static int expect_multitransport_response(rdp_transport* peer_transport,
+                                          uint32_t request_id,
+                                          uint32_t hresult)
+{
+    rdp_buffer packet;
+    rdp_buffer plaintext;
+    rdp_tpkt tpkt;
+    rdp_mcs_send_data_indication indication;
+    rdp_multitransport_initiate_response response;
+    const uint8_t* x224_payload = NULL;
+    size_t x224_payload_len = 0u;
+    uint16_t security_flags = 0u;
+
+    rdp_buffer_init(&packet);
+    rdp_buffer_init(&plaintext);
+    memset(&tpkt, 0, sizeof(tpkt));
+    memset(&indication, 0, sizeof(indication));
+    memset(&response, 0, sizeof(response));
+    CHECK(rdp_transport_read_tpkt_timeout(peer_transport,
+                                          &packet,
+                                          1000) == LIBRDP_STATUS_OK);
+    CHECK(rdp_tpkt_parse(packet.data, packet.length, &tpkt) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_x224_parse_data(tpkt.payload,
+                              tpkt.payload_len,
+                              &x224_payload,
+                              &x224_payload_len) == LIBRDP_STATUS_OK);
+    CHECK(rdp_mcs_parse_send_data_request(x224_payload,
+                                          x224_payload_len,
+                                          &indication) == LIBRDP_STATUS_OK);
+    CHECK(rdp_security_unwrap_pdu(NULL,
+                                  indication.payload,
+                                  indication.payload_len,
+                                  &plaintext,
+                                  &security_flags) == LIBRDP_STATUS_OK);
+    CHECK(security_flags == RDP_SEC_TRANSPORT_RSP);
+    CHECK(rdp_multitransport_parse_initiate_response(
+              plaintext.data,
+              plaintext.length,
+              &response) == LIBRDP_STATUS_OK);
+    CHECK(response.request_id == request_id && response.hresult == hresult);
+    rdp_buffer_free(&plaintext);
+    rdp_buffer_free(&packet);
+    return 0;
+}
+
 /*
  * Drive the client Auto Detect state machine without transport I/O. Invalid
  * duplicate starts, mismatched sequences, incompatible stop types, and
@@ -262,6 +434,273 @@ int test_multitransport_message_channel_fallback(void)
     rdp_buffer_free(&request);
     rdp_transport_close(&peer_transport);
     rdp_transport_close(&session.transport);
+    return 0;
+}
+
+/*
+ * Exercise the public application-provider boundary for side-transport
+ * bootstrap. Synchronous, asynchronous, rejected, expired, duplicate, and
+ * reconnect-stale requests must produce exactly one correlated wire response
+ * and release provider resources with the correct establishment state.
+ */
+int test_multitransport_provider_lifecycle(void)
+{
+    static const uint8_t side_payload[] = {'s', 'i', 'd', 'e'};
+    uint8_t cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH];
+    uint8_t side_wire[256];
+    uint8_t side_response[256];
+    int sockets[2] = {-1, -1};
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_multitransport_provider provider;
+    multitransport_provider_capture capture;
+    rdp_transport peer_transport;
+    rdp_buffer request;
+    struct timespec pause_time;
+    uint64_t pending_token = 0u;
+    size_t side_response_len = 0u;
+    ssize_t side_wire_len = 0;
+    size_t index = 0u;
+    rdp_buffer side_datagram;
+
+    memset(&provider, 0, sizeof(provider));
+    memset(&capture, 0, sizeof(capture));
+    memset(&pause_time, 0, sizeof(pause_time));
+    memset(side_wire, 0, sizeof(side_wire));
+    memset(side_response, 0, sizeof(side_response));
+    capture.valid = 1;
+    capture.side_fds[0][0] = -1;
+    capture.side_fds[0][1] = -1;
+    capture.side_fds[1][0] = -1;
+    capture.side_fds[1][1] = -1;
+    rdp_buffer_init(&side_datagram);
+    for (index = 0u; index < sizeof(cookie); index++)
+        cookie[index] = (uint8_t)(0x50u + index);
+    CHECK(librdp_multitransport_provider_init(NULL) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_multitransport_provider_init(&provider) ==
+          LIBRDP_STATUS_OK);
+    CHECK(provider.version == LIBRDP_MULTITRANSPORT_PROVIDER_VERSION &&
+          provider.size == sizeof(provider) && provider.timeout_ms > 0u);
+    provider.start = on_multitransport_start;
+    provider.release = on_multitransport_release;
+    provider.user_data = &capture;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_enable_feature(
+              settings,
+              LIBRDP_FEATURE_MULTITRANSPORT,
+              1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(
+              settings,
+              LIBRDP_FEATURE_UDP_TRANSPORT,
+              1) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    provider.release = NULL;
+    CHECK(librdp_session_set_multitransport_provider(session, &provider) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    provider.release = on_multitransport_release;
+    CHECK(librdp_session_set_multitransport_provider(session, &provider) ==
+          LIBRDP_STATUS_OK);
+    provider.version++;
+    CHECK(librdp_session_set_multitransport_provider(session, &provider) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    provider.version = LIBRDP_MULTITRANSPORT_PROVIDER_VERSION;
+    provider.timeout_ms = 0u;
+    CHECK(librdp_session_set_multitransport_provider(session, &provider) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    provider.timeout_ms = 100u;
+    CHECK(librdp_session_set_multitransport_provider(session, &provider) ==
+          LIBRDP_STATUS_OK);
+
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    rdp_transport_attach_fd(&session->transport, sockets[0], 1);
+    sockets[0] = -1;
+    rdp_transport_init(&peer_transport);
+    rdp_transport_attach_fd(&peer_transport, sockets[1], 1);
+    sockets[1] = -1;
+    session->mcs_user_id = 1003u;
+    session->message_channel_id = 1006u;
+    session->message_channel_joined = 1u;
+    session->multitransport_negotiated = 1u;
+    session->multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
+                                    RDP_GCC_MULTITRANSPORT_UDP_FECL;
+    rdp_buffer_init(&request);
+
+    capture.next_status = LIBRDP_STATUS_OK;
+    CHECK(rdp_multitransport_write_initiate_request(
+              &request,
+              20u,
+              RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE,
+              cookie) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_message_channel(session,
+                                              RDP_SEC_TRANSPORT_REQ,
+                                              request.data,
+                                              request.length) ==
+          LIBRDP_STATUS_OK);
+    CHECK(capture.starts == 1u &&
+          capture.request.protocol == LIBRDP_MULTITRANSPORT_UDP_RELIABLE &&
+          capture.request.request_token != 0u &&
+          CRYPTO_memcmp(capture.request.security_cookie,
+                        cookie,
+                        sizeof(cookie)) == 0);
+    CHECK(expect_multitransport_response(
+              &peer_transport,
+              20u,
+              RDP_MULTITRANSPORT_HRESULT_OK) == 0);
+    CHECK(session->multitransport_slots[0].state ==
+          RDP_SESSION_MULTITRANSPORT_SLOT_READY);
+    CHECK(capture.bound[0] && capture.side_fds[0][0] >= 0 &&
+          capture.side_fds[0][1] >= 0);
+    CHECK(build_test_udp_data(&side_datagram,
+                              1u,
+                              4u,
+                              side_payload,
+                              sizeof(side_payload)) == LIBRDP_STATUS_OK);
+    CHECK(send(capture.side_fds[0][0],
+               side_datagram.data,
+               side_datagram.length,
+               0) == (ssize_t)side_datagram.length);
+    side_wire_len = recv(capture.side_fds[0][1],
+                         side_wire,
+                         sizeof(side_wire),
+                         0);
+    CHECK(side_wire_len == (ssize_t)side_datagram.length);
+    session->state = LIBRDP_SESSION_ACTIVE;
+    session->multitransport_udp_reliable_selected = 1u;
+    CHECK(librdp_session_process_udp_datagram(
+              session,
+              1,
+              side_wire,
+              (size_t)side_wire_len,
+              side_response,
+              sizeof(side_response),
+              &side_response_len) == LIBRDP_STATUS_OK);
+    CHECK(side_response_len > 0u);
+    session->state = LIBRDP_SESSION_IDLE;
+    CHECK(librdp_session_set_multitransport_provider(session, &provider) ==
+          LIBRDP_STATUS_STATE);
+    CHECK(rdp_session_handle_message_channel(session,
+                                              RDP_SEC_TRANSPORT_REQ,
+                                              request.data,
+                                              request.length) ==
+          LIBRDP_STATUS_OK);
+    CHECK(capture.starts == 1u);
+    CHECK(expect_multitransport_response(
+              &peer_transport,
+              20u,
+              RDP_MULTITRANSPORT_HRESULT_OK) == 0);
+    rdp_session_multitransport_reset(session, 0);
+    CHECK(capture.releases == 1u && capture.established_releases == 1u);
+
+    session->multitransport_negotiated = 1u;
+    session->multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
+                                    RDP_GCC_MULTITRANSPORT_UDP_FECL;
+    request.length = 0u;
+    capture.next_status = LIBRDP_STATUS_AGAIN;
+    CHECK(rdp_multitransport_write_initiate_request(
+              &request,
+              21u,
+              RDP_MULTITRANSPORT_PROTOCOL_UDP_LOSSY,
+              cookie) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_message_channel(session,
+                                              RDP_SEC_TRANSPORT_REQ,
+                                              request.data,
+                                              request.length) ==
+          LIBRDP_STATUS_OK);
+    pending_token = capture.request.request_token;
+    CHECK(session->multitransport_slots[1].state ==
+          RDP_SESSION_MULTITRANSPORT_SLOT_PENDING);
+    CHECK(librdp_session_complete_multitransport_request(
+              session,
+              pending_token + 1u,
+              LIBRDP_STATUS_OK) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_complete_multitransport_request(
+              session,
+              pending_token,
+              LIBRDP_STATUS_AGAIN) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(establish_test_side_transport(&capture, &capture.request) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_complete_multitransport_request(
+              session,
+              pending_token,
+              LIBRDP_STATUS_OK) == LIBRDP_STATUS_OK);
+    CHECK(expect_multitransport_response(
+              &peer_transport,
+              21u,
+              RDP_MULTITRANSPORT_HRESULT_OK) == 0);
+    CHECK(librdp_session_complete_multitransport_request(
+              session,
+              pending_token,
+              LIBRDP_STATUS_OK) == LIBRDP_STATUS_STATE);
+    rdp_session_multitransport_reset(session, 0);
+    CHECK(capture.releases == 2u && capture.established_releases == 2u);
+
+    provider.timeout_ms = 1u;
+    CHECK(librdp_session_set_multitransport_provider(session, &provider) ==
+          LIBRDP_STATUS_OK);
+    session->multitransport_negotiated = 1u;
+    session->multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR;
+    request.length = 0u;
+    CHECK(rdp_multitransport_write_initiate_request(
+              &request,
+              22u,
+              RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE,
+              cookie) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_message_channel(session,
+                                              RDP_SEC_TRANSPORT_REQ,
+                                              request.data,
+                                              request.length) ==
+          LIBRDP_STATUS_OK);
+    pending_token = capture.request.request_token;
+    pause_time.tv_nsec = 5000000l;
+    CHECK(nanosleep(&pause_time, NULL) == 0);
+    CHECK(rdp_session_multitransport_next_timeout_ms(session) == 0);
+    CHECK(rdp_session_multitransport_check_timeout(session) ==
+          LIBRDP_STATUS_OK);
+    CHECK(expect_multitransport_response(
+              &peer_transport,
+              22u,
+              RDP_MULTITRANSPORT_HRESULT_ABORT) == 0);
+    CHECK(capture.releases == 3u && capture.established_releases == 2u);
+    CHECK(librdp_session_complete_multitransport_request(
+              session,
+              pending_token,
+              LIBRDP_STATUS_OK) == LIBRDP_STATUS_STATE);
+
+    capture.next_status = LIBRDP_STATUS_UNSUPPORTED;
+    session->multitransport_negotiated = 1u;
+    session->multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR;
+    request.length = 0u;
+    CHECK(rdp_multitransport_write_initiate_request(
+              &request,
+              23u,
+              RDP_MULTITRANSPORT_PROTOCOL_UDP_RELIABLE,
+              cookie) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_message_channel(session,
+                                              RDP_SEC_TRANSPORT_REQ,
+                                              request.data,
+                                              request.length) ==
+          LIBRDP_STATUS_OK);
+    CHECK(expect_multitransport_response(
+              &peer_transport,
+              23u,
+              RDP_MULTITRANSPORT_HRESULT_ABORT) == 0);
+    CHECK(capture.releases == 4u && capture.established_releases == 2u);
+    CHECK(capture.valid);
+    CHECK(capture.side_fds[0][0] < 0 && capture.side_fds[0][1] < 0 &&
+          capture.side_fds[1][0] < 0 && capture.side_fds[1][1] < 0);
+    CHECK(librdp_session_set_multitransport_provider(session, NULL) ==
+          LIBRDP_STATUS_OK);
+
+    OPENSSL_cleanse(&capture.request, sizeof(capture.request));
+    rdp_buffer_free(&side_datagram);
+    rdp_buffer_free(&request);
+    rdp_transport_close(&peer_transport);
+    librdp_session_free(session);
+    librdp_settings_free(settings);
     return 0;
 }
 

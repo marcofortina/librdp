@@ -4845,6 +4845,9 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         return rdp_session_fail_activation_timeout(session);
     if (activation_timeout_ms >= 0 && timeout_ms > activation_timeout_ms)
         timeout_ms = activation_timeout_ms;
+    status = rdp_session_multitransport_check_timeout(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_session_usb_dispatch_completions(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -4869,6 +4872,14 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         if (notify_timeout_ms >= 0 &&
             notify_timeout_ms < timeout_ms)
             timeout_ms = notify_timeout_ms;
+    }
+    {
+        int multitransport_timeout_ms =
+            rdp_session_multitransport_next_timeout_ms(session);
+
+        if (multitransport_timeout_ms >= 0 &&
+            multitransport_timeout_ms < timeout_ms)
+            timeout_ms = multitransport_timeout_ms;
     }
 
     rdp_buffer_init(&packet);
@@ -4991,6 +5002,12 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             return status;
         }
         rdp_session_echo_check_timeout(session);
+        status = rdp_session_multitransport_check_timeout(session);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_buffer_free(&packet);
+            return status;
+        }
         (void)rdp_session_activation_timeout_ms(session,
                                                 &activation_expired);
         if (activation_expired)
@@ -6294,6 +6311,8 @@ librdp_status librdp_session_dispatch_pending(librdp_session* session)
             return librdp_session_run_once(session, 0);
         if (rdp_session_echo_next_timeout_ms(session) == 0)
             rdp_session_echo_check_timeout(session);
+        if (rdp_session_multitransport_next_timeout_ms(session) == 0)
+            return rdp_session_multitransport_check_timeout(session);
         return LIBRDP_STATUS_OK;
     }
     return librdp_session_run_once(session, 0);
@@ -6341,6 +6360,15 @@ librdp_status librdp_session_get_next_timeout(const librdp_session* session, int
         if (activation_timeout_ms >= 0 &&
             (*timeout_ms < 0 || activation_timeout_ms < *timeout_ms))
             *timeout_ms = activation_timeout_ms;
+    }
+    {
+        int multitransport_timeout_ms =
+            rdp_session_multitransport_next_timeout_ms(session);
+
+        if (multitransport_timeout_ms >= 0 &&
+            (*timeout_ms < 0 ||
+             multitransport_timeout_ms < *timeout_ms))
+            *timeout_ms = multitransport_timeout_ms;
     }
     return LIBRDP_STATUS_OK;
 }
