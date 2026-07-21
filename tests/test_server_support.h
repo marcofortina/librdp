@@ -45,6 +45,7 @@
 #include "nla/credssp.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
+#include "protocol/network_autodetect.h"
 #include "protocol/slowpath.h"
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
@@ -238,6 +239,13 @@ int test_server_send_encrypted_channel_payload(int fd,
                                                       rdp_standard_security_context* security,
                                                       const rdp_buffer* payload);
 
+int test_server_send_encrypted_autodetect_rtt_response(
+    int fd,
+    uint16_t user_id,
+    uint16_t message_channel_id,
+    uint16_t sequence_number,
+    rdp_standard_security_context* security);
+
 int test_server_send_client_synchronize(
     int fd,
     uint32_t share_id,
@@ -300,6 +308,15 @@ int test_server_read_encrypted_static_channel_data(int fd,
                                                           uint16_t* channel_id,
                                                           const uint8_t** data,
                                                           size_t* data_len);
+
+int test_server_read_encrypted_autodetect_request(
+    int fd,
+    uint8_t* response,
+    size_t response_len,
+    uint16_t message_channel_id,
+    rdp_standard_security_context* security,
+    rdp_buffer* plaintext,
+    rdp_network_autodetect_pdu* request);
 
 int test_server_open_client_dynamic_channel(int fd,
                                                    librdp_server_peer* peer,

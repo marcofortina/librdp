@@ -57,7 +57,9 @@ static int run_features(void)
 
 static int run_channels(void)
 {
-    if (test_static_channels() != 0 || test_clipboard_unmatched_responses() != 0)
+    if (test_static_channels() != 0 ||
+        test_network_autodetect_client_state() != 0 ||
+        test_clipboard_unmatched_responses() != 0)
         return 1;
     if (test_dynamic_channel_duplicate_create() != 0 ||
         test_dynamic_channel_close_pending_fragment() != 0 ||
@@ -243,7 +245,9 @@ int test_client_core(void)
 {
     if (test_core_devices() != 0)
         return 1;
-    if (test_static_channels() != 0 || test_clipboard_unmatched_responses() != 0)
+    if (test_static_channels() != 0 ||
+        test_network_autodetect_client_state() != 0 ||
+        test_clipboard_unmatched_responses() != 0)
         return 1;
     if (test_reconnect_policy() != 0 || test_connect_cancellation() != 0 ||
         test_reconnect_success() != 0)

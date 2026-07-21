@@ -7,6 +7,7 @@ set(LIBRDP_CLIENT_SOURCES
     src/client/settings.c
     src/client/session.c
     src/client/session_activation.c
+    src/client/session_autodetect.c
     src/client/session_audio.c
     src/client/session_camera.c
     src/client/session_channels.c
@@ -116,6 +117,7 @@ set(LIBRDP_PROTOCOL_SOURCES
     src/protocol/fastpath.c
     src/protocol/gcc.c
     src/protocol/mcs.c
+    src/protocol/network_autodetect.c
     src/protocol/pointer.c
     src/protocol/session_selection.c
     src/protocol/slowpath.c
@@ -132,6 +134,7 @@ set(LIBRDP_TRANSPORT_SOURCES
 
 set(LIBRDP_SERVER_SOURCES
     src/server/server.c
+    src/server/server_autodetect.c
     src/server/server_channels.c
     src/server/server_drive.c
     src/server/server_extensions.c

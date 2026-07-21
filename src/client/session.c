@@ -48,6 +48,7 @@
 #include "client/error_internal.h"
 #include "client/printer_backend.h"
 #include "client/settings_internal.h"
+#include "client/session_autodetect.h"
 #include "client/session_internal.h"
 #include "client/usb_backend.h"
 #include "client/webauthn_backend.h"
@@ -3275,6 +3276,9 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->server_suppress_output_supported = 0u;
     session->output_suppressed = 0u;
     session->output_suppression_known = 0u;
+    session->message_channel_id = 0u;
+    session->message_channel_joined = 0u;
+    rdp_session_autodetect_reset(session);
     session->dynamic_channel_id = 0;
     session->clipboard_channel_id = 0;
     rdp_session_clipboard_clear(session);
@@ -3926,6 +3930,8 @@ librdp_status librdp_session_connect(librdp_session* session)
             rdp_session_redirection_active(session) &&
             (session->redirection.flags &
              RDP_SERVER_REDIRECTION_LB_SMARTCARD_LOGON) != 0u;
+        config.enable_message_channel = 1u;
+        config.message_channel_flags = 0u;
         config.enable_multitransport =
             (rdp_session_multitransport_runtime_supported() &&
              rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_MULTITRANSPORT)) ?
@@ -4059,6 +4065,15 @@ librdp_status librdp_session_connect(librdp_session* session)
                             "gcc.server.multitransport.ignored",
                             "flags=%u reason=runtime_unavailable",
                             server_data.multitransport_flags);
+        }
+        if (server_data.has_message_channel)
+        {
+            session->message_channel_id =
+                server_data.message_channel_id;
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "gcc.server.message_channel",
+                            "channel_id=%u",
+                            session->message_channel_id);
         }
         if (server_data.has_network)
         {
@@ -4201,6 +4216,19 @@ librdp_status librdp_session_connect(librdp_session* session)
     status = rdp_session_join_mcs_channel(session, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID, "global", &mcs, &reply);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
+
+    if (session->message_channel_id != 0u)
+    {
+        status = rdp_session_join_mcs_channel(
+            session,
+            session->message_channel_id,
+            "message",
+            &mcs,
+            &reply);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+        session->message_channel_joined = 1u;
+    }
 
     if (session->dynamic_channel_id != 0 && session->dynamic_channel_id != session->mcs_user_id &&
         session->dynamic_channel_id != RDP_MCS_GLOBAL_CHANNEL_ID)
@@ -5022,6 +5050,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                     (fastpath_header.security_flags &
                      RDP_FASTPATH_OUTPUT_ENCRYPTED) != 0u)
                     encrypted_fastpath = 1;
+                rdp_session_autodetect_account_bytes(session,
+                                                     packet.length);
                 status = rdp_session_process_fastpath_packet(session, &packet);
             }
             if (status != LIBRDP_STATUS_OK)
@@ -5094,6 +5124,27 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             indication_payload = security_payload.data;
             indication_payload_len = security_payload.length;
         }
+        else if (session->message_channel_id != 0u &&
+                 indication.channel_id == session->message_channel_id)
+        {
+            status = rdp_security_unwrap_pdu(NULL,
+                                             indication.payload,
+                                             indication.payload_len,
+                                             &security_payload,
+                                             &security_flags);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&security_payload);
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(
+                    session,
+                    status == LIBRDP_STATUS_INVALID_ARGUMENT ?
+                        LIBRDP_STATUS_PROTOCOL_ERROR :
+                        status);
+            }
+            indication_payload = security_payload.data;
+            indication_payload_len = security_payload.length;
+        }
         rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                               RDP_TRACE_LEVEL_DEBUG,
                               "mcs.send_data.indication",
@@ -5102,6 +5153,24 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                               indication.channel_id,
                               (unsigned)indication_payload_len,
                               security_flags);
+        rdp_session_autodetect_account_bytes(session, packet.length);
+        if (session->message_channel_id != 0u &&
+            indication.channel_id == session->message_channel_id)
+        {
+            if (!session->message_channel_joined)
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            else
+                status = rdp_session_handle_autodetect_message(
+                    session,
+                    security_flags,
+                    indication_payload,
+                    indication_payload_len);
+            rdp_buffer_free(&security_payload);
+            rdp_buffer_free(&packet);
+            if (status != LIBRDP_STATUS_OK)
+                return rdp_session_fail(session, status);
+            return LIBRDP_STATUS_OK;
+        }
         if ((security_flags & RDP_SEC_REDIRECTION_PKT) != 0u)
         {
             rdp_server_redirection_packet redirection;

@@ -721,6 +721,7 @@ int test_server_build_client_mcs_connect_initial_sized(
     config.requested_protocols = RDP_X224_PROTOCOL_STANDARD;
     config.client_name = "server-test";
     config.enable_dynamic_channels = 1;
+    config.enable_message_channel = 1u;
     config.enable_multitransport = 1;
     config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
                                   RDP_GCC_MULTITRANSPORT_UDP_FECL |
@@ -912,6 +913,50 @@ int test_server_send_encrypted_channel_payload(int fd,
     rdp_buffer_free(&send_data);
     rdp_buffer_free(&security_payload);
     rdp_buffer_free(&channel_packet);
+    return ok;
+}
+
+/*
+ * Send the client half of one server-initiated RTT probe. This fixture keeps
+ * the Message Channel Security Header outside virtual-channel framing and
+ * advances the same Standard Security sequence used by the loopback peer.
+ */
+int test_server_send_encrypted_autodetect_rtt_response(
+    int fd,
+    uint16_t user_id,
+    uint16_t message_channel_id,
+    uint16_t sequence_number,
+    rdp_standard_security_context* security)
+{
+    rdp_buffer response;
+    rdp_buffer secured;
+    rdp_buffer send_data;
+    int ok = 0;
+
+    if (!security)
+        return 0;
+    rdp_buffer_init(&response);
+    rdp_buffer_init(&secured);
+    rdp_buffer_init(&send_data);
+    if (rdp_network_autodetect_write_rtt_response(&response,
+                                                   sequence_number) ==
+            LIBRDP_STATUS_OK &&
+        rdp_security_write_encrypted_pdu(&secured,
+                                         security,
+                                         RDP_SEC_AUTODETECT_RSP,
+                                         response.data,
+                                         response.length) ==
+            LIBRDP_STATUS_OK &&
+        rdp_security_write_send_data_request(&send_data,
+                                             user_id,
+                                             message_channel_id,
+                                             secured.data,
+                                             secured.length) ==
+            LIBRDP_STATUS_OK)
+        ok = test_server_send_mcs_pdu(fd, &send_data);
+    rdp_buffer_free(&send_data);
+    rdp_buffer_free(&secured);
+    rdp_buffer_free(&response);
     return ok;
 }
 
@@ -1227,6 +1272,56 @@ int test_server_read_encrypted_static_channel_data(int fd,
     *data = channel_packet.payload;
     *data_len = channel_packet.payload_len;
     return 1;
+}
+
+/*
+ * Consume and authenticate a server Auto Detect request without interpreting
+ * it as a static-channel packet. Exact channel and routing checks detect
+ * regressions in the dedicated Message Channel dispatch path.
+ */
+int test_server_read_encrypted_autodetect_request(
+    int fd,
+    uint8_t* response,
+    size_t response_len,
+    uint16_t message_channel_id,
+    rdp_standard_security_context* security,
+    rdp_buffer* plaintext,
+    rdp_network_autodetect_pdu* request)
+{
+    rdp_tpkt tpkt;
+    rdp_mcs_send_data_indication indication;
+    const uint8_t* x224_data = NULL;
+    size_t x224_data_len = 0u;
+    uint16_t flags = 0u;
+
+    if (!security || !plaintext || !request)
+        return 0;
+    plaintext->length = 0u;
+    if (!test_server_read_tpkt_x224_data(fd,
+                                         response,
+                                         response_len,
+                                         &tpkt) ||
+        rdp_x224_parse_data(tpkt.payload,
+                            tpkt.payload_len,
+                            &x224_data,
+                            &x224_data_len) != LIBRDP_STATUS_OK ||
+        rdp_mcs_parse_send_data_indication(x224_data,
+                                            x224_data_len,
+                                            &indication) != LIBRDP_STATUS_OK ||
+        indication.channel_id != message_channel_id ||
+        rdp_security_unwrap_pdu(security,
+                                indication.payload,
+                                indication.payload_len,
+                                plaintext,
+                                &flags) != LIBRDP_STATUS_OK ||
+        (flags & (RDP_SEC_ENCRYPT | RDP_SEC_AUTODETECT_REQ)) !=
+            (RDP_SEC_ENCRYPT | RDP_SEC_AUTODETECT_REQ) ||
+        (flags & RDP_SEC_AUTODETECT_RSP) != 0u ||
+        rdp_network_autodetect_parse(plaintext->data,
+                                     plaintext->length,
+                                     request) != LIBRDP_STATUS_OK)
+        return 0;
+    return request->header_type == RDP_NETWORK_AUTODETECT_REQUEST;
 }
 
 int test_server_open_client_dynamic_channel(int fd,

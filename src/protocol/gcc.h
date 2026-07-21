@@ -30,10 +30,12 @@
 #define RDP_GCC_CS_SECURITY 0xc002u
 #define RDP_GCC_CS_NETWORK 0xc003u
 #define RDP_GCC_CS_CLUSTER 0xc004u
+#define RDP_GCC_CS_MCS_MSGCHANNEL 0xc006u
 #define RDP_GCC_CS_MULTITRANSPORT 0xc00au
 #define RDP_GCC_SC_CORE 0x0c01u
 #define RDP_GCC_SC_SECURITY 0x0c02u
 #define RDP_GCC_SC_NETWORK 0x0c03u
+#define RDP_GCC_SC_MCS_MSGCHANNEL 0x0c04u
 #define RDP_GCC_SC_MULTITRANSPORT 0x0c08u
 #define RDP_GCC_MAX_SERVER_CHANNELS 64u
 #define RDP_GCC_CLIENT_VERSION_5 0x00080004u
@@ -104,6 +106,8 @@ typedef struct rdp_gcc_client_config
     uint8_t redirected_session_id_valid;
     uint8_t redirected_smartcard;
     uint32_t redirected_session_id;
+    uint8_t enable_message_channel;
+    uint32_t message_channel_flags;
     uint8_t enable_multitransport;
     uint32_t multitransport_flags;
     const struct rdp_gcc_channel_definition* extra_channels;
@@ -135,6 +139,8 @@ typedef struct rdp_gcc_client_data_summary
     uint32_t redirected_session_id;
     uint16_t channel_count;
     rdp_gcc_channel_definition channels[RDP_GCC_MAX_SERVER_CHANNELS];
+    uint8_t has_message_channel;
+    uint32_t message_channel_flags;
     uint8_t has_multitransport;
     uint32_t multitransport_flags;
 } rdp_gcc_client_data_summary;
@@ -171,6 +177,8 @@ typedef struct rdp_gcc_server_data
     uint16_t mcs_channel_id;
     uint16_t channel_count;
     uint16_t channel_ids[RDP_GCC_MAX_SERVER_CHANNELS];
+    uint8_t has_message_channel;
+    uint16_t message_channel_id;
     uint8_t has_multitransport;
     uint32_t multitransport_flags;
 } rdp_gcc_server_data;
@@ -188,6 +196,8 @@ typedef struct rdp_gcc_server_config
     uint32_t server_certificate_len;
     uint16_t mcs_channel_id;
     uint16_t channel_count;
+    uint8_t enable_message_channel;
+    uint16_t message_channel_id;
     uint8_t enable_multitransport;
     uint32_t multitransport_flags;
 } rdp_gcc_server_config;

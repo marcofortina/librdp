@@ -12,6 +12,8 @@
 #include "test_core_support.h"
 #include "test_core_suites.h"
 
+#include "client/session_autodetect.h"
+#include "protocol/network_autodetect.h"
 #include "protocol/session_selection.h"
 
 #include <openssl/crypto.h>
@@ -33,6 +35,129 @@ typedef struct unknown_channel_capture
     uint32_t dynamic_close;
     int valid;
 } unknown_channel_capture;
+
+/*
+ * Drive the client Auto Detect state machine without transport I/O. Invalid
+ * duplicate starts, mismatched sequences, incompatible stop types, and
+ * response routing must not mutate the active measurement or result fields.
+ */
+int test_network_autodetect_client_state(void)
+{
+    librdp_session session;
+    rdp_buffer packet;
+
+    memset(&session, 0, sizeof(session));
+    session.message_channel_id = 1006u;
+    session.message_channel_joined = 1u;
+    rdp_session_autodetect_reset(&session);
+    rdp_buffer_init(&packet);
+
+    CHECK(rdp_network_autodetect_write_bandwidth_start(
+              &packet,
+              10u,
+              RDP_NETWORK_AUTODETECT_BANDWIDTH_START_CONTINUOUS) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_OK);
+    CHECK(session.autodetect_measurement_active == 1u &&
+          session.autodetect_measurement_sequence == 10u &&
+          session.autodetect_measurement_type ==
+              RDP_NETWORK_AUTODETECT_BANDWIDTH_START_CONTINUOUS);
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    packet.length = 0u;
+    CHECK(rdp_network_autodetect_write_bandwidth_payload(&packet,
+                                                          10u,
+                                                          "measure",
+                                                          7u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    packet.length = 0u;
+    CHECK(rdp_network_autodetect_write_bandwidth_stop(
+              &packet,
+              10u,
+              RDP_NETWORK_AUTODETECT_BANDWIDTH_STOP_CONNECT_TIME,
+              NULL,
+              0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_session_autodetect_reset(&session);
+    packet.length = 0u;
+    CHECK(rdp_network_autodetect_write_bandwidth_start(
+              &packet,
+              20u,
+              RDP_NETWORK_AUTODETECT_BANDWIDTH_START_CONNECT_TIME) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_OK);
+    packet.length = 0u;
+    CHECK(rdp_network_autodetect_write_bandwidth_payload(&packet,
+                                                          21u,
+                                                          "sample",
+                                                          6u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    packet.data[2] = 20u;
+    packet.data[3] = 0u;
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_OK);
+    CHECK(session.autodetect_measurement_bytes == 6u);
+
+    packet.length = 0u;
+    CHECK(rdp_network_autodetect_write_network_result(
+              &packet,
+              30u,
+              RDP_NETWORK_AUTODETECT_NETWORK_RESULT_ALL,
+              11u,
+              22000u,
+              17u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_RSP,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_OK);
+    CHECK(session.autodetect_base_rtt_ms == 11u &&
+          session.autodetect_bandwidth_kbps == 22000u &&
+          session.autodetect_average_rtt_ms == 17u);
+
+    CHECK(rdp_session_handle_autodetect_message(
+              &session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length - 1u) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&packet);
+    return 0;
+}
 
 /*
  * Separate application-owned static and dynamic traffic by the public channel

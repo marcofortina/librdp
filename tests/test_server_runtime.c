@@ -52,6 +52,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_mcs_channel_join_confirm join_confirm;
     rdp_mcs_send_data_indication license_indication;
     rdp_license_error_alert license_alert;
+    rdp_network_autodetect_pdu autodetect_request;
     rdp_security_public_key server_public_key;
     rdp_standard_security_context client_security;
     rdp_dynamic_channel_capabilities dvc_caps;
@@ -210,6 +211,7 @@ int test_server_loopback_standard_activation_sequence(void)
     uint16_t pnp_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 7u);
     uint16_t audio_output_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 8u);
     uint16_t rail_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 9u);
+    uint16_t message_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 10u);
     uint16_t response_channel_id = 0;
     uint16_t security_flags = 0;
     uint32_t extension_count_before_echo = 0;
@@ -629,6 +631,8 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(server_data.server_random_len == RDP_SECURITY_CLIENT_RANDOM_LEN);
     SCHECK(server_data.server_certificate_len > 64u);
     SCHECK(server_data.mcs_channel_id == RDP_MCS_GLOBAL_CHANNEL_ID);
+    SCHECK(server_data.has_message_channel);
+    SCHECK(server_data.message_channel_id == message_channel_id);
     SCHECK(librdp_server_peer_desktop_width(peer) == 800);
     SCHECK(librdp_server_peer_desktop_height(peer) == 600);
     SCHECK(librdp_server_peer_static_channel_count(peer) == 9);
@@ -721,6 +725,27 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_data, &x224_data_len) == LIBRDP_STATUS_OK);
     SCHECK(rdp_mcs_parse_channel_join_confirm(x224_data, x224_data_len, &join_confirm) == LIBRDP_STATUS_OK);
     SCHECK(join_confirm.channel_id == RDP_MCS_GLOBAL_CHANNEL_ID);
+
+    SCHECK(test_server_send_channel_join(client_fd,
+                                         attach_confirm.user_id,
+                                         message_channel_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) ==
+           LIBRDP_SERVER_PEER_CHANNEL_JOINING);
+    SCHECK(test_server_read_tpkt_x224_data(client_fd,
+                                           response,
+                                           sizeof(response),
+                                           &tpkt));
+    SCHECK(rdp_x224_parse_data(tpkt.payload,
+                               tpkt.payload_len,
+                               &x224_data,
+                               &x224_data_len) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_mcs_parse_channel_join_confirm(x224_data,
+                                               x224_data_len,
+                                               &join_confirm) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(join_confirm.channel_id == message_channel_id);
 
     SCHECK(test_server_send_channel_join(client_fd, attach_confirm.user_id, dynamic_static_channel_id));
     status = librdp_server_peer_run_once(peer, 1000);
@@ -1023,6 +1048,26 @@ int test_server_loopback_standard_activation_sequence(void)
            device_redirection_announce.version_minor ==
                RDP_DEVICE_REDIRECTION_VERSION_MINOR_13 &&
            device_redirection_announce.client_id != 0u);
+    SCHECK(test_server_read_encrypted_autodetect_request(
+        client_fd,
+        response,
+        sizeof(response),
+        message_channel_id,
+        &client_security,
+        &channel_plaintext,
+        &autodetect_request));
+    SCHECK(autodetect_request.message_type ==
+           RDP_NETWORK_AUTODETECT_RTT_REQUEST_CONTINUOUS);
+    SCHECK(test_server_send_encrypted_autodetect_rtt_response(
+        client_fd,
+        attach_confirm.user_id,
+        message_channel_id,
+        autodetect_request.sequence_number,
+        &client_security));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) ==
+           LIBRDP_SERVER_PEER_ACTIVE);
     dvc_packet.length = 0u;
     SCHECK(rdp_device_redirection_write_client_announce(
                &dvc_packet,
@@ -3844,6 +3889,24 @@ int test_server_loopback_standard_activation_sequence(void)
            (uint64_t)LIBRDP_DESKTOP_MIN_DIMENSION *
                LIBRDP_DESKTOP_MIN_DIMENSION);
     SCHECK(runtime_context.surface_event_count == 4);
+    SCHECK(test_server_read_encrypted_autodetect_request(
+        client_fd,
+        response,
+        sizeof(response),
+        message_channel_id,
+        &client_security,
+        &channel_plaintext,
+        &autodetect_request));
+    SCHECK(autodetect_request.message_type ==
+           RDP_NETWORK_AUTODETECT_RTT_REQUEST_CONTINUOUS);
+    SCHECK(test_server_send_encrypted_autodetect_rtt_response(
+        client_fd,
+        attach_confirm.user_id,
+        message_channel_id,
+        autodetect_request.sequence_number,
+        &client_security));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
 
     SCHECK(test_server_send_keyboard_input(
         client_fd,

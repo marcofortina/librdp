@@ -693,6 +693,18 @@ struct librdp_session
     librdp_surface* surface;
     rdp_transport transport;
     uint16_t mcs_user_id;
+    uint16_t message_channel_id;
+    uint8_t message_channel_joined;
+    uint8_t autodetect_measurement_active;
+    uint16_t autodetect_measurement_sequence;
+    uint16_t autodetect_measurement_type;
+    uint64_t autodetect_measurement_start_ns;
+    uint64_t autodetect_measurement_bytes;
+    uint32_t autodetect_base_rtt_ms;
+    uint32_t autodetect_average_rtt_ms;
+    uint32_t autodetect_bandwidth_kbps;
+    uint64_t autodetect_requests_received;
+    uint64_t autodetect_responses_sent;
     uint16_t dynamic_channel_id;
     uint16_t clipboard_channel_id;
     uint8_t clipboard_ready;

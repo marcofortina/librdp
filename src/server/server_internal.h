@@ -162,6 +162,17 @@ struct librdp_server_peer
     uint16_t dynamic_channel_static_index;
     uint32_t dynamic_channel_count;
     uint16_t joined_channel_count;
+    uint16_t message_channel_id;
+    uint8_t message_channel_joined;
+    uint32_t message_channel_flags;
+    uint16_t autodetect_next_sequence;
+    uint16_t autodetect_pending_sequence;
+    uint8_t autodetect_pending_rtt;
+    uint64_t autodetect_pending_started_ns;
+    uint32_t autodetect_base_rtt_us;
+    uint32_t autodetect_average_rtt_us;
+    uint64_t autodetect_requests_sent;
+    uint64_t autodetect_responses_received;
     rdp_gcc_channel_definition advertised_channels[RDP_GCC_MAX_SERVER_CHANNELS];
     uint16_t advertised_channel_ids[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t advertised_channel_joined[RDP_GCC_MAX_SERVER_CHANNELS];

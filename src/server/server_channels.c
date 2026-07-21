@@ -1740,6 +1740,9 @@ int rdp_server_channel_allowed(const librdp_server_peer* peer, uint16_t channel_
     last_static = (uint16_t)(first_static + peer->advertised_channel_count);
     if (channel_id == peer->user_id || channel_id == RDP_MCS_GLOBAL_CHANNEL_ID)
         return 1;
+    if (peer->message_channel_id != 0u &&
+        channel_id == peer->message_channel_id)
+        return 1;
     return channel_id >= first_static && channel_id < last_static;
 }
 

@@ -205,6 +205,56 @@ librdp_status rdp_session_write_channel_pdu(librdp_session* session,
     return status;
 }
 
+/*
+ * Emit a message-channel record with its mandatory Security Header. Standard
+ * Security signs and encrypts the record; TLS/NLA transport protection still
+ * carries the basic header so the peer can route the message by security flag.
+ */
+librdp_status rdp_session_write_message_channel_pdu(
+    librdp_session* session,
+    uint16_t security_flags,
+    const rdp_buffer* payload,
+    const char* event)
+{
+    rdp_buffer secured;
+    rdp_buffer send_data;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !payload || !event || session->message_channel_id == 0u ||
+        !session->message_channel_joined ||
+        (security_flags != RDP_SEC_AUTODETECT_REQ &&
+         security_flags != RDP_SEC_AUTODETECT_RSP))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&secured);
+    rdp_buffer_init(&send_data);
+    if (session->standard_security_active)
+        status = rdp_security_write_encrypted_pdu(&secured,
+                                                  &session->standard_security,
+                                                  security_flags,
+                                                  payload->data,
+                                                  payload->length);
+    else
+    {
+        status = rdp_security_write_header(&secured, security_flags);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append(&secured,
+                                       payload->data,
+                                       payload->length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_write_send_data_request(&send_data,
+                                                      session->mcs_user_id,
+                                                      session->message_channel_id,
+                                                      secured.data,
+                                                      secured.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_mcs_pdu(session, &send_data, event, 1);
+    rdp_buffer_free(&send_data);
+    rdp_buffer_free(&secured);
+    return status;
+}
+
 
 static size_t rdp_session_dynamic_channel_header_size(uint8_t channel_id_bytes)
 {

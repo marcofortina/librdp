@@ -42,6 +42,11 @@ librdp_status rdp_session_write_channel_pdu(librdp_session* session,
                                             uint16_t channel_id,
                                             const rdp_buffer* payload,
                                             const char* event);
+librdp_status rdp_session_write_message_channel_pdu(
+    librdp_session* session,
+    uint16_t security_flags,
+    const rdp_buffer* payload,
+    const char* event);
 librdp_status rdp_session_send_dynamic_channel_data_priority(librdp_session* session,
                                                              uint32_t channel_id,
                                                              uint8_t channel_id_bytes,

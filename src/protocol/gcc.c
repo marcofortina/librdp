@@ -527,6 +527,34 @@ static librdp_status rdp_gcc_write_client_multitransport(rdp_buffer* buffer,
     return status;
 }
 
+/*
+ * Advertise the dedicated MCS message channel used by network auto-detect,
+ * heartbeat, and multitransport control traffic. The flags field is preserved
+ * verbatim because its interpretation belongs to the negotiated extensions.
+ */
+static librdp_status rdp_gcc_write_client_message_channel(
+    rdp_buffer* buffer,
+    const rdp_gcc_client_config* config)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !config)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(
+        &payload,
+        config->message_channel_flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_block(
+            buffer,
+            RDP_GCC_CS_MCS_MSGCHANNEL,
+            &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
 librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc_client_config* config)
 {
     librdp_status status = LIBRDP_STATUS_OK;
@@ -543,6 +571,8 @@ librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc
         status = rdp_gcc_write_client_security(&out);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_client_network(&out, config);
+    if (status == LIBRDP_STATUS_OK && config->enable_message_channel)
+        status = rdp_gcc_write_client_message_channel(&out, config);
     if (status == LIBRDP_STATUS_OK && config->enable_multitransport)
         status = rdp_gcc_write_client_multitransport(&out, config);
     if (status == LIBRDP_STATUS_OK)
@@ -609,6 +639,10 @@ librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc
          (config->multitransport_flags &
           (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL)) == 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (config->enable_message_channel &&
+        config->message_channel_id <=
+            (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + config->channel_count))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&payload);
     status = rdp_buffer_append_u32_le(&payload,
@@ -648,6 +682,17 @@ librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc
         status = rdp_buffer_append_u16_le(&payload, (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u + i));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_block(buffer, RDP_GCC_SC_NETWORK, &payload);
+
+    payload.length = 0;
+    if (status == LIBRDP_STATUS_OK && config->enable_message_channel)
+        status = rdp_buffer_append_u16_le(
+            &payload,
+            config->message_channel_id);
+    if (status == LIBRDP_STATUS_OK && config->enable_message_channel)
+        status = rdp_gcc_write_block(
+            buffer,
+            RDP_GCC_SC_MCS_MSGCHANNEL,
+            &payload);
 
     payload.length = 0;
     if (status == LIBRDP_STATUS_OK && config->enable_multitransport)
@@ -907,8 +952,25 @@ librdp_status rdp_gcc_parse_server_data_blocks(const void* data, size_t length, 
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             server_data->has_multitransport = 1;
         }
+        else if (block.type == RDP_GCC_SC_MCS_MSGCHANNEL)
+        {
+            if (server_data->has_message_channel ||
+                rdp_stream_read_u16_le(
+                    &payload,
+                    &server_data->message_channel_id) != LIBRDP_STATUS_OK ||
+                rdp_stream_remaining(&payload) != 0u ||
+                server_data->message_channel_id <= RDP_MCS_GLOBAL_CHANNEL_ID)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            server_data->has_message_channel = 1u;
+        }
     }
 
+    if (server_data->has_message_channel &&
+        (!server_data->has_network ||
+         server_data->message_channel_id <=
+             (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID +
+                        server_data->channel_count)))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     return server_data->has_core && server_data->has_security ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
@@ -1047,6 +1109,16 @@ librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, 
                  (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL)) == 0)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             summary->has_multitransport = 1;
+        }
+        else if (block.type == RDP_GCC_CS_MCS_MSGCHANNEL)
+        {
+            if (summary->has_message_channel ||
+                rdp_stream_read_u32_le(
+                    &payload,
+                    &summary->message_channel_flags) != LIBRDP_STATUS_OK ||
+                rdp_stream_remaining(&payload) != 0u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            summary->has_message_channel = 1u;
         }
     }
 

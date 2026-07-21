@@ -15,6 +15,7 @@
 #include "server/server_protocol.h"
 
 #include "server/server_channels.h"
+#include "server/server_autodetect.h"
 #include "server/server_drive.h"
 #include "server/server_features.h"
 #include "server/server_graphics.h"
@@ -163,6 +164,11 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
         rdp_server_drive_state_reset(peer, reconnect);
         rdp_server_extension_states_reset(peer, reconnect);
         peer->advertised_channel_count = client_data.channel_count;
+        peer->joined_channel_count = 0u;
+        peer->message_channel_id = 0u;
+        peer->message_channel_joined = 0u;
+        peer->message_channel_flags = 0u;
+        rdp_server_autodetect_reset(peer);
         rdp_server_dynamic_channels_reset(peer, peer->dynamic_channel_count > 0 ? 1 : 0);
         memset(peer->advertised_channels, 0, sizeof(peer->advertised_channels));
         memset(peer->advertised_channel_ids, 0, sizeof(peer->advertised_channel_ids));
@@ -181,6 +187,17 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
         server_config.early_capability_flags = 0u;
         server_config.mcs_channel_id = (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID;
         server_config.channel_count = client_data.channel_count;
+        if (client_data.has_message_channel)
+        {
+            peer->message_channel_id =
+                (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u +
+                           client_data.channel_count);
+            peer->message_channel_flags =
+                client_data.message_channel_flags;
+            server_config.enable_message_channel = 1u;
+            server_config.message_channel_id =
+                peer->message_channel_id;
+        }
         peer->multitransport_negotiated = 0;
         peer->multitransport_udp_active = 0;
         peer->multitransport_udp2_active = 0;
@@ -606,8 +623,11 @@ librdp_status rdp_server_handle_channel_join(librdp_server_peer* peer, const rdp
         rdp_server_extension_state_mark_open(peer, family, request.channel_id, 0, 0);
         rdp_server_emit_channel_joined_event(peer, request.channel_id);
     }
+    else if (request.channel_id == peer->message_channel_id)
+        peer->message_channel_joined = 1u;
     peer->joined_channel_count++;
-    required_joins = (uint16_t)(peer->advertised_channel_count + 2u);
+    required_joins = (uint16_t)(peer->advertised_channel_count + 2u +
+                                (peer->message_channel_id != 0u ? 1u : 0u));
     if (peer->joined_channel_count >= required_joins)
         return rdp_server_send_valid_client_license(peer);
     rdp_server_set_state(peer, LIBRDP_SERVER_PEER_CHANNEL_JOINING);
@@ -698,6 +718,25 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
                           RDP_TRACE_SENSITIVITY_HEADER,
                           request.payload,
                           request.payload_len);
+    }
+    if (status == LIBRDP_STATUS_OK &&
+        request.channel_id == peer->message_channel_id)
+    {
+        if (peer->message_channel_id == 0u ||
+            !peer->message_channel_joined ||
+            peer->state != LIBRDP_SERVER_PEER_ACTIVE)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            status = rdp_server_autodetect_handle(peer,
+                                                  request.payload,
+                                                  request.payload_len);
+        if (status != LIBRDP_STATUS_OK)
+            rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+        rdp_buffer_free(&security_payload);
+        return status;
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
         status = rdp_server_unwrap_optional_security_header(peer,
                                                             request.payload,
                                                             request.payload_len,
@@ -909,6 +948,9 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
                     status = rdp_server_surface_flush_repaint(peer);
                 if (status == LIBRDP_STATUS_OK)
                     status = rdp_server_device_redirection_start(peer);
+                if (status == LIBRDP_STATUS_OK &&
+                    peer->message_channel_id != 0u)
+                    status = rdp_server_autodetect_start(peer);
             }
             else
                 rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);

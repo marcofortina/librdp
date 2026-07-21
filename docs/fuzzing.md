@@ -58,11 +58,11 @@ Fuzz coverage includes:
 - RD Gateway framing through `fuzz_gateway`;
 - server-side connection, CredSSP, channel, and activation dispatch through `fuzz_server_parser`;
 - workspace feed XML and administrative session XML through `fuzz_workspace` and `fuzz_admin`;
-- X.224, MCS, GCC, TPKT, fast-path, slow-path, capabilities, licensing, and security parsers;
+- X.224, MCS, GCC, TPKT, fast-path, slow-path, capabilities, licensing, Message Channel network auto-detection through `fuzz_network_autodetect`, and security parsers;
 - `credssp` ASN.1, credential transport, and authentication message handling;
 - dynamic virtual channels and device channels;
 - clipboard, audio, video, camera, smartcard, USB, printer, filesystem, and WebAuthn packets;
-- bitmap, NSCodec, ClearCodec, planar, RemoteFX, AVC, graphics pipeline, surface commands, GDI orders, pointer decoding, and `mouse_cursor` packets.
+- bitmap, NSCodec, ClearCodec, planar, RemoteFX, AVC, graphics pipeline, surface commands, GDI orders, geometry tracking through `fuzz_geometry_tracking`, pointer decoding, and `mouse_cursor` packets.
 
 ## Bug classes
 

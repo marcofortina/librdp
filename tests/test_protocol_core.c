@@ -58,6 +58,7 @@
 #include "protocol/fastpath.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
+#include "protocol/network_autodetect.h"
 #include "protocol/pointer.h"
 #include "protocol/session_selection.h"
 #include "protocol/slowpath.h"
@@ -96,6 +97,219 @@ static int test_contains_bytes(const uint8_t* data, size_t data_len, const char*
         if (memcmp(data + i, needle, needle_len) == 0)
             return 1;
     }
+    return 0;
+}
+
+/*
+ * Covers every fixed and variable network auto-detect record in both wire
+ * directions. Invalid direction/type pairs, truncated payloads, trailing
+ * bytes, and transactional writer rollback protect the message-channel
+ * dispatcher from accepting an ambiguous record prefix.
+ */
+static int test_network_autodetect(void)
+{
+    static const uint8_t sample_payload[] = {0x10u, 0x20u, 0x30u, 0x40u};
+    rdp_network_autodetect_pdu pdu;
+    rdp_buffer buffer;
+    size_t valid_length = 0u;
+
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_network_autodetect_parse(NULL, 0u, &pdu) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_network_autodetect_parse(sample_payload,
+                                       sizeof(sample_payload),
+                                       NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_network_autodetect_parse(sample_payload,
+                                       sizeof(sample_payload),
+                                       &pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    PCHECK(rdp_network_autodetect_write_rtt_request(&buffer, 7u, 1) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.header_type == RDP_NETWORK_AUTODETECT_REQUEST &&
+           pdu.sequence_number == 7u &&
+           pdu.message_type ==
+               RDP_NETWORK_AUTODETECT_RTT_REQUEST_CONNECT_TIME);
+    valid_length = buffer.length;
+    PCHECK(rdp_buffer_append_u8(&buffer, 0u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.length = valid_length;
+    buffer.data[0] = 5u;
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_rtt_response(&buffer, 7u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.header_type == RDP_NETWORK_AUTODETECT_RESPONSE &&
+           pdu.message_type == RDP_NETWORK_AUTODETECT_RTT_RESPONSE);
+
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_bandwidth_start(
+               &buffer,
+               8u,
+               RDP_NETWORK_AUTODETECT_BANDWIDTH_START_CONTINUOUS) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.message_type ==
+           RDP_NETWORK_AUTODETECT_BANDWIDTH_START_CONTINUOUS);
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_bandwidth_start(
+               &buffer,
+               8u,
+               RDP_NETWORK_AUTODETECT_BANDWIDTH_START_TUNNEL) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_bandwidth_start(
+               &buffer,
+               8u,
+               RDP_NETWORK_AUTODETECT_BANDWIDTH_START_CONNECT_TIME) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_write_bandwidth_start(&buffer,
+                                                        8u,
+                                                        0xffffu) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_bandwidth_payload(
+               &buffer,
+               9u,
+               sample_payload,
+               sizeof(sample_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.declared_payload_length == sizeof(sample_payload) &&
+           pdu.payload_len == sizeof(sample_payload) &&
+           memcmp(pdu.payload, sample_payload, sizeof(sample_payload)) == 0);
+    valid_length = buffer.length;
+    buffer.data[6] = 5u;
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[6] = sizeof(sample_payload);
+    PCHECK(rdp_network_autodetect_parse(buffer.data,
+                                       valid_length - 1u,
+                                       &pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_bandwidth_stop(
+               &buffer,
+               10u,
+               RDP_NETWORK_AUTODETECT_BANDWIDTH_STOP_CONNECT_TIME,
+               sample_payload,
+               sizeof(sample_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.payload_len == sizeof(sample_payload));
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_bandwidth_stop(
+               &buffer,
+               10u,
+               RDP_NETWORK_AUTODETECT_BANDWIDTH_STOP_CONTINUOUS,
+               NULL,
+               0u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_bandwidth_stop(
+               &buffer,
+               10u,
+               RDP_NETWORK_AUTODETECT_BANDWIDTH_STOP_TUNNEL,
+               NULL,
+               0u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_write_bandwidth_stop(
+               &buffer,
+               10u,
+               RDP_NETWORK_AUTODETECT_BANDWIDTH_STOP_TUNNEL,
+               sample_payload,
+               sizeof(sample_payload)) == LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_bandwidth_results(
+               &buffer,
+               11u,
+               RDP_NETWORK_AUTODETECT_BANDWIDTH_RESULTS_CONNECT_TIME,
+               123u,
+               456u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.time_delta_ms == 123u && pdu.byte_count == 456u);
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_bandwidth_results(
+               &buffer,
+               11u,
+               RDP_NETWORK_AUTODETECT_BANDWIDTH_RESULTS_CONTINUOUS,
+               321u,
+               654u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_network_result(
+               &buffer,
+               12u,
+               RDP_NETWORK_AUTODETECT_NETWORK_RESULT_RTT,
+               20u,
+               0u,
+               30u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.base_rtt_ms == 20u && pdu.average_rtt_ms == 30u);
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_network_result(
+               &buffer,
+               12u,
+               RDP_NETWORK_AUTODETECT_NETWORK_RESULT_BANDWIDTH,
+               0u,
+               50000u,
+               31u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.bandwidth_kbps == 50000u && pdu.average_rtt_ms == 31u);
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_network_result(
+               &buffer,
+               12u,
+               RDP_NETWORK_AUTODETECT_NETWORK_RESULT_ALL,
+               19u,
+               51000u,
+               32u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.base_rtt_ms == 19u && pdu.bandwidth_kbps == 51000u &&
+           pdu.average_rtt_ms == 32u);
+
+    buffer.length = 0u;
+    PCHECK(rdp_network_autodetect_write_network_sync(&buffer,
+                                                     13u,
+                                                     52000u,
+                                                     18u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_parse(buffer.data, buffer.length, &pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pdu.bandwidth_kbps == 52000u && pdu.average_rtt_ms == 18u);
+
+    buffer.length = 0u;
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_network_autodetect_write_network_result(&buffer,
+                                                       0u,
+                                                       0xffffu,
+                                                       0u,
+                                                       0u,
+                                                       0u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1u && buffer.data[0] == 0xa5u);
+    rdp_buffer_free(&buffer);
     return 0;
 }
 
@@ -512,6 +726,36 @@ static int test_mcs_gcc_capabilities(void)
         PCHECK(server_blocks.length == 1u && server_blocks.data[0] == 0xa5u);
         rdp_buffer_free(&server_blocks);
         rdp_buffer_init(&server_blocks);
+
+        memset(&server_config, 0, sizeof(server_config));
+        server_config.channel_count = 1u;
+        server_config.enable_message_channel = 1u;
+        server_config.message_channel_id =
+            (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 2u);
+        PCHECK(rdp_gcc_write_server_data_blocks(
+                    &server_blocks,
+                    &server_config) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_gcc_parse_server_data_blocks(
+                    server_blocks.data,
+                    server_blocks.length,
+                    &server_data) == LIBRDP_STATUS_OK);
+        PCHECK(server_data.has_message_channel);
+        PCHECK(server_data.message_channel_id ==
+               server_config.message_channel_id);
+        rdp_buffer_free(&server_blocks);
+        rdp_buffer_init(&server_blocks);
+
+        server_config.message_channel_id =
+            (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u);
+        PCHECK(rdp_buffer_append_u8(&server_blocks, 0xa5u) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_gcc_write_server_data_blocks(
+                    &server_blocks,
+                    &server_config) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(server_blocks.length == 1u &&
+               server_blocks.data[0] == 0xa5u);
+        rdp_buffer_free(&server_blocks);
+        rdp_buffer_init(&server_blocks);
     }
     PCHECK(rdp_gcc_parse_server_data_blocks(gcc_server_blocks, sizeof(gcc_server_blocks) - 1u, &server_data) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -623,6 +867,8 @@ static int test_mcs_gcc_capabilities(void)
     config.server_redirection_version = RDP_GCC_REDIRECTION_VERSION_6;
     config.redirected_session_id_valid = 1;
     config.redirected_session_id = 0x10203040u;
+    config.enable_message_channel = 1u;
+    config.message_channel_flags = 0x10203040u;
     config.enable_multitransport = 1;
     config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
                                   RDP_GCC_MULTITRANSPORT_UDP_FECL |
@@ -644,6 +890,9 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(summary.redirected_session_id == 0x10203040u);
     PCHECK(summary.has_multitransport &&
            summary.multitransport_flags == config.multitransport_flags);
+    PCHECK(summary.has_message_channel &&
+           summary.message_channel_flags ==
+               config.message_channel_flags);
     PCHECK(summary.version == RDP_GCC_CLIENT_VERSION_10_12);
     PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_DYNVC_GFX) != 0);
     PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT) != 0);
@@ -656,6 +905,23 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "rdpdr", 5));
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "PNPDR", 5));
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "rail", 4));
+    {
+        static const uint8_t duplicate_message_channel[] = {
+            0x06u, 0xc0u, 0x08u, 0x00u,
+            0u, 0u, 0u, 0u
+        };
+
+        PCHECK(rdp_buffer_append(
+                    &client_blocks,
+                    duplicate_message_channel,
+                    sizeof(duplicate_message_channel)) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_gcc_parse_client_data_blocks(
+                    client_blocks.data,
+                    client_blocks.length,
+                    &summary) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        client_blocks.length -= sizeof(duplicate_message_channel);
+    }
     config.multitransport_flags = 0x80000000u;
     rdp_buffer_free(&client_blocks);
     rdp_buffer_init(&client_blocks);
@@ -715,6 +981,8 @@ static int test_mcs_gcc_capabilities(void)
 
 int test_protocol_core_vectors(void)
 {
+    if (test_network_autodetect() != 0)
+        return 1;
     if (test_tpkt_x224() != 0)
         return 1;
     if (test_tpkt_write_boundaries() != 0)
