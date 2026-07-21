@@ -105,9 +105,14 @@
 #define DVC_SCENARIO_DISPLAY_CONTROL_UNAVAILABLE 29
 #define DVC_SCENARIO_CLIENT_OPEN_PRIORITIES 30
 #define DVC_SCENARIO_FRAGMENT_BOUNDARIES 31
+#define DVC_SCENARIO_WEBAUTHN_MOCK_RUNTIME 32
 
 #define CORE_TEST_DISPLAY_RESIZE_STAGE_COUNT 5u
 #define CORE_TEST_DVC_BOUNDARY_COUNT 8u
+#define CORE_TEST_WEBAUTHN_CLIENT_DATA_CANARY "WEBAUTHN_CLIENT_DATA_SMOKE_CANARY"
+#define CORE_TEST_WEBAUTHN_ASSERTION_CANARY "WEBAUTHN_ASSERTION_SMOKE_CANARY"
+#define CORE_TEST_WEBAUTHN_PIN_CANARY "WEBAUTHN_PIN_SMOKE_CANARY"
+#define CORE_TEST_WEBAUTHN_AUTHENTICATOR_CANARY "WEBAUTHN_AUTHENTICATOR_SMOKE_CANARY"
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_ALTSEC_RUNTIME 1
@@ -458,6 +463,8 @@ int test_webauthn_feature_status_channel_lifecycle(void);
 int test_webauthn_dvc_rejects_unrequested_feature(void);
 
 int test_webauthn_rp_id_allowlist_denies_unmatched_request(void);
+
+int test_webauthn_mock_runtime_sequence(void);
 
 int test_auth_redirection_dvc_requires_credssp(void);
 

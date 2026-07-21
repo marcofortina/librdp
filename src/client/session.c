@@ -5155,11 +5155,20 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 rdp_dynamic_channel_header failed_header;
                 uint8_t failed_command = 0;
                 uint8_t failed_raw = channel_packet.payload_len > 0 ? channel_packet.payload[0] : 0;
+                size_t failed_header_len = channel_packet.payload_len > 0 ? 1u : 0u;
 
                 if (rdp_dynamic_channel_parse_header(channel_packet.payload,
                                                      channel_packet.payload_len,
                                                      &failed_header) == LIBRDP_STATUS_OK)
+                {
                     failed_command = failed_header.command;
+                    failed_header_len = 1u + failed_header.channel_id_bytes;
+                    if (failed_header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_FIRST ||
+                        failed_header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_FIRST_COMPRESSED)
+                        failed_header_len += failed_header.length_bytes;
+                    if (failed_header_len > channel_packet.payload_len)
+                        failed_header_len = channel_packet.payload_len;
+                }
                 rdp_trace_event(RDP_TRACE_CLIENT,
                                 "client.drdynvc.dispatch.failed",
                                 "status=%s static_channel_id=%u flags=%u virtual_len=%u payload_len=%u raw=%u command=%u",
@@ -5173,7 +5182,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 rdp_trace_hexdump("client.drdynvc.dispatch.failed",
                                   RDP_TRACE_SENSITIVITY_HEADER,
                                   channel_packet.payload,
-                                  channel_packet.payload_len);
+                                  failed_header_len);
                 rdp_buffer_free(&security_payload);
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);

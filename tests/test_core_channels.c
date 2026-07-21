@@ -2685,6 +2685,121 @@ int test_webauthn_rp_id_allowlist_denies_unmatched_request(void)
 }
 
 /*
+ * Coverage: a controlled mock authenticator completes the WebAuthn DVC
+ * discovery, registration, assertion, cancellation and credential-list
+ * sequence. Synthetic canaries make trace redaction externally verifiable
+ * without using a physical authenticator or user data.
+ */
+int test_webauthn_mock_runtime_sequence(void)
+{
+    static const uint8_t authenticator_canary[] =
+        CORE_TEST_WEBAUTHN_AUTHENTICATOR_CANARY;
+    uint8_t mock_response[5u + sizeof(authenticator_canary) - 1u];
+    char mock_path[] = "/tmp/librdp-webauthn-smoke-XXXXXX";
+    char provider[sizeof(mock_path) + 5u];
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    FILE* mock_file = NULL;
+    uint16_t test_port = 0u;
+    pid_t server_pid = -1;
+    int mock_fd = -1;
+    int child_status = 0;
+    int server_done = 0;
+    int saw_active = 0;
+    struct timespec poll_delay;
+    size_t i = 0u;
+
+    CHECK(sizeof(authenticator_canary) - 1u <= UINT8_MAX);
+    mock_response[0] = 0u;
+    mock_response[1] = 0xa1u;
+    mock_response[2] = 0x01u;
+    mock_response[3] = 0x58u;
+    mock_response[4] = (uint8_t)(sizeof(authenticator_canary) - 1u);
+    memcpy(mock_response + 5u,
+           authenticator_canary,
+           sizeof(authenticator_canary) - 1u);
+
+    mock_fd = mkstemp(mock_path);
+    CHECK(mock_fd >= 0);
+    mock_file = fdopen(mock_fd, "wb");
+    CHECK(mock_file != NULL);
+    CHECK(fwrite(mock_response, 1u, sizeof(mock_response), mock_file) ==
+          sizeof(mock_response));
+    CHECK(fclose(mock_file) == 0);
+    mock_file = NULL;
+    CHECK(snprintf(provider, sizeof(provider), "mock=%s", mock_path) > 0);
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings,
+                                            LIBRDP_SECURITY_STANDARD) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings,
+                                         LIBRDP_FEATURE_WEBAUTHN,
+                                         1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_webauthn_provider(settings, provider) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_webauthn_rp_id(settings, "example.test") ==
+          LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_WEBAUTHN_MOCK_RUNTIME,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0u; i < 40u && !server_done; i++)
+    {
+        librdp_status run_status = librdp_session_run_once(session, 1000);
+        pid_t waited = waitpid(server_pid, &child_status, WNOHANG);
+
+        CHECK(run_status == LIBRDP_STATUS_OK ||
+              run_status == LIBRDP_STATUS_TIMEOUT ||
+              run_status == LIBRDP_STATUS_CLOSED ||
+              run_status == LIBRDP_STATUS_STATE);
+        CHECK(librdp_session_get_feature_status(session,
+                                                LIBRDP_FEATURE_WEBAUTHN,
+                                                &feature_status) ==
+              LIBRDP_STATUS_OK);
+        if (feature_status.negotiated && feature_status.active)
+            saw_active = 1;
+        CHECK(waited >= 0);
+        if (waited == server_pid)
+            server_done = 1;
+    }
+    poll_delay.tv_sec = 0;
+    poll_delay.tv_nsec = 100000000L;
+    for (i = 0u; i < 20u && !server_done; i++)
+    {
+        pid_t waited = waitpid(server_pid, &child_status, WNOHANG);
+
+        CHECK(waited >= 0);
+        if (waited == server_pid)
+            server_done = 1;
+        else
+            (void)nanosleep(&poll_delay, NULL);
+    }
+    CHECK(server_done);
+    CHECK(saw_active);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(unlink(mock_path) == 0);
+    return 0;
+}
+
+/*
  * Coverage: authentication redirection carries sensitive credential material
  * and is valid only after CredSSP security is established. A server-created
  * AuthRedirection DVC in a standard-security session must be rejected before a

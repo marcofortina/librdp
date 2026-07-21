@@ -58,6 +58,7 @@ int test_server_redirection_state(void);
 int test_webauthn_feature_status_channel_lifecycle(void);
 int test_webauthn_dvc_rejects_unrequested_feature(void);
 int test_webauthn_rp_id_allowlist_denies_unmatched_request(void);
+int test_webauthn_mock_runtime_sequence(void);
 int test_auth_redirection_dvc_requires_credssp(void);
 int test_printer_file_backend_job_lifecycle(void);
 int test_filesystem_information_class_coverage(void);

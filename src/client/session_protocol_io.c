@@ -21,8 +21,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static rdp_trace_sensitivity rdp_session_trace_sensitivity_for_event(const char* event);
-
 librdp_status rdp_session_write_mcs_pdu(librdp_session* session,
                                                const rdp_buffer* pdu,
                                                const char* event,
@@ -61,12 +59,18 @@ librdp_status rdp_session_write_mcs_pdu(librdp_session* session,
     return status;
 }
 
-static rdp_trace_sensitivity rdp_session_trace_sensitivity_for_event(const char* event)
+/*
+ * Map stable wire-event names to their data sensitivity before trace policy
+ * decides whether a bounded body dump is permitted. Unknown events remain
+ * header-only so new call sites cannot silently inherit an unrelated class.
+ */
+rdp_trace_sensitivity rdp_session_trace_sensitivity_for_event(const char* event)
 {
     if (!event)
         return RDP_TRACE_SENSITIVITY_HEADER;
     if (strstr(event, "security") || strstr(event, "client_info") || strstr(event, "credssp") ||
-        strstr(event, "nla") || strstr(event, "licensing"))
+        strstr(event, "nla") || strstr(event, "licensing") || strstr(event, "webauthn") ||
+        strstr(event, "auth_redirection"))
         return RDP_TRACE_SENSITIVITY_AUTH;
     if (strstr(event, "input") || strstr(event, "keyboard") || strstr(event, "mouse"))
         return RDP_TRACE_SENSITIVITY_INPUT;
@@ -79,7 +83,7 @@ static rdp_trace_sensitivity rdp_session_trace_sensitivity_for_event(const char*
     if (strstr(event, "audio") || strstr(event, "rdpsnd") || strstr(event, "audin"))
         return RDP_TRACE_SENSITIVITY_AUDIO;
     if (strstr(event, "graphics") || strstr(event, "fastpath") || strstr(event, "video") ||
-        strstr(event, "slowpath"))
+        strstr(event, "camera") || strstr(event, "rdpecam") || strstr(event, "slowpath"))
         return RDP_TRACE_SENSITIVITY_VIDEO;
     if (strstr(event, "rdpdr") || strstr(event, "drive") || strstr(event, "file") || strstr(event, "printer"))
         return RDP_TRACE_SENSITIVITY_FILE;

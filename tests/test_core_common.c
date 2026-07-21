@@ -51,6 +51,10 @@ static void trace_sensitive_hexdumps(void)
     const uint8_t usb[] = "HDR:LIBRDP_USB_CANARY";
     const uint8_t audio[] = "HDR:LIBRDP_AUDIO_CANARY";
     const uint8_t media[] = "HDR:LIBRDP_MEDIA_CANARY";
+    const uint8_t client_data[] = "HDR:LIBRDP_WEBAUTHN_CLIENT_DATA_CANARY";
+    const uint8_t assertion[] = "HDR:LIBRDP_WEBAUTHN_ASSERTION_CANARY";
+    const uint8_t pin[] = "HDR:LIBRDP_WEBAUTHN_PIN_CANARY";
+    const uint8_t authenticator[] = "HDR:LIBRDP_WEBAUTHN_AUTHENTICATOR_CANARY";
 
     setenv("LIBRDP_TRACE_PROTOCOL", "1", 1);
     setenv("LIBRDP_TRACE_LEVEL", "trace", 1);
@@ -72,6 +76,22 @@ static void trace_sensitive_hexdumps(void)
     rdp_trace_hexdump("client.usb.urb", RDP_TRACE_SENSITIVITY_USB, usb, sizeof(usb) - 1u);
     rdp_trace_hexdump("client.audio.pdu", RDP_TRACE_SENSITIVITY_AUDIO, audio, sizeof(audio) - 1u);
     rdp_trace_hexdump("client.media.pdu", RDP_TRACE_SENSITIVITY_VIDEO, media, sizeof(media) - 1u);
+    rdp_trace_hexdump("client.webauthn.client_data",
+                      RDP_TRACE_SENSITIVITY_AUTH,
+                      client_data,
+                      sizeof(client_data) - 1u);
+    rdp_trace_hexdump("client.webauthn.assertion",
+                      RDP_TRACE_SENSITIVITY_AUTH,
+                      assertion,
+                      sizeof(assertion) - 1u);
+    rdp_trace_hexdump("client.webauthn.pin",
+                      RDP_TRACE_SENSITIVITY_AUTH,
+                      pin,
+                      sizeof(pin) - 1u);
+    rdp_trace_hexdump("client.webauthn.authenticator",
+                      RDP_TRACE_SENSITIVITY_AUTH,
+                      authenticator,
+                      sizeof(authenticator) - 1u);
     unsetenv("LIBRDP_TRACE_PROTOCOL");
     unsetenv("LIBRDP_TRACE_LEVEL");
     unsetenv("LIBRDP_TRACE_HEX_BYTES");
@@ -218,8 +238,18 @@ int test_trace(void)
     CHECK(strstr(output, "LIBRDP_USB_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_AUDIO_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_MEDIA_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_WEBAUTHN_CLIENT_DATA_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_WEBAUTHN_ASSERTION_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_WEBAUTHN_PIN_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_WEBAUTHN_AUTHENTICATOR_CANARY") == NULL);
     CHECK(strstr(output, "4c49425244505f50415353574f52445f43414e415259") == NULL);
     CHECK(strstr(output, "4c49425244505f494e5055545f43414e415259") == NULL);
+    CHECK(rdp_session_trace_sensitivity_for_event("client.webauthn.response") ==
+          RDP_TRACE_SENSITIVITY_AUTH);
+    CHECK(rdp_session_trace_sensitivity_for_event("client.auth_redirection.response") ==
+          RDP_TRACE_SENSITIVITY_AUTH);
+    CHECK(rdp_session_trace_sensitivity_for_event("client.rdpecam.sample.response") ==
+          RDP_TRACE_SENSITIVITY_VIDEO);
 
     CHECK(capture_stderr(trace_sensitive_hexdumps_unsafe, output, sizeof(output)));
     CHECK(strstr(output, "sensitivity=auth redacted=0 unsafe=1") != NULL);

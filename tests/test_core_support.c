@@ -2353,6 +2353,31 @@ static int run_geometry_tracking_runtime_server_scenario(int fd)
         0u);
 }
 
+static int build_dynamic_channel_webauthn_command_packet(rdp_buffer* out,
+                                                         uint32_t command,
+                                                         const void* request,
+                                                         size_t request_len,
+                                                         const char* rp_id,
+                                                         const void* transaction_id)
+{
+    rdp_buffer webauthn;
+    int ok = 0;
+
+    if (!out)
+        return 0;
+    rdp_buffer_init(&webauthn);
+    ok = rdp_webauthn_write_request(&webauthn,
+                                    command,
+                                    0,
+                                    request,
+                                    request_len,
+                                    rp_id,
+                                    transaction_id) == LIBRDP_STATUS_OK &&
+         build_dynamic_channel_data_payload_packet(out, webauthn.data, webauthn.length);
+    rdp_buffer_free(&webauthn);
+    return ok;
+}
+
 static int build_dynamic_channel_webauthn_request_packet(rdp_buffer* out, const char* rp_id)
 {
     static const uint8_t transaction_id[RDP_WEBAUTHN_GUID_LENGTH] = {
@@ -2360,22 +2385,15 @@ static int build_dynamic_channel_webauthn_request_packet(rdp_buffer* out, const 
         0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
     };
     static const uint8_t request[] = {RDP_WEBAUTHN_CMD_GET_ASSERTION};
-    rdp_buffer webauthn;
-    int ok = 0;
 
     if (!out || !rp_id)
         return 0;
-    rdp_buffer_init(&webauthn);
-    ok = rdp_webauthn_write_request(&webauthn,
-                                    RDP_WEBAUTHN_COMMAND_WEB_AUTHN,
-                                    0,
-                                    request,
-                                    sizeof(request),
-                                    rp_id,
-                                    transaction_id) == LIBRDP_STATUS_OK &&
-         build_dynamic_channel_data_payload_packet(out, webauthn.data, webauthn.length);
-    rdp_buffer_free(&webauthn);
-    return ok;
+    return build_dynamic_channel_webauthn_command_packet(out,
+                                                         RDP_WEBAUTHN_COMMAND_WEB_AUTHN,
+                                                         request,
+                                                         sizeof(request),
+                                                         rp_id,
+                                                         transaction_id);
 }
 
 static int build_dynamic_channel_empty_data_packet(rdp_buffer* out)
@@ -2838,21 +2856,29 @@ static int read_echo_response_fd(int fd,
     return 0;
 }
 
-/*
- * Fixture: validates the WebAuthn policy-denied response without decoding the
- * whole CBOR payload. It catches RP ID allowlist bypass while avoiding sensitive
- * authenticator data inspection.
- */
-static int read_webauthn_operation_denied_response_fd(int fd,
-                                                      uint8_t* input,
-                                                      size_t capacity,
-                                                      uint16_t expected_static_channel_id,
-                                                      uint32_t expected_dynamic_channel_id)
-{
-    static const uint8_t response_marker[] = {
-        0x68, 'r', 'e', 's', 'p', 'o', 'n', 's', 'e', 0x41, 0x27
-    };
+static int read_client_dynamic_create_response_fd(int fd,
+                                                  uint8_t* input,
+                                                  size_t capacity,
+                                                  uint16_t expected_static_channel_id,
+                                                  uint32_t expected_dynamic_channel_id);
 
+/*
+ * Extract one WebAuthn DVC response and validate only the expected public
+ * result shape. Opaque authenticator bytes stay opaque except for synthetic
+ * fixture markers used to prove end-to-end delivery.
+ */
+static int read_webauthn_response_fd(int fd,
+                                     uint8_t* input,
+                                     size_t capacity,
+                                     uint16_t expected_static_channel_id,
+                                     uint32_t expected_dynamic_channel_id,
+                                     const uint8_t* marker,
+                                     size_t marker_len,
+                                     const uint8_t* exact,
+                                     size_t exact_len,
+                                     const uint32_t* expected_u32,
+                                     int require_empty)
+{
     for (size_t attempt = 0; attempt < 8u; attempt++)
     {
         size_t input_len = 0;
@@ -2876,17 +2902,193 @@ static int read_webauthn_operation_denied_response_fd(int fd,
         if (rdp_webauthn_parse_response(data_pdu.data,
                                         data_pdu.data_len,
                                         &webauthn) != LIBRDP_STATUS_OK ||
-            webauthn.hresult != 0 ||
-            webauthn.payload_len < sizeof(response_marker))
+            webauthn.hresult != 0)
             return 0;
-        for (size_t i = 0; i <= webauthn.payload_len - sizeof(response_marker); i++)
+        if (expected_u32)
         {
-            if (memcmp(webauthn.payload + i, response_marker, sizeof(response_marker)) == 0)
+            uint32_t value = 0;
+
+            return rdp_webauthn_parse_u32_response(&webauthn, &value) ==
+                       LIBRDP_STATUS_OK &&
+                   value == *expected_u32;
+        }
+        if (require_empty)
+            return webauthn.payload_len == 0u;
+        if (exact)
+            return webauthn.payload_len == exact_len &&
+                   (exact_len == 0u || memcmp(webauthn.payload, exact, exact_len) == 0);
+        if (!marker || marker_len == 0u || webauthn.payload_len < marker_len)
+            return 0;
+        for (size_t i = 0; i <= webauthn.payload_len - marker_len; i++)
+        {
+            if (memcmp(webauthn.payload + i, marker, marker_len) == 0)
                 return 1;
         }
         return 0;
     }
     return 0;
+}
+
+static int read_webauthn_operation_denied_response_fd(int fd,
+                                                      uint8_t* input,
+                                                      size_t capacity,
+                                                      uint16_t expected_static_channel_id,
+                                                      uint32_t expected_dynamic_channel_id)
+{
+    static const uint8_t response_marker[] = {
+        0x68, 'r', 'e', 's', 'p', 'o', 'n', 's', 'e', 0x41, 0x27
+    };
+
+    return read_webauthn_response_fd(fd,
+                                     input,
+                                     capacity,
+                                     expected_static_channel_id,
+                                     expected_dynamic_channel_id,
+                                     response_marker,
+                                     sizeof(response_marker),
+                                     NULL,
+                                     0u,
+                                     NULL,
+                                     0);
+}
+
+typedef enum core_test_webauthn_expectation
+{
+    CORE_TEST_WEBAUTHN_EXPECT_U32,
+    CORE_TEST_WEBAUTHN_EXPECT_MARKER,
+    CORE_TEST_WEBAUTHN_EXPECT_EXACT,
+    CORE_TEST_WEBAUTHN_EXPECT_EMPTY
+} core_test_webauthn_expectation;
+
+typedef struct core_test_webauthn_command
+{
+    uint32_t command;
+    const void* request;
+    size_t request_len;
+    const char* rp_id;
+    const void* transaction_id;
+    core_test_webauthn_expectation expectation;
+    const uint8_t* expected;
+    size_t expected_len;
+    uint32_t expected_u32;
+} core_test_webauthn_command;
+
+/*
+ * Drive the WebAuthn channel through discovery, registration, assertion,
+ * cancellation and credential-list operations using only synthetic data. The
+ * response marker comes from the parent-controlled mock provider file.
+ */
+static int run_webauthn_mock_runtime_server_scenario(int fd,
+                                                     uint8_t* input,
+                                                     size_t capacity)
+{
+    static const uint8_t transaction_id[RDP_WEBAUTHN_GUID_LENGTH] = {
+        0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+        0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f
+    };
+    static const uint8_t empty_array[] = {0x80u};
+    static const uint8_t authenticator_marker[] =
+        CORE_TEST_WEBAUTHN_AUTHENTICATOR_CANARY;
+    static const uint8_t authenticator_list_marker[] =
+        "librdp mock authenticator";
+    uint8_t make_request[1u + sizeof(CORE_TEST_WEBAUTHN_CLIENT_DATA_CANARY) - 1u +
+                         sizeof(CORE_TEST_WEBAUTHN_PIN_CANARY) - 1u];
+    uint8_t assertion_request[1u + sizeof(CORE_TEST_WEBAUTHN_ASSERTION_CANARY) - 1u];
+    core_test_webauthn_command commands[7];
+    rdp_buffer create;
+    rdp_buffer data;
+    rdp_buffer close;
+    size_t offset = 0u;
+    int ok = 1;
+
+    make_request[offset++] = RDP_WEBAUTHN_CMD_MAKE_CREDENTIAL;
+    memcpy(make_request + offset,
+           CORE_TEST_WEBAUTHN_CLIENT_DATA_CANARY,
+           sizeof(CORE_TEST_WEBAUTHN_CLIENT_DATA_CANARY) - 1u);
+    offset += sizeof(CORE_TEST_WEBAUTHN_CLIENT_DATA_CANARY) - 1u;
+    memcpy(make_request + offset,
+           CORE_TEST_WEBAUTHN_PIN_CANARY,
+           sizeof(CORE_TEST_WEBAUTHN_PIN_CANARY) - 1u);
+    assertion_request[0] = RDP_WEBAUTHN_CMD_GET_ASSERTION;
+    memcpy(assertion_request + 1u,
+           CORE_TEST_WEBAUTHN_ASSERTION_CANARY,
+           sizeof(CORE_TEST_WEBAUTHN_ASSERTION_CANARY) - 1u);
+
+    commands[0] = (core_test_webauthn_command){
+        RDP_WEBAUTHN_COMMAND_API_VERSION, NULL, 0u, NULL, NULL,
+        CORE_TEST_WEBAUTHN_EXPECT_U32, NULL, 0u, 4u};
+    commands[1] = (core_test_webauthn_command){
+        RDP_WEBAUTHN_COMMAND_IUVPAA, NULL, 0u, NULL, NULL,
+        CORE_TEST_WEBAUTHN_EXPECT_U32, NULL, 0u, 1u};
+    commands[2] = (core_test_webauthn_command){
+        RDP_WEBAUTHN_COMMAND_GET_AUTHENTICATOR_LIST, NULL, 0u, NULL, NULL,
+        CORE_TEST_WEBAUTHN_EXPECT_MARKER, authenticator_list_marker,
+        sizeof(authenticator_list_marker) - 1u, 0u};
+    commands[3] = (core_test_webauthn_command){
+        RDP_WEBAUTHN_COMMAND_WEB_AUTHN, make_request, sizeof(make_request),
+        "example.test", transaction_id, CORE_TEST_WEBAUTHN_EXPECT_MARKER,
+        authenticator_marker, sizeof(authenticator_marker) - 1u, 0u};
+    commands[4] = (core_test_webauthn_command){
+        RDP_WEBAUTHN_COMMAND_WEB_AUTHN, assertion_request,
+        sizeof(assertion_request), "example.test", transaction_id,
+        CORE_TEST_WEBAUTHN_EXPECT_MARKER, authenticator_marker,
+        sizeof(authenticator_marker) - 1u, 0u};
+    commands[5] = (core_test_webauthn_command){
+        RDP_WEBAUTHN_COMMAND_CANCEL, transaction_id, sizeof(transaction_id),
+        NULL, transaction_id, CORE_TEST_WEBAUTHN_EXPECT_EMPTY, NULL, 0u, 0u};
+    commands[6] = (core_test_webauthn_command){
+        RDP_WEBAUTHN_COMMAND_GET_CREDENTIALS, NULL, 0u, NULL, NULL,
+        CORE_TEST_WEBAUTHN_EXPECT_EXACT, empty_array, sizeof(empty_array), 0u};
+
+    rdp_buffer_init(&create);
+    rdp_buffer_init(&data);
+    rdp_buffer_init(&close);
+    if (!build_dynamic_channel_create_webauthn_packet(&create) ||
+        !write_exact_fd(fd, create.data, create.length) ||
+        !read_client_dynamic_create_response_fd(fd, input, capacity, 1004u, 7u))
+        ok = 0;
+
+    for (size_t i = 0u; ok && i < sizeof(commands) / sizeof(commands[0]); i++)
+    {
+        const core_test_webauthn_command* command = &commands[i];
+        const uint8_t* marker = command->expectation == CORE_TEST_WEBAUTHN_EXPECT_MARKER ?
+                                    command->expected : NULL;
+        const uint8_t* exact = command->expectation == CORE_TEST_WEBAUTHN_EXPECT_EXACT ?
+                                   command->expected : NULL;
+        const uint32_t* expected_u32 =
+            command->expectation == CORE_TEST_WEBAUTHN_EXPECT_U32 ?
+                &command->expected_u32 : NULL;
+
+        data.length = 0u;
+        if (!build_dynamic_channel_webauthn_command_packet(&data,
+                                                           command->command,
+                                                           command->request,
+                                                           command->request_len,
+                                                           command->rp_id,
+                                                           command->transaction_id) ||
+            !write_exact_fd(fd, data.data, data.length) ||
+            !read_webauthn_response_fd(
+                fd,
+                input,
+                capacity,
+                1004u,
+                7u,
+                marker,
+                marker ? command->expected_len : 0u,
+                exact,
+                exact ? command->expected_len : 0u,
+                expected_u32,
+                command->expectation == CORE_TEST_WEBAUTHN_EXPECT_EMPTY))
+            ok = 0;
+    }
+    if (ok && (!build_dynamic_channel_close_packet(&close) ||
+               !write_exact_fd(fd, close.data, close.length)))
+        ok = 0;
+
+    rdp_buffer_free(&close);
+    rdp_buffer_free(&data);
+    rdp_buffer_free(&create);
+    return ok;
 }
 
 static int test_dvc_length_code(size_t length)
@@ -5014,6 +5216,16 @@ int start_handshake_server_full(uint16_t* port,
                                                                           7,
                                                                           &status_code) ||
                             status_code == RDP_DYNAMIC_CHANNEL_STATUS_OK)
+                        {
+                            _exit(5);
+                        }
+                        goto done_connection;
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_WEBAUTHN_MOCK_RUNTIME)
+                    {
+                        if (!run_webauthn_mock_runtime_server_scenario(client,
+                                                                       input,
+                                                                       sizeof(input)))
                         {
                             _exit(5);
                         }

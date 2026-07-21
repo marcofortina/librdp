@@ -492,6 +492,12 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME core_idle_transport_eof COMMAND test_core idle-eof)
     add_test(NAME core_features COMMAND test_core features)
     add_test(NAME core_channels COMMAND test_core channels)
+    add_test(NAME smoke_webauthn_mock
+        COMMAND test_core webauthn-mock-smoke)
+    set_tests_properties(smoke_webauthn_mock PROPERTIES
+        ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=trace;LIBRDP_TRACE_HEX_BYTES=96"
+        TIMEOUT 30
+    )
     add_test(NAME core_storage_devices COMMAND test_core storage)
     add_test(NAME core_graphics COMMAND test_core graphics)
     add_test(NAME smoke_gdi_orders COMMAND test_core gdi-orders-smoke)

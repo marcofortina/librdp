@@ -19,10 +19,14 @@
 #include <librdp/session.h>
 
 #include "common/buffer.h"
+#include "common/trace.h"
 #include "graphics/bitmap.h"
 
 #include <stddef.h>
 #include <stdint.h>
+
+/* Classify a wire event before the bounded protocol hexdump is emitted. */
+rdp_trace_sensitivity rdp_session_trace_sensitivity_for_event(const char* event);
 
 librdp_status rdp_session_write_mcs_pdu(librdp_session* session,
                                         const rdp_buffer* pdu,

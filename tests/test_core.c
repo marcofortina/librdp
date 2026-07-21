@@ -83,7 +83,8 @@ static int run_channels(void)
         return 1;
     if (test_webauthn_feature_status_channel_lifecycle() != 0 ||
         test_webauthn_dvc_rejects_unrequested_feature() != 0 ||
-        test_webauthn_rp_id_allowlist_denies_unmatched_request() != 0)
+        test_webauthn_rp_id_allowlist_denies_unmatched_request() != 0 ||
+        test_webauthn_mock_runtime_sequence() != 0)
         return 1;
     return test_auth_redirection_dvc_requires_credssp();
 }
@@ -198,6 +199,8 @@ int test_client_core_named(const char* name)
         return test_geometry_tracking_runtime_lifecycle();
     if (strcmp(name, "channels") == 0)
         return run_channels();
+    if (strcmp(name, "webauthn-mock-smoke") == 0)
+        return test_webauthn_mock_runtime_sequence();
     if (strcmp(name, "display-resize-smoke") == 0)
         return test_display_control_resize_frame_stability();
     if (strcmp(name, "display-layout-smoke") == 0)
@@ -274,6 +277,7 @@ int test_client_core(void)
         test_webauthn_feature_status_channel_lifecycle() != 0 ||
         test_webauthn_dvc_rejects_unrequested_feature() != 0 ||
         test_webauthn_rp_id_allowlist_denies_unmatched_request() != 0 ||
+        test_webauthn_mock_runtime_sequence() != 0 ||
         test_auth_redirection_dvc_requires_credssp() != 0)
         return 1;
     if (test_filesystem_information_class_coverage() != 0 ||
