@@ -504,6 +504,12 @@ if(LIBRDP_BUILD_TESTS)
         ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_TRANSPORT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=trace;LIBRDP_TRACE_HEX_BYTES=0"
         TIMEOUT 30
     )
+    add_test(NAME smoke_client_worker_stalls
+        COMMAND test_core worker-stall-smoke)
+    set_tests_properties(smoke_client_worker_stalls PROPERTIES
+        ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_TRANSPORT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=trace;LIBRDP_TRACE_HEX_BYTES=0"
+        TIMEOUT 30
+    )
     add_test(NAME core_features COMMAND test_core features)
     add_test(NAME core_channels COMMAND test_core channels)
     add_test(NAME smoke_webauthn_mock
@@ -681,6 +687,12 @@ if(LIBRDP_BUILD_TESTS)
         add_test(NAME usb_virtual_smoke
                  COMMAND test_usb_virtual_smoke)
         set_tests_properties(usb_virtual_smoke PROPERTIES
+            TIMEOUT 15
+        )
+        add_test(NAME smoke_client_usb_worker_stall
+                 COMMAND test_usb_virtual_smoke worker-stall)
+        set_tests_properties(smoke_client_usb_worker_stall PROPERTIES
+            ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_TRANSPORT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=trace;LIBRDP_TRACE_HEX_BYTES=0"
             TIMEOUT 15
         )
     endif()

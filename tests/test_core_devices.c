@@ -17,6 +17,7 @@
 #include "client/session_internal.h"
 #include "client/smartcard_backend.h"
 #include "client/usb_backend.h"
+#include "test_core_suites.h"
 
 #include <errno.h>
 #include <stdatomic.h>
@@ -24,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -46,6 +48,185 @@ static void test_backend_sleep_ms(uint32_t timeout_ms)
     requested.tv_nsec = (long)((timeout_ms % 1000u) * 1000000u);
     while (nanosleep(&requested, &remaining) != 0 && errno == EINTR)
         requested = remaining;
+}
+
+static int64_t test_backend_elapsed_ms(const struct timespec* start,
+                                       const struct timespec* end)
+{
+    if (!start || !end)
+        return -1;
+    return ((int64_t)end->tv_sec - (int64_t)start->tv_sec) * 1000LL +
+           ((int64_t)end->tv_nsec - (int64_t)start->tv_nsec) / 1000000LL;
+}
+
+/*
+ * Run printer and smartcard worker stalls around one active session. A real
+ * slow-path input PDU is written to the controlled transport before
+ * cancellation, proving that backend work does not occupy the owner dispatch
+ * thread. USB applies the same contract in its canonical virtual-provider
+ * smoke target so that its fixture is not duplicated here.
+ */
+int test_worker_backend_stalls(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    rdp_printer_backend_mock printer_mock;
+#ifdef RDP_HAVE_PCSC
+    rdp_smartcard_mock_backend smartcard_mock;
+#endif
+    librdp_mouse_event mouse;
+    struct timespec dispatch_started;
+    struct timespec dispatch_finished;
+    struct timespec cancel_started;
+    struct timespec cancel_finished;
+    char spool_path[] = "/tmp/librdp-worker-stall-XXXXXX";
+    uint8_t wire[512];
+#ifdef RDP_HAVE_PCSC
+    SCARDHANDLE smartcard_handle = 0;
+    DWORD smartcard_protocol = 0;
+#endif
+    int sockets[2] = {-1, -1};
+    int fd = -1;
+    int64_t dispatch_elapsed_ms = -1;
+    int64_t cancel_elapsed_ms = -1;
+    ssize_t wire_len = 0;
+    int result = 1;
+
+#define WORKER_CHECK(expr)                                                                                            \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(expr))                                                                                                   \
+        {                                                                                                              \
+            fprintf(stderr, "check failed %s:%d: %s\n", __FILE__, __LINE__, #expr);                                  \
+            goto cleanup;                                                                                              \
+        }                                                                                                              \
+    } while (0)
+
+    memset(&mouse, 0, sizeof(mouse));
+    rdp_printer_backend_mock_init(&printer_mock);
+#ifdef RDP_HAVE_PCSC
+    rdp_smartcard_mock_backend_init(&smartcard_mock);
+#endif
+
+    settings = librdp_settings_new();
+    WORKER_CHECK(settings != NULL);
+    session = librdp_session_new(settings);
+    WORKER_CHECK(session != NULL);
+    WORKER_CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    rdp_transport_attach_fd(&session->transport, sockets[0], 1);
+    sockets[0] = -1;
+    session->state = LIBRDP_SESSION_ACTIVE;
+    session->lifecycle = LIBRDP_LIFECYCLE_ACTIVE;
+    session->share_id = 0x00010000u;
+    session->mcs_user_id = 1001u;
+
+    rdp_printer_backend_clear(&session->printer_backend);
+    rdp_printer_backend_init_mock(&session->printer_backend, &printer_mock);
+    rdp_printer_backend_set_notify(&session->printer_backend,
+                                   rdp_session_printer_backend_notify,
+                                   session);
+    printer_mock.submit_delay_ms = 2000u;
+    fd = mkstemp(spool_path);
+    WORKER_CHECK(fd >= 0);
+    WORKER_CHECK(close(fd) == 0);
+    fd = -1;
+    WORKER_CHECK(rdp_printer_backend_submit_async(
+                     &session->printer_backend,
+                     0u,
+                     "cups",
+                     "worker stall",
+                     spool_path,
+                     1) == 0u);
+    for (uint32_t waited_ms = 0u;
+         waited_ms < 500u &&
+         atomic_load_explicit(&printer_mock.active_calls,
+                              memory_order_acquire) == 0u;
+         waited_ms++)
+        test_backend_sleep_ms(1u);
+    WORKER_CHECK(atomic_load_explicit(&printer_mock.active_calls,
+                                      memory_order_acquire) == 1u);
+
+#ifdef RDP_HAVE_PCSC
+    rdp_smartcard_backend_clear(&session->smartcard_backend);
+    rdp_smartcard_backend_init_mock(&session->smartcard_backend,
+                                    &smartcard_mock);
+    rdp_smartcard_backend_set_timeout(&session->smartcard_backend, 25u);
+    smartcard_mock.hang_connect_ms = 250u;
+    smartcard_mock.ignore_connect_cancel = 1;
+    WORKER_CHECK(rdp_smartcard_backend_connect(
+                     &session->smartcard_backend,
+                     smartcard_mock.next_context,
+                     "Virtual Reader 0",
+                     0u,
+                     0u,
+                     &smartcard_handle,
+                     &smartcard_protocol) == SCARD_E_TIMEOUT);
+    WORKER_CHECK(atomic_load_explicit(&smartcard_mock.connect_active,
+                                      memory_order_acquire) == 1u);
+#endif
+
+    mouse.x = 17u;
+    mouse.y = 23u;
+    mouse.button = LIBRDP_MOUSE_BUTTON_NONE;
+    mouse.state = LIBRDP_MOUSE_MOVED;
+    WORKER_CHECK(clock_gettime(CLOCK_MONOTONIC, &dispatch_started) == 0);
+    WORKER_CHECK(librdp_session_send_mouse(session, &mouse) ==
+                 LIBRDP_STATUS_OK);
+    WORKER_CHECK(librdp_session_run_once(session, 0) == LIBRDP_STATUS_OK);
+    WORKER_CHECK(clock_gettime(CLOCK_MONOTONIC, &dispatch_finished) == 0);
+    dispatch_elapsed_ms = test_backend_elapsed_ms(&dispatch_started,
+                                                  &dispatch_finished);
+    WORKER_CHECK(dispatch_elapsed_ms >= 0 && dispatch_elapsed_ms < 500);
+    wire_len = recv(sockets[1], wire, sizeof(wire), MSG_DONTWAIT);
+    WORKER_CHECK(wire_len > 0);
+
+    WORKER_CHECK(clock_gettime(CLOCK_MONOTONIC, &cancel_started) == 0);
+    WORKER_CHECK(librdp_session_cancel(session) == LIBRDP_STATUS_OK);
+    WORKER_CHECK(librdp_session_run_once(session, 500) ==
+                 LIBRDP_STATUS_CANCELLED);
+    WORKER_CHECK(clock_gettime(CLOCK_MONOTONIC, &cancel_finished) == 0);
+    cancel_elapsed_ms = test_backend_elapsed_ms(&cancel_started,
+                                                &cancel_finished);
+    WORKER_CHECK(cancel_elapsed_ms >= 0 && cancel_elapsed_ms < 1000);
+    WORKER_CHECK(librdp_session_get_state(session) ==
+                 LIBRDP_SESSION_CANCELLED);
+    WORKER_CHECK(librdp_session_get_lifecycle(session) ==
+                 LIBRDP_LIFECYCLE_DISCONNECTED);
+    WORKER_CHECK(atomic_load_explicit(&printer_mock.active_calls,
+                                      memory_order_acquire) == 0u);
+    WORKER_CHECK(atomic_load_explicit(&printer_mock.cancellation_observed,
+                                      memory_order_acquire) == 1u);
+#ifdef RDP_HAVE_PCSC
+    WORKER_CHECK(atomic_load_explicit(&smartcard_mock.connect_active,
+                                      memory_order_acquire) == 0u);
+    WORKER_CHECK(atomic_load_explicit(&smartcard_mock.cancel_calls,
+                                      memory_order_acquire) >= 1u);
+    WORKER_CHECK(atomic_load_explicit(&smartcard_mock.disconnect_calls,
+                                      memory_order_acquire) >= 1u);
+#endif
+    result = 0;
+
+cleanup:
+    if (fd >= 0)
+        (void)close(fd);
+    if (session)
+    {
+        if (session->state != LIBRDP_SESSION_CANCELLED &&
+            session->state != LIBRDP_SESSION_CLOSED)
+            (void)librdp_session_disconnect(session);
+#ifdef RDP_HAVE_PCSC
+        rdp_smartcard_backend_clear(&session->smartcard_backend);
+#endif
+        librdp_session_free(session);
+    }
+    if (sockets[0] >= 0)
+        (void)close(sockets[0]);
+    if (sockets[1] >= 0)
+        (void)close(sockets[1]);
+    (void)unlink(spool_path);
+    librdp_settings_free(settings);
+#undef WORKER_CHECK
+    return result;
 }
 
 /*

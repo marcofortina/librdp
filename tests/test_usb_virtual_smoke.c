@@ -23,7 +23,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <time.h>
+#include <unistd.h>
 
 #define CHECK(expr)                                                                                                    \
     do                                                                                                                 \
@@ -75,6 +77,15 @@ static void test_usb_virtual_sleep_ms(uint32_t delay_ms)
     requested.tv_nsec = (long)((delay_ms % 1000u) * 1000000u);
     while (nanosleep(&requested, &remaining) != 0 && errno == EINTR)
         requested = remaining;
+}
+
+static int64_t test_usb_virtual_elapsed_ms(const struct timespec* start,
+                                           const struct timespec* end)
+{
+    if (!start || !end)
+        return -1;
+    return ((int64_t)end->tv_sec - (int64_t)start->tv_sec) * 1000LL +
+           ((int64_t)end->tv_nsec - (int64_t)start->tv_nsec) / 1000000LL;
 }
 
 static uint32_t test_usb_virtual_terminal_status(
@@ -999,36 +1010,118 @@ static int test_usb_virtual_all_urbs(void)
     return 0;
 }
 
-static int test_usb_virtual_close_race(void)
+/*
+ * Keep a virtual transfer blocked while the owner thread sends and dispatches
+ * a real slow-path input PDU. Session cancellation must then interrupt the
+ * provider, release the device, and complete disconnection within one second.
+ */
+static int test_usb_virtual_worker_stall(void)
 {
     test_usb_virtual_provider provider;
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
+    librdp_mouse_event mouse;
     rdp_buffer packet;
+    struct timespec dispatch_started;
+    struct timespec dispatch_finished;
+    struct timespec cancel_started;
+    struct timespec cancel_finished;
+    uint8_t wire[512];
+    int sockets[2] = {-1, -1};
+    int64_t dispatch_elapsed_ms = -1;
+    int64_t cancel_elapsed_ms = -1;
+    ssize_t wire_len = 0;
+    int result = 1;
+
+#define USB_WORKER_CHECK(expr)                                                                                        \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(expr))                                                                                                   \
+        {                                                                                                              \
+            fprintf(stderr, "check failed %s:%d: %s\n", __FILE__, __LINE__, #expr);                                  \
+            goto cleanup;                                                                                              \
+        }                                                                                                              \
+    } while (0)
 
     test_usb_virtual_provider_init(&provider);
     atomic_store_explicit(&provider.mode, TEST_USB_VIRTUAL_WAIT_CANCEL,
                           memory_order_release);
-    settings = librdp_settings_new();
-    CHECK(settings != NULL);
-    session = librdp_session_new(settings);
-    CHECK(session != NULL);
-    test_usb_virtual_attach(session, &provider);
+    memset(&mouse, 0, sizeof(mouse));
     rdp_buffer_init(&packet);
-    CHECK(test_usb_virtual_write_transfer(
-              &packet, RDP_USB_REDIRECTION_URB_CONTROL_TRANSFER, 1u) ==
-          LIBRDP_STATUS_OK);
-    CHECK(rdp_session_handle_usb_redirection_message(
-              session, packet.data, packet.length) == LIBRDP_STATUS_OK);
-    CHECK(test_usb_virtual_wait_active(&provider));
-    librdp_session_free(session);
-    CHECK(atomic_load_explicit(&provider.cancel_observed,
-                               memory_order_relaxed) == 1u);
-    CHECK(atomic_load_explicit(&provider.release_calls,
-                               memory_order_relaxed) == 1u);
+    settings = librdp_settings_new();
+    USB_WORKER_CHECK(settings != NULL);
+    session = librdp_session_new(settings);
+    USB_WORKER_CHECK(session != NULL);
+    USB_WORKER_CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    rdp_transport_attach_fd(&session->transport, sockets[0], 1);
+    sockets[0] = -1;
+    session->state = LIBRDP_SESSION_ACTIVE;
+    session->lifecycle = LIBRDP_LIFECYCLE_ACTIVE;
+    session->share_id = 0x00010000u;
+    session->mcs_user_id = 1001u;
+    test_usb_virtual_attach(session, &provider);
+    USB_WORKER_CHECK(test_usb_virtual_write_transfer(
+                         &packet,
+                         RDP_USB_REDIRECTION_URB_CONTROL_TRANSFER,
+                         1u) == LIBRDP_STATUS_OK);
+    USB_WORKER_CHECK(rdp_session_handle_usb_redirection_message(
+                         session,
+                         packet.data,
+                         packet.length) == LIBRDP_STATUS_OK);
+    USB_WORKER_CHECK(test_usb_virtual_wait_active(&provider));
+
+    mouse.x = 31u;
+    mouse.y = 47u;
+    mouse.button = LIBRDP_MOUSE_BUTTON_NONE;
+    mouse.state = LIBRDP_MOUSE_MOVED;
+    USB_WORKER_CHECK(clock_gettime(CLOCK_MONOTONIC, &dispatch_started) == 0);
+    USB_WORKER_CHECK(librdp_session_send_mouse(session, &mouse) ==
+                     LIBRDP_STATUS_OK);
+    USB_WORKER_CHECK(librdp_session_run_once(session, 0) ==
+                     LIBRDP_STATUS_OK);
+    USB_WORKER_CHECK(clock_gettime(CLOCK_MONOTONIC, &dispatch_finished) == 0);
+    dispatch_elapsed_ms = test_usb_virtual_elapsed_ms(&dispatch_started,
+                                                       &dispatch_finished);
+    USB_WORKER_CHECK(dispatch_elapsed_ms >= 0 && dispatch_elapsed_ms < 500);
+    wire_len = recv(sockets[1], wire, sizeof(wire), MSG_DONTWAIT);
+    USB_WORKER_CHECK(wire_len > 0);
+
+    USB_WORKER_CHECK(clock_gettime(CLOCK_MONOTONIC, &cancel_started) == 0);
+    USB_WORKER_CHECK(librdp_session_cancel(session) == LIBRDP_STATUS_OK);
+    USB_WORKER_CHECK(librdp_session_run_once(session, 500) ==
+                     LIBRDP_STATUS_CANCELLED);
+    USB_WORKER_CHECK(clock_gettime(CLOCK_MONOTONIC, &cancel_finished) == 0);
+    cancel_elapsed_ms = test_usb_virtual_elapsed_ms(&cancel_started,
+                                                     &cancel_finished);
+    USB_WORKER_CHECK(cancel_elapsed_ms >= 0 && cancel_elapsed_ms < 1000);
+    USB_WORKER_CHECK(librdp_session_get_state(session) ==
+                     LIBRDP_SESSION_CANCELLED);
+    USB_WORKER_CHECK(librdp_session_get_lifecycle(session) ==
+                     LIBRDP_LIFECYCLE_DISCONNECTED);
+    USB_WORKER_CHECK(atomic_load_explicit(&provider.active,
+                                          memory_order_acquire) == 0u);
+    USB_WORKER_CHECK(atomic_load_explicit(&provider.cancel_observed,
+                                          memory_order_relaxed) == 1u);
+    USB_WORKER_CHECK(atomic_load_explicit(&provider.release_calls,
+                                          memory_order_relaxed) == 1u);
+    result = 0;
+
+cleanup:
+    if (session)
+    {
+        if (session->state != LIBRDP_SESSION_CANCELLED &&
+            session->state != LIBRDP_SESSION_CLOSED)
+            (void)librdp_session_disconnect(session);
+        librdp_session_free(session);
+    }
+    if (sockets[0] >= 0)
+        (void)close(sockets[0]);
+    if (sockets[1] >= 0)
+        (void)close(sockets[1]);
     rdp_buffer_free(&packet);
     librdp_settings_free(settings);
-    return 0;
+#undef USB_WORKER_CHECK
+    return result;
 }
 
 /*
@@ -1123,10 +1216,17 @@ static int test_usb_virtual_limit_boundaries(void)
     return 0;
 }
 
-int main(void)
+int main(int argc, char** argv)
 {
+    if (argc == 2 && strcmp(argv[1], "worker-stall") == 0)
+        return test_usb_virtual_worker_stall();
+    if (argc != 1)
+    {
+        fprintf(stderr, "usage: %s [worker-stall]\n", argv[0]);
+        return 2;
+    }
     if (test_usb_virtual_all_urbs() != 0 ||
         test_usb_virtual_limit_boundaries() != 0)
         return 1;
-    return test_usb_virtual_close_race();
+    return test_usb_virtual_worker_stall();
 }

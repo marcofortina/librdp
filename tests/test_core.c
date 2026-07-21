@@ -209,6 +209,8 @@ int test_client_core_named(const char* name)
         return run_limits();
     if (strcmp(name, "allocation-fault-smoke") == 0)
         return test_allocation_failure_boundaries();
+    if (strcmp(name, "worker-stall-smoke") == 0)
+        return test_worker_backend_stalls();
     if (strcmp(name, "features") == 0)
         return run_features();
     if (strcmp(name, "video-geometry-smoke") == 0)
