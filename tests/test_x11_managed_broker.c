@@ -135,6 +135,21 @@ static int test_wait_path(const char* path,
     return 0;
 }
 
+static int test_wait_process_gone(pid_t process, int timeout_ms)
+{
+    int elapsed = 0;
+
+    while (elapsed < timeout_ms)
+    {
+        errno = 0;
+        if (kill(process, 0) != 0 && errno == ESRCH)
+            return 1;
+        (void)poll(NULL, 0u, 10);
+        elapsed += 10;
+    }
+    return 0;
+}
+
 static void test_ready(const x11_managed_ipc_message* session,
                        uint64_t request_id,
                        x11_managed_ipc_message* response)
@@ -227,6 +242,7 @@ static int test_fake_supervisor(int descriptor)
     x11_managed_ipc_message response;
     int listener = -1;
     int done = 0;
+    pid_t orphan_group = -1;
 
     CHECK(account != NULL);
     x11_managed_ipc_message_init(&initial);
@@ -312,9 +328,37 @@ static int test_fake_supervisor(int descriptor)
     listener = test_create_control_listener(
         session.control_socket);
     CHECK(listener >= 0);
+    if (strcmp(initial.domain, "crash") == 0)
+    {
+        orphan_group = fork();
+        CHECK(orphan_group >= 0);
+        if (orphan_group == 0)
+        {
+            struct sigaction action;
+
+            memset(&action, 0, sizeof(action));
+            action.sa_handler = SIG_DFL;
+            sigemptyset(&action.sa_mask);
+            (void)sigaction(SIGTERM, &action, NULL);
+            close(listener);
+            close(descriptor);
+            if (setpgid(0, 0) != 0)
+                _exit(4);
+            for (;;)
+                pause();
+        }
+        CHECK(setpgid(orphan_group, orphan_group) == 0 ||
+              errno == EACCES);
+    }
     session.session_state = X11_MANAGED_SESSION_ACTIVE;
     session.attachment_count = 1u;
     test_ready(&session, initial.request_id, &response);
+    if (orphan_group > 0)
+    {
+        response.agent_pid = (uint64_t)orphan_group;
+        response.xserver_pid = (uint64_t)orphan_group;
+        response.desktop_pid = (uint64_t)orphan_group;
+    }
     CHECK(x11_managed_ipc_send(descriptor, &response, 5000) ==
           LIBRDP_STATUS_OK);
     close(descriptor);
@@ -517,6 +561,7 @@ static int test_broker_lifecycle(void)
     x11_managed_ipc_message response;
     uint64_t session_id = 0u;
     char token[X11_MANAGED_IPC_TOKEN_BYTES];
+    pid_t orphan_group = -1;
     int length = 0;
 
     CHECK(account != NULL);
@@ -679,6 +724,9 @@ static int test_broker_lifecycle(void)
         &request, 110u, account->pw_name, "crash");
     x11_managed_ipc_message_clear(&response);
     CHECK(test_request(socket_path, &request, &response));
+    CHECK(response.xserver_pid > 0u &&
+          response.xserver_pid <= (uint64_t)INT32_MAX);
+    orphan_group = (pid_t)response.xserver_pid;
     length = snprintf(runtime_path,
                       sizeof(runtime_path),
                       "%s/session-%016llx",
@@ -686,6 +734,7 @@ static int test_broker_lifecycle(void)
                       (unsigned long long)response.session_id);
     CHECK(length > 0 && (size_t)length < sizeof(runtime_path));
     CHECK(test_wait_path(runtime_path, 0, 4000));
+    CHECK(test_wait_process_gone(orphan_group, 4000));
     CHECK(test_stop_broker(&second, second_thread));
     CHECK(rmdir(runtime_root) == 0);
     CHECK(rmdir(root) == 0);

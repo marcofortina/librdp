@@ -47,6 +47,8 @@
 #define X11_MANAGED_BROKER_COMMAND_TIMEOUT_MS 10000
 #define X11_MANAGED_BROKER_HEALTH_INTERVAL_MS 1000
 #define X11_MANAGED_BROKER_SUPERVISOR_STOP_TIMEOUT_MS 7000
+#define X11_MANAGED_BROKER_ORPHAN_STOP_TIMEOUT_MS 5000
+#define X11_MANAGED_BROKER_ORPHAN_KILL_TIMEOUT_MS 1000
 
 extern char** environ;
 
@@ -933,6 +935,95 @@ static int x11_managed_broker_process_alive(pid_t process)
            (kill(process, 0) == 0 || errno == EPERM);
 }
 
+static int x11_managed_broker_process_group_alive(pid_t group)
+{
+    return group > 0 &&
+           (kill(-group, 0) == 0 || errno == EPERM);
+}
+
+/*
+ * Authenticate a failed supervisor's process group using every live child
+ * PID retained in the registry. Signalling is refused if any known process
+ * has moved to another group, preventing stale metadata from targeting an
+ * unrelated host process.
+ */
+static int x11_managed_broker_orphan_group(
+    const x11_managed_session_entry* entry,
+    pid_t* output)
+{
+    const pid_t processes[] = {
+        entry ? entry->agent_pid : -1,
+        entry ? entry->xserver_pid : -1,
+        entry ? entry->desktop_pid : -1};
+    pid_t group = entry ? entry->xserver_pid : -1;
+    size_t index = 0u;
+    int matched = 0;
+
+    if (!entry || !output || group <= 0)
+        return 0;
+    for (index = 0u;
+         index < sizeof(processes) / sizeof(processes[0]);
+         index++)
+    {
+        pid_t actual = -1;
+
+        if (processes[index] <= 0)
+            continue;
+        errno = 0;
+        actual = getpgid(processes[index]);
+        if (actual < 0 && errno == ESRCH)
+            continue;
+        if (actual != group)
+            return -1;
+        matched = 1;
+    }
+    if (matched)
+        *output = group;
+    return matched;
+}
+
+static int x11_managed_broker_wait_group(pid_t group,
+                                         int timeout_ms)
+{
+    uint64_t now_ns = x11_managed_broker_now_ns();
+    uint64_t interval_ns = (uint64_t)timeout_ms * 1000000u;
+    uint64_t deadline_ns =
+        now_ns <= UINT64_MAX - interval_ns
+            ? now_ns + interval_ns
+            : UINT64_MAX;
+
+    while (x11_managed_broker_process_group_alive(group) &&
+           x11_managed_broker_now_ns() < deadline_ns)
+        (void)poll(NULL, 0u, 20);
+    return !x11_managed_broker_process_group_alive(group);
+}
+
+/*
+ * Stop the complete workload left behind by a crashed supervisor. Managed
+ * Xorg/Xvfb, desktop and agent share the X server's process group, so one
+ * bounded TERM/KILL sequence also covers descendants not stored separately.
+ */
+static int x11_managed_broker_stop_orphan_group(
+    const x11_managed_session_entry* entry)
+{
+    pid_t group = -1;
+    int identified = x11_managed_broker_orphan_group(entry, &group);
+
+    if (identified == 0)
+        return 1;
+    if (identified < 0)
+        return 0;
+    if (kill(-group, SIGTERM) != 0 && errno != ESRCH)
+        return 0;
+    if (x11_managed_broker_wait_group(
+            group, X11_MANAGED_BROKER_ORPHAN_STOP_TIMEOUT_MS))
+        return 1;
+    if (kill(-group, SIGKILL) != 0 && errno != ESRCH)
+        return 0;
+    return x11_managed_broker_wait_group(
+        group, X11_MANAGED_BROKER_ORPHAN_KILL_TIMEOUT_MS);
+}
+
 static void x11_managed_broker_health(x11_managed_broker* broker)
 {
     size_t capacity = 0u;
@@ -945,25 +1036,41 @@ static void x11_managed_broker_health(x11_managed_broker* broker)
         if (child <= 0)
             break;
     }
-    pthread_mutex_lock(&broker->mutex);
     capacity = x11_managed_registry_capacity(broker->registry);
     for (index = 0u; index < capacity; index++)
     {
-        const x11_managed_session_entry* entry =
-            x11_managed_registry_entry_at(broker->registry, index);
-        uint64_t session_id = 0u;
+        const x11_managed_session_entry* entry = NULL;
+        x11_managed_session_entry snapshot;
+        int supervisor_failed = 0;
 
-        if (!entry)
-            continue;
-        session_id = entry->session_id;
-        if (!x11_managed_broker_process_alive(
-                entry->supervisor_pid))
+        memset(&snapshot, 0, sizeof(snapshot));
+        pthread_mutex_lock(&broker->mutex);
+        entry = x11_managed_registry_entry_at(
+            broker->registry, index);
+        if (entry && !x11_managed_broker_process_alive(
+                         entry->supervisor_pid))
         {
-            (void)x11_managed_registry_release(
-                broker->registry, session_id);
+            snapshot = *entry;
+            supervisor_failed = 1;
         }
+        pthread_mutex_unlock(&broker->mutex);
+        if (!supervisor_failed)
+            continue;
+        if (x11_managed_broker_stop_orphan_group(&snapshot))
+        {
+            pthread_mutex_lock(&broker->mutex);
+            entry = x11_managed_registry_find_any(
+                broker->registry, snapshot.session_id);
+            if (entry &&
+                entry->supervisor_pid == snapshot.supervisor_pid)
+            {
+                (void)x11_managed_registry_release(
+                    broker->registry, snapshot.session_id);
+            }
+            pthread_mutex_unlock(&broker->mutex);
+        }
+        OPENSSL_cleanse(&snapshot, sizeof(snapshot));
     }
-    pthread_mutex_unlock(&broker->mutex);
 }
 
 x11_managed_broker* x11_managed_broker_new(
