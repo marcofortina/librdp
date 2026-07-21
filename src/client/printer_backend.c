@@ -16,6 +16,7 @@
  */
 
 #include "client/printer_backend.h"
+#include "common/fault_injection.h"
 
 #include "channels/device_redirection.h"
 #include "channels/printer_redirection.h"
@@ -520,6 +521,8 @@ static void rdp_printer_backend_initialize(rdp_printer_backend* backend,
     if (!backend)
         return;
     memset(backend, 0, sizeof(*backend));
+    if (rdp_fault_injection_hit(RDP_FAULT_BACKEND_STARTUP))
+        return;
     runtime = (rdp_printer_backend_runtime*)calloc(1, sizeof(*runtime));
     if (!runtime)
         return;

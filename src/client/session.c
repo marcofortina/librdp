@@ -53,6 +53,7 @@
 #include "client/usb_backend.h"
 #include "client/webauthn_backend.h"
 #include "clipboard/clipboard.h"
+#include "common/fault_injection.h"
 #include "common/charset.h"
 #include "common/stream.h"
 #include "common/trace.h"
@@ -3404,6 +3405,18 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_static_channels_clear(session);
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
+
+    if (rdp_fault_injection_hit(RDP_FAULT_CONNECT_ALLOCATION))
+    {
+        status = LIBRDP_STATUS_NO_MEMORY;
+        rdp_session_set_last_error(session,
+                                   status,
+                                   0,
+                                   LIBRDP_ERROR_COMPONENT_CLIENT,
+                                   "client.connect.allocate",
+                                   "connection setup allocation failed");
+        goto fail;
+    }
 
     if (rdp_settings_gateway_mode_internal(session->settings) != LIBRDP_GATEWAY_DISABLED)
     {

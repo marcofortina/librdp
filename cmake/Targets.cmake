@@ -74,6 +74,7 @@ set(LIBRDP_CHANNEL_SOURCES
 set(LIBRDP_COMMON_SOURCES
     src/common/buffer.c
     src/common/charset.c
+    src/common/fault_injection.c
     src/common/stream.c
     src/common/trace.c
     src/input/input.c
@@ -167,6 +168,10 @@ set(LIBRDP_BACKEND_SOURCES
 
 add_library(librdp_objects OBJECT ${LIBRDP_SOURCES})
 add_library(librdp_backend_objects OBJECT ${LIBRDP_BACKEND_SOURCES})
+if(LIBRDP_BUILD_TESTS)
+    target_compile_definitions(librdp_objects PRIVATE RDP_ENABLE_TEST_FAULTS=1)
+    target_compile_definitions(librdp_backend_objects PRIVATE RDP_ENABLE_TEST_FAULTS=1)
+endif()
 if(LIBRDP_LIBRARY_TYPE STREQUAL "AUTO")
     if(BUILD_SHARED_LIBS)
         set(LIBRDP_PRIMARY_LIBRARY_KIND SHARED)

@@ -11,6 +11,7 @@
  */
 
 #include "client/session_internal.h"
+#include "common/fault_injection.h"
 #include "common/trace.h"
 
 #include <stddef.h>
@@ -1116,6 +1117,9 @@ librdp_status librdp_session_channel_open(librdp_session* session,
                                                          name_len,
                                                          handle);
     }
+    if (status == LIBRDP_STATUS_OK &&
+        rdp_fault_injection_hit(RDP_FAULT_CHANNEL_OPEN_ALLOCATION))
+        status = LIBRDP_STATUS_NO_MEMORY;
 
     rdp_buffer_init(&create);
     if (status == LIBRDP_STATUS_OK)

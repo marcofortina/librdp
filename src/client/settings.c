@@ -19,6 +19,7 @@
 #include <librdp/settings.h>
 
 #include "client/settings_internal.h"
+#include "common/fault_injection.h"
 
 #include <openssl/crypto.h>
 
@@ -939,6 +940,11 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
          rdp_set_string(&copy->tls_pinned_sha256, settings->tls_pinned_sha256) != LIBRDP_STATUS_OK) ||
         (settings->echo_payload &&
          librdp_settings_set_echo_payload(copy, settings->echo_payload) != LIBRDP_STATUS_OK))
+    {
+        librdp_settings_free(copy);
+        return NULL;
+    }
+    if (rdp_fault_injection_hit(RDP_FAULT_SETTINGS_CLONE))
     {
         librdp_settings_free(copy);
         return NULL;

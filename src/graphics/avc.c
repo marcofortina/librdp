@@ -16,6 +16,7 @@
 
 
 #include "graphics/avc.h"
+#include "common/fault_injection.h"
 
 #include "common/trace.h"
 
@@ -1292,11 +1293,14 @@ static librdp_status rdp_avc_yuv444_to_bgra(rdp_avc_decoder* decoder, rdp_avc_fr
 
 rdp_avc_decoder* rdp_avc_decoder_new(void)
 {
-    rdp_avc_decoder* decoder = (rdp_avc_decoder*)calloc(1, sizeof(*decoder));
+    rdp_avc_decoder* decoder = NULL;
 #if defined(RDP_HAVE_ANY_AVC)
     size_t i = 0;
 #endif
 
+    if (rdp_fault_injection_hit(RDP_FAULT_DECODER_ALLOCATION))
+        return NULL;
+    decoder = (rdp_avc_decoder*)calloc(1, sizeof(*decoder));
     if (!decoder)
         return NULL;
 #if defined(RDP_HAVE_ANY_AVC)
