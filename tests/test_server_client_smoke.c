@@ -452,7 +452,10 @@ typedef struct smoke_platform
     atomic_uint capture_requests;
     atomic_uint capture_variant;
     atomic_uint key_events;
+    atomic_uint unicode_events;
     atomic_uint mouse_events;
+    atomic_uint extended_mouse_events;
+    atomic_uint input_validation_errors;
     atomic_uint drive_presentations;
     atomic_uint drive_removals;
     atomic_uint drive_stage;
@@ -1578,20 +1581,44 @@ static librdp_status smoke_input_inject(
     const librdp_server_input_event* event)
 {
     smoke_platform* platform = (smoke_platform*)context;
+    int valid = 0;
 
     if (!platform || !event)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (event->type == LIBRDP_SERVER_INPUT_SCANCODE_KEY ||
-        event->type == LIBRDP_SERVER_INPUT_UNICODE_KEY)
+    if (event->type == LIBRDP_SERVER_INPUT_SCANCODE_KEY)
     {
+        valid = event->param1 == 0x1eu &&
+                (event->flags == 0u || event->flags == 0x8000u);
         atomic_fetch_add_explicit(&platform->key_events,
                                   1u,
                                   memory_order_relaxed);
     }
-    else if (event->type == LIBRDP_SERVER_INPUT_MOUSE ||
-             event->type == LIBRDP_SERVER_INPUT_EXTENDED_MOUSE)
+    else if (event->type == LIBRDP_SERVER_INPUT_UNICODE_KEY)
     {
+        valid = event->param1 == 0x00e9u &&
+                (event->flags == 0u || event->flags == 0x8000u);
+        atomic_fetch_add_explicit(&platform->unicode_events,
+                                  1u,
+                                  memory_order_relaxed);
+    }
+    else if (event->type == LIBRDP_SERVER_INPUT_MOUSE)
+    {
+        valid = event->flags == 0x0800u && event->x == 7u && event->y == 9u;
         atomic_fetch_add_explicit(&platform->mouse_events,
+                                  1u,
+                                  memory_order_relaxed);
+    }
+    else if (event->type == LIBRDP_SERVER_INPUT_EXTENDED_MOUSE)
+    {
+        valid = (event->flags == 0x8001u || event->flags == 0x0001u) &&
+                event->x == 11u && event->y == 13u;
+        atomic_fetch_add_explicit(&platform->extended_mouse_events,
+                                  1u,
+                                  memory_order_relaxed);
+    }
+    if (!valid)
+    {
+        atomic_fetch_add_explicit(&platform->input_validation_errors,
                                   1u,
                                   memory_order_relaxed);
     }
@@ -5288,7 +5315,10 @@ static void smoke_platform_init(smoke_platform* platform,
     atomic_init(&platform->capture_requests, 0u);
     atomic_init(&platform->capture_variant, 0u);
     atomic_init(&platform->key_events, 0u);
+    atomic_init(&platform->unicode_events, 0u);
     atomic_init(&platform->mouse_events, 0u);
+    atomic_init(&platform->extended_mouse_events, 0u);
+    atomic_init(&platform->input_validation_errors, 0u);
     atomic_init(&platform->drive_presentations, 0u);
     atomic_init(&platform->drive_removals, 0u);
     atomic_init(&platform->drive_stage,
@@ -9954,10 +9984,28 @@ static int smoke_run_profile_ex(
             key.state = LIBRDP_KEY_RELEASED;
             REQUIRE(librdp_session_send_key(session, &key) ==
                     LIBRDP_STATUS_OK);
+            memset(&key, 0, sizeof(key));
+            key.flags = LIBRDP_KEY_FLAG_UNICODE;
+            key.unicode = 0x00e9u;
+            key.state = LIBRDP_KEY_PRESSED;
+            REQUIRE(librdp_session_send_key(session, &key) ==
+                    LIBRDP_STATUS_OK);
+            key.state = LIBRDP_KEY_RELEASED;
+            REQUIRE(librdp_session_send_key(session, &key) ==
+                    LIBRDP_STATUS_OK);
             mouse.x = 7u;
             mouse.y = 9u;
             mouse.button = LIBRDP_MOUSE_BUTTON_NONE;
             mouse.state = LIBRDP_MOUSE_MOVED;
+            REQUIRE(librdp_session_send_mouse(session, &mouse) ==
+                    LIBRDP_STATUS_OK);
+            mouse.x = 11u;
+            mouse.y = 13u;
+            mouse.button = LIBRDP_MOUSE_BUTTON_X1;
+            mouse.state = LIBRDP_MOUSE_PRESSED;
+            REQUIRE(librdp_session_send_mouse(session, &mouse) ==
+                    LIBRDP_STATUS_OK);
+            mouse.state = LIBRDP_MOUSE_RELEASED;
             REQUIRE(librdp_session_send_mouse(session, &mouse) ==
                     LIBRDP_STATUS_OK);
             input_sent = 1;
@@ -10246,8 +10294,14 @@ static int smoke_run_profile_ex(
                                  memory_order_acquire) > 0u &&
             atomic_load_explicit(&platform.key_events,
                                  memory_order_acquire) >= 2u &&
+            atomic_load_explicit(&platform.unicode_events,
+                                 memory_order_acquire) >= 2u &&
             atomic_load_explicit(&platform.mouse_events,
                                  memory_order_acquire) >= 1u &&
+            atomic_load_explicit(&platform.extended_mouse_events,
+                                 memory_order_acquire) >= 2u &&
+            atomic_load_explicit(&platform.input_validation_errors,
+                                 memory_order_acquire) == 0u &&
             (!clipboard_profile ||
              smoke_clipboard_profile_complete(clipboard_provider,
                                               &events)) &&
@@ -10554,8 +10608,14 @@ static int smoke_run_profile_ex(
     }
     REQUIRE(atomic_load_explicit(&platform.key_events,
                                  memory_order_acquire) >= 2u);
+    REQUIRE(atomic_load_explicit(&platform.unicode_events,
+                                 memory_order_acquire) >= 2u);
     REQUIRE(atomic_load_explicit(&platform.mouse_events,
                                  memory_order_acquire) >= 1u);
+    REQUIRE(atomic_load_explicit(&platform.extended_mouse_events,
+                                 memory_order_acquire) >= 2u);
+    REQUIRE(atomic_load_explicit(&platform.input_validation_errors,
+                                 memory_order_acquire) == 0u);
     if (clipboard_profile)
     {
         REQUIRE(smoke_clipboard_profile_complete(clipboard_provider,
