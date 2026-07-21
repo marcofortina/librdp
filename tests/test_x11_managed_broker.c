@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <pwd.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +54,14 @@ typedef struct test_broker_thread
     x11_managed_broker* broker;
     librdp_status status;
 } test_broker_thread;
+
+static volatile sig_atomic_t test_supervisor_stop_requested = 0;
+
+static void test_supervisor_stop(int signal_number)
+{
+    (void)signal_number;
+    test_supervisor_stop_requested = 1;
+}
 
 static int test_copy(char* output,
                      size_t capacity,
@@ -265,6 +274,41 @@ static int test_fake_supervisor(int descriptor)
     CHECK(session.password[0] == '\0');
     CHECK((session.flags & X11_MANAGED_IPC_ALLOW_INPUT) != 0u);
     CHECK((session.flags & X11_MANAGED_IPC_ALLOW_CLIPBOARD) == 0u);
+    if (strcmp(initial.domain, "delayed-error") == 0)
+    {
+        const char* marker = getenv("LIBRDP_TEST_MANAGED_CLEANUP_MARKER");
+        struct sigaction action;
+        struct timespec delay = {1, 500000000L};
+        FILE* stream = NULL;
+
+        memset(&action, 0, sizeof(action));
+        action.sa_handler = test_supervisor_stop;
+        sigemptyset(&action.sa_mask);
+        CHECK(sigaction(SIGTERM, &action, NULL) == 0);
+        x11_managed_ipc_message_init(&response);
+        response.type = X11_MANAGED_IPC_ERROR;
+        response.request_id = initial.request_id;
+        response.session_id = session.session_id;
+        response.status = LIBRDP_STATUS_CLOSED;
+        CHECK(x11_managed_ipc_send(descriptor, &response, 5000) ==
+              LIBRDP_STATUS_OK);
+        while (!test_supervisor_stop_requested)
+            pause();
+        while (nanosleep(&delay, &delay) != 0 && errno == EINTR)
+        {
+        }
+        CHECK(marker != NULL && marker[0] == '/');
+        stream = fopen(marker, "w");
+        CHECK(stream != NULL);
+        CHECK(fputs("clean\n", stream) >= 0);
+        CHECK(fclose(stream) == 0);
+        x11_managed_ipc_message_clear(&response);
+        x11_managed_ipc_message_clear(&initial);
+        x11_managed_ipc_message_clear(&authenticated);
+        x11_managed_ipc_message_clear(&session);
+        close(descriptor);
+        return 0;
+    }
     listener = test_create_control_listener(
         session.control_socket);
     CHECK(listener >= 0);
@@ -462,6 +506,7 @@ static int test_broker_lifecycle(void)
     char socket_path[4096];
     char runtime_root[4096];
     char runtime_path[4096];
+    char cleanup_marker[4096];
     struct passwd* account = getpwuid(geteuid());
     x11_managed_policy policy;
     test_broker_thread first;
@@ -515,8 +560,23 @@ static int test_broker_lifecycle(void)
               &policy, account->pw_name) ==
           LIBRDP_STATUS_OK);
     CHECK(x11_managed_policy_valid(&policy));
+    length = snprintf(cleanup_marker,
+                      sizeof(cleanup_marker),
+                      "%s/supervisor-cleanup.marker",
+                      root);
+    CHECK(length > 0 && (size_t)length < sizeof(cleanup_marker));
+    CHECK(setenv("LIBRDP_TEST_MANAGED_CLEANUP_MARKER",
+                 cleanup_marker,
+                 1) == 0);
     CHECK(test_start_broker(
         &policy, &first, &first_thread));
+    test_start_request(
+        &request, 99u, account->pw_name, "delayed-error");
+    CHECK(test_request_error(
+        socket_path, &request, LIBRDP_STATUS_CLOSED));
+    CHECK(test_wait_path(cleanup_marker, 1, 5000));
+    CHECK(unlink(cleanup_marker) == 0);
+    x11_managed_ipc_message_clear(&request);
     test_start_request(
         &request, 100u, account->pw_name, "");
     x11_managed_ipc_message_init(&response);
@@ -629,6 +689,7 @@ static int test_broker_lifecycle(void)
     CHECK(test_stop_broker(&second, second_thread));
     CHECK(rmdir(runtime_root) == 0);
     CHECK(rmdir(root) == 0);
+    CHECK(unsetenv("LIBRDP_TEST_MANAGED_CLEANUP_MARKER") == 0);
     x11_managed_ipc_message_clear(&request);
     x11_managed_ipc_message_clear(&response);
     OPENSSL_cleanse(token, sizeof(token));

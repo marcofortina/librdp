@@ -46,6 +46,7 @@
 #define X11_MANAGED_BROKER_MAX_WORKERS 64u
 #define X11_MANAGED_BROKER_COMMAND_TIMEOUT_MS 10000
 #define X11_MANAGED_BROKER_HEALTH_INTERVAL_MS 1000
+#define X11_MANAGED_BROKER_SUPERVISOR_STOP_TIMEOUT_MS 7000
 
 extern char** environ;
 
@@ -358,43 +359,17 @@ static librdp_status x11_managed_broker_spawn_supervisor(
     return LIBRDP_STATUS_OK;
 }
 
-static void x11_managed_broker_stop_supervisor(
-    int descriptor,
-    pid_t process,
-    uint64_t request_id,
-    uint64_t session_id,
-    const char* token)
+static void x11_managed_broker_stop_failed_supervisor(pid_t process)
 {
-    x11_managed_ipc_message command;
-    x11_managed_ipc_message response;
-    int attempts = 0;
+    uint64_t deadline_ns = 0u;
 
-    if (descriptor >= 0 && session_id != 0u && token)
-    {
-        x11_managed_ipc_message_init(&command);
-        command.type = X11_MANAGED_IPC_STOP;
-        command.request_id = request_id != 0u ? request_id : 1u;
-        command.session_id = session_id;
-        (void)x11_managed_broker_copy(
-            command.reconnect_token,
-            sizeof(command.reconnect_token),
-            token);
-        x11_managed_ipc_message_init(&response);
-        (void)x11_managed_ipc_send(
-            descriptor,
-            &command,
-            X11_MANAGED_BROKER_COMMAND_TIMEOUT_MS);
-        (void)x11_managed_ipc_receive(
-            descriptor,
-            &response,
-            X11_MANAGED_BROKER_COMMAND_TIMEOUT_MS);
-        x11_managed_ipc_message_clear(&command);
-        x11_managed_ipc_message_clear(&response);
-    }
     if (process <= 0)
         return;
     (void)kill(process, SIGTERM);
-    for (attempts = 0; attempts < 50; attempts++)
+    deadline_ns = x11_managed_broker_now_ns() +
+                  (uint64_t)X11_MANAGED_BROKER_SUPERVISOR_STOP_TIMEOUT_MS *
+                      1000000u;
+    while (x11_managed_broker_now_ns() < deadline_ns)
     {
         pid_t result = waitpid(process, NULL, WNOHANG);
 
@@ -513,6 +488,13 @@ static librdp_status x11_managed_broker_start(
             X11_MANAGED_BROKER_COMMAND_TIMEOUT_MS);
     }
     if (status == LIBRDP_STATUS_OK &&
+        ready.type == X11_MANAGED_IPC_ERROR)
+    {
+        status = ready.status != LIBRDP_STATUS_OK
+                     ? ready.status
+                     : LIBRDP_STATUS_STATE;
+    }
+    if (status == LIBRDP_STATUS_OK &&
         (ready.type != X11_MANAGED_IPC_READY ||
          ready.session_id != session_id ||
          ready.request_id != initial->request_id ||
@@ -547,17 +529,7 @@ static librdp_status x11_managed_broker_start(
     }
     if (status != LIBRDP_STATUS_OK)
     {
-        x11_managed_broker_send_error(
-            worker->client_fd,
-            initial->request_id,
-            session_id,
-            status);
-        x11_managed_broker_stop_supervisor(
-            supervisor_fd,
-            supervisor_pid,
-            initial->request_id,
-            session_id,
-            snapshot.reconnect_token);
+        x11_managed_broker_stop_failed_supervisor(supervisor_pid);
         if (session_id != 0u)
         {
             pthread_mutex_lock(&broker->mutex);
@@ -565,6 +537,11 @@ static librdp_status x11_managed_broker_start(
                 broker->registry, session_id);
             pthread_mutex_unlock(&broker->mutex);
         }
+        x11_managed_broker_send_error(
+            worker->client_fd,
+            initial->request_id,
+            session_id,
+            status);
     }
     x11_managed_broker_worker_operation(worker, -1);
     if (supervisor_fd >= 0)
