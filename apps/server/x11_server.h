@@ -48,6 +48,7 @@ typedef struct x11_server_config
     int allow_input;
     int allow_clipboard;
     int allow_drive;
+    int drive_read_only;
 } x11_server_config;
 
 typedef struct x11_server_context x11_server_context;

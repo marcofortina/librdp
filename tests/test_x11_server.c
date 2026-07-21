@@ -26,6 +26,7 @@
 
 #include <openssl/evp.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -48,6 +49,7 @@
 #define TEST_REMOTE_FORMAT_HTML 0xd101u
 #define TEST_REMOTE_FORMAT_PNG 0xd102u
 #define TEST_CLIPBOARD_FORMAT_LIMIT 8u
+#define TEST_FUSE_STATUS_NO_MORE_FILES 0x80000006u
 
 #define CHECK(condition)                                                        \
     do                                                                          \
@@ -102,10 +104,21 @@ typedef struct x11_server_test_state
 
 typedef struct test_fuse_drive_state
 {
+    const server_platform_drive_vtable* drive;
+    server_fuse* provider;
     uint64_t request_count;
     uint64_t cancel_count;
+    uint64_t notify_count;
+    uint64_t notify_request_id;
+    uint64_t notify_volume_id;
+    uint32_t notify_peer_id;
+    uint32_t notify_generation;
+    librdp_server_drive_file_handle notify_file;
     server_platform_drive_request request;
     char path[256];
+    char directory_name[64];
+    unsigned int directory_query_index;
+    int auto_complete;
 } test_fuse_drive_state;
 
 typedef struct test_selection_source
@@ -244,6 +257,99 @@ static void test_stop_xvfb(pid_t child)
     (void)waitpid(child, NULL, 0);
 }
 
+static void test_fuse_write_u32(uint8_t* output, uint32_t value)
+{
+    output[0] = (uint8_t)value;
+    output[1] = (uint8_t)(value >> 8u);
+    output[2] = (uint8_t)(value >> 16u);
+    output[3] = (uint8_t)(value >> 24u);
+}
+
+static void test_fuse_write_u64(uint8_t* output, uint64_t value)
+{
+    test_fuse_write_u32(output, (uint32_t)value);
+    test_fuse_write_u32(output + 4u, (uint32_t)(value >> 32u));
+}
+
+static size_t test_fuse_directory_entry(uint8_t* output, size_t capacity,
+                                        const char* name)
+{
+    size_t name_length = name ? strlen(name) : 0u;
+    size_t index = 0u;
+    size_t required = 64u + name_length * 2u;
+
+    if (!output || !name || name_length == 0u || name_length > 31u ||
+        capacity < required)
+        return 0u;
+    memset(output, 0, required);
+    test_fuse_write_u64(output + 40u, 4096u);
+    test_fuse_write_u64(output + 48u, 16u);
+    test_fuse_write_u32(output + 56u,
+                        LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_NORMAL);
+    test_fuse_write_u32(output + 60u, (uint32_t)(name_length * 2u));
+    for (index = 0u; index < name_length; index++)
+        output[64u + index * 2u] = (uint8_t)name[index];
+    return required;
+}
+
+static void test_fuse_complete_request(
+    test_fuse_drive_state* state,
+    const server_platform_drive_request* request)
+{
+    server_platform_drive_completion completion;
+    uint8_t directory_entry[128];
+    size_t directory_entry_len = 0u;
+
+    if (!state || !state->drive || !state->drive->complete ||
+        !state->provider || !request)
+        return;
+    memset(&completion, 0, sizeof(completion));
+    completion.request_id = request->request_id;
+    completion.volume_id = request->volume_id;
+    completion.peer_id = request->peer_id;
+    completion.generation = request->generation;
+    completion.type = LIBRDP_SERVER_DRIVE_REQUEST_COMPLETED;
+    completion.status = LIBRDP_STATUS_OK;
+    completion.operation = request->operation.operation;
+    completion.device = request->operation.device;
+    completion.file = request->operation.file;
+    if (request->operation.operation == LIBRDP_SERVER_DRIVE_CREATE)
+    {
+        completion.file.reconnect_generation = request->generation;
+        completion.file.device_id = request->operation.device.device_id;
+        completion.file.file_id = 41u;
+    }
+    else if (request->operation.operation ==
+             LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY)
+    {
+        const char* entry_name = NULL;
+
+        completion.information_class =
+            LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION;
+        if (request->operation.initial_query != 0u)
+            state->directory_query_index = 0u;
+        if (state->directory_query_index == 0u)
+            entry_name = ".";
+        else if (state->directory_query_index == 1u)
+            entry_name = "..";
+        else if (state->directory_query_index == 2u)
+            entry_name = state->directory_name;
+        if (entry_name)
+        {
+            directory_entry_len = test_fuse_directory_entry(
+                directory_entry, sizeof(directory_entry), entry_name);
+            completion.data = directory_entry;
+            completion.data_len = directory_entry_len;
+            if (directory_entry_len == 0u)
+                completion.status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            state->directory_query_index++;
+        }
+        else
+            completion.io_status = TEST_FUSE_STATUS_NO_MORE_FILES;
+    }
+    (void)state->drive->complete(state->provider, &completion);
+}
+
 static void test_fuse_drive_request(
     const server_platform_drive_request* request,
     void* user_data)
@@ -260,6 +366,20 @@ static void test_fuse_drive_request(
                        sizeof(state->path),
                        "%s",
                        request->operation.path);
+    if (!state->auto_complete)
+        return;
+    if (request->operation.operation ==
+        LIBRDP_SERVER_DRIVE_NOTIFY_DIRECTORY)
+    {
+        state->notify_count++;
+        state->notify_request_id = request->request_id;
+        state->notify_volume_id = request->volume_id;
+        state->notify_peer_id = request->peer_id;
+        state->notify_generation = request->generation;
+        state->notify_file = request->operation.file;
+        return;
+    }
+    test_fuse_complete_request(state, request);
 }
 
 static void test_fuse_drive_cancel(uint32_t peer_id,
@@ -1100,6 +1220,17 @@ static int test_cli_policy(void)
         (char*)"--persistent",
         (char*)"--reconnect",
     };
+    char* writable_drive[] = {
+        (char*)"server",
+        (char*)"--security",
+        (char*)"standard",
+        (char*)"--allow-standard-security",
+        (char*)"--allow-capture",
+        (char*)"--allow-drive",
+        (char*)"--drive-mount",
+        (char*)"/tmp/client-drive",
+        (char*)"--drive-read-write",
+    };
 
     CHECK(x11_server_parse_options(
               (int)(sizeof(valid) / sizeof(valid[0])),
@@ -1130,6 +1261,12 @@ static int test_cli_policy(void)
     CHECK(options.managed_action == X11_SERVER_MANAGED_START);
     CHECK(options.persistent_session == 1);
     CHECK(options.reconnect_session == 1);
+    CHECK(x11_server_parse_options(
+              (int)(sizeof(writable_drive) / sizeof(writable_drive[0])),
+              writable_drive,
+              &options) == 1);
+    CHECK(options.allow_drive == 1);
+    CHECK(options.drive_read_only == 0);
     return 0;
 }
 
@@ -1293,6 +1430,20 @@ static int test_fuse_drive_model(void)
     drive->remove(provider, 3u, 5u, 9u);
     CHECK(server_fuse_test_volume_count(provider) == 0u);
     server_fuse_free(provider);
+
+    server_fuse_config_init(&config);
+    config.mount_path = path;
+    config.read_only = 0;
+    provider = server_fuse_new(&config);
+    CHECK(provider != NULL);
+    volume.volume_id = 19u;
+    volume.name = "writable";
+    volume.read_only = 0;
+    CHECK(server_fuse_test_present(provider, &volume) == LIBRDP_STATUS_OK);
+    CHECK(server_fuse_test_volume_count(provider) == 1u);
+    drive->remove(provider, 3u, 5u, 9u);
+    CHECK(server_fuse_test_volume_count(provider) == 0u);
+    server_fuse_free(provider);
     CHECK(rmdir(path) == 0);
     return 0;
 }
@@ -1394,6 +1545,223 @@ static int test_fuse_drive_event_source(void)
     CHECK(state.request.operation.operation == LIBRDP_SERVER_DRIVE_CREATE);
     CHECK(state.path[0] == '\0');
     return 0;
+}
+
+/*
+ * Keep one directory handle open across a remote change notification. The
+ * second getdents pass must leave the kernel cache, query the provider again,
+ * and expose only the replacement entry. Closing the handle must cancel the
+ * rearmed watch before sending the remote close.
+ */
+static int test_fuse_directory_notify_event_source(void)
+{
+    char path[] = "/tmp/librdp-x11-fuse-notify-XXXXXX";
+    char remote_path[PATH_MAX];
+    server_fuse_config config;
+    server_fuse* provider = NULL;
+    server_platform_drive_sink sink;
+    server_platform_drive_volume volume;
+    server_platform_drive_completion completion;
+    const server_platform_drive_vtable* drive = NULL;
+    const server_platform_event_source_vtable* events = NULL;
+    test_fuse_drive_state state;
+    int ready_pipe[2] = {-1, -1};
+    int continue_pipe[2] = {-1, -1};
+    pid_t child = -1;
+    int child_status = 0;
+    int child_finished = 0;
+    int first_listing = 0;
+    int result = 1;
+    unsigned int attempt = 0u;
+
+    if (!server_fuse_available())
+        return 0;
+    memset(&state, 0, sizeof(state));
+    memset(&sink, 0, sizeof(sink));
+    memset(&volume, 0, sizeof(volume));
+    memset(&completion, 0, sizeof(completion));
+    if (!mkdtemp(path) || chmod(path, 0700) != 0)
+        return 1;
+    server_fuse_config_init(&config);
+    config.mount_path = path;
+    provider = server_fuse_new(&config);
+    drive = server_fuse_vtable();
+    if (!provider || !drive || !drive->events)
+        goto cleanup;
+    events = drive->events;
+    state.drive = drive;
+    state.provider = provider;
+    state.auto_complete = 1;
+    (void)snprintf(state.directory_name, sizeof(state.directory_name),
+                   "%s", "before.txt");
+    sink.request = test_fuse_drive_request;
+    sink.cancel = test_fuse_drive_cancel;
+    sink.user_data = &state;
+    if (drive->start(provider, &sink) != LIBRDP_STATUS_OK)
+        goto cleanup;
+    volume.volume_id = 17u;
+    volume.peer_id = 3u;
+    volume.generation = 5u;
+    volume.device.reconnect_generation = 5u;
+    volume.device.device_id = 9u;
+    volume.name = "documents";
+    volume.read_only = 1;
+    if (drive->present(provider, &volume) != LIBRDP_STATUS_OK ||
+        snprintf(remote_path, sizeof(remote_path), "%s/peer-3-5/documents",
+                 path) <= 0 ||
+        pipe(ready_pipe) != 0 || pipe(continue_pipe) != 0)
+        goto cleanup;
+    child = fork();
+    if (child < 0)
+        goto cleanup;
+    if (child == 0)
+    {
+        DIR* directory = NULL;
+        struct dirent* entry = NULL;
+        char signal = '0';
+        int saw_before = 0;
+        int saw_after = 0;
+        int stale_before = 0;
+
+        close(ready_pipe[0]);
+        close(continue_pipe[1]);
+        directory = opendir(remote_path);
+        if (!directory)
+            _exit(2);
+        while ((entry = readdir(directory)) != NULL)
+        {
+            if (strcmp(entry->d_name, "before.txt") == 0)
+                saw_before = 1;
+        }
+        signal = saw_before ? '1' : '0';
+        if (write(ready_pipe[1], &signal, 1u) != 1)
+            _exit(3);
+        if (read(continue_pipe[0], &signal, 1u) != 1 || signal != '1')
+            _exit(4);
+        rewinddir(directory);
+        while ((entry = readdir(directory)) != NULL)
+        {
+            if (strcmp(entry->d_name, "after.txt") == 0)
+                saw_after = 1;
+            if (strcmp(entry->d_name, "before.txt") == 0)
+                stale_before = 1;
+        }
+        closedir(directory);
+        _exit(saw_after && !stale_before ? 0 : 5);
+    }
+    close(ready_pipe[1]);
+    ready_pipe[1] = -1;
+    close(continue_pipe[0]);
+    continue_pipe[0] = -1;
+    for (attempt = 0u; attempt < 400u && !first_listing; attempt++)
+    {
+        struct pollfd descriptors[2];
+        size_t count = 0u;
+        int ready = 0;
+
+        if (events->get_pollfds(provider, descriptors, 1u, &count) !=
+                LIBRDP_STATUS_OK ||
+            count != 1u)
+            goto cleanup;
+        descriptors[1].fd = ready_pipe[0];
+        descriptors[1].events = POLLIN;
+        descriptors[1].revents = 0;
+        ready = poll(descriptors, 2u, 25);
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (ready < 0)
+            goto cleanup;
+        if (descriptors[0].revents != 0 &&
+            (events->notify_poll(provider, &descriptors[0], 1u) !=
+                 LIBRDP_STATUS_OK ||
+             events->dispatch(provider, 16u) != LIBRDP_STATUS_OK))
+            goto cleanup;
+        if ((descriptors[1].revents & POLLIN) != 0)
+        {
+            char signal = '0';
+
+            if (read(ready_pipe[0], &signal, 1u) != 1 || signal != '1')
+                goto cleanup;
+            first_listing = 1;
+        }
+    }
+    if (!first_listing || state.notify_request_id == 0u ||
+        state.notify_count != 1u)
+        goto cleanup;
+    (void)snprintf(state.directory_name, sizeof(state.directory_name),
+                   "%s", "after.txt");
+    completion.request_id = state.notify_request_id;
+    completion.volume_id = state.notify_volume_id;
+    completion.peer_id = state.notify_peer_id;
+    completion.generation = state.notify_generation;
+    completion.type = LIBRDP_SERVER_DRIVE_REQUEST_COMPLETED;
+    completion.status = LIBRDP_STATUS_OK;
+    completion.operation = LIBRDP_SERVER_DRIVE_NOTIFY_DIRECTORY;
+    completion.file = state.notify_file;
+    if (drive->complete(provider, &completion) != LIBRDP_STATUS_OK ||
+        state.notify_count != 2u)
+        goto cleanup;
+    {
+        const char signal = '1';
+
+        if (write(continue_pipe[1], &signal, 1u) != 1)
+            goto cleanup;
+    }
+    for (attempt = 0u; attempt < 400u && !child_finished; attempt++)
+    {
+        struct pollfd descriptor;
+        size_t count = 0u;
+        int ready = 0;
+        pid_t waited = waitpid(child, &child_status, WNOHANG);
+
+        if (waited == child)
+        {
+            child_finished = 1;
+            break;
+        }
+        if (waited < 0)
+            goto cleanup;
+        if (events->get_pollfds(provider, &descriptor, 1u, &count) !=
+                LIBRDP_STATUS_OK ||
+            count != 1u)
+            goto cleanup;
+        ready = poll(&descriptor, 1u, 25);
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (ready < 0)
+            goto cleanup;
+        if (ready > 0 &&
+            (events->notify_poll(provider, &descriptor, 1u) !=
+                 LIBRDP_STATUS_OK ||
+             events->dispatch(provider, 16u) != LIBRDP_STATUS_OK))
+            goto cleanup;
+    }
+    if (!child_finished || !WIFEXITED(child_status) ||
+        WEXITSTATUS(child_status) != 0 || state.cancel_count == 0u)
+        goto cleanup;
+    child = -1;
+    result = 0;
+
+cleanup:
+    if (child > 0)
+    {
+        kill(child, SIGTERM);
+        (void)waitpid(child, NULL, 0);
+    }
+    if (provider && drive)
+        drive->stop(provider);
+    if (ready_pipe[0] >= 0)
+        close(ready_pipe[0]);
+    if (ready_pipe[1] >= 0)
+        close(ready_pipe[1]);
+    if (continue_pipe[0] >= 0)
+        close(continue_pipe[0]);
+    if (continue_pipe[1] >= 0)
+        close(continue_pipe[1]);
+    server_fuse_free(provider);
+    if (rmdir(path) != 0)
+        result = 1;
+    return result;
 }
 
 /*
@@ -2382,6 +2750,8 @@ int main(void)
     if (test_fuse_drive_model() != 0)
         return 1;
     if (test_fuse_drive_event_source() != 0)
+        return 1;
+    if (test_fuse_directory_notify_event_source() != 0)
         return 1;
     if (test_fuse_clipboard_model() != 0)
         return 1;

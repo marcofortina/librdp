@@ -174,6 +174,7 @@ x11_server_runtime* x11_server_runtime_new(
     native_config.allow_clipboard = options->allow_clipboard;
     native_config.allow_drive = options->allow_drive;
     native_config.drive_mount = options->drive_mount;
+    native_config.drive_read_only = options->drive_read_only;
     native_config.max_frame_bytes = options->max_frame_bytes;
     runtime->native = x11_server_context_new(&native_config);
     if (!runtime->native)

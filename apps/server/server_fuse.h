@@ -27,6 +27,7 @@
 #define SERVER_FUSE_DEFAULT_MAX_PENDING 256u
 #define SERVER_FUSE_DEFAULT_MAX_DIRECTORY_ENTRIES 2048u
 #define SERVER_FUSE_DEFAULT_MAX_READ_BYTES (4u * 1024u * 1024u)
+#define SERVER_FUSE_DEFAULT_MAX_WRITE_BYTES (4u * 1024u * 1024u)
 
 typedef struct server_fuse_config
 {
@@ -38,6 +39,7 @@ typedef struct server_fuse_config
     uint32_t max_pending;
     uint32_t max_directory_entries;
     uint32_t max_read_bytes;
+    uint32_t max_write_bytes;
     int read_only;
 } server_fuse_config;
 

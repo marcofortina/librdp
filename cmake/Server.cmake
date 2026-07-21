@@ -763,8 +763,11 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
                     test_x11_server_interop)
                 add_test(NAME x11_server_external_interop
                     COMMAND test_x11_server_interop standard)
+                add_test(NAME x11_server_external_interop_writable
+                    COMMAND test_x11_server_interop standard-writable)
                 set(LIBRDP_X11_SERVER_INTEROP_TESTS
                     x11_server_external_interop
+                    x11_server_external_interop_writable
                 )
                 if(LIBRDP_OPENSSL_EXECUTABLE)
                     add_test(NAME x11_server_external_interop_tls

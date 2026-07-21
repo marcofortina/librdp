@@ -66,6 +66,7 @@ void x11_server_config_init(x11_server_config* config)
     config->size = sizeof(*config);
     config->source_kind = X11_SERVER_SOURCE_ROOT;
     config->max_frame_bytes = 256u * 1024u * 1024u;
+    config->drive_read_only = 1;
 }
 
 static int x11_server_config_valid(const x11_server_config* config)
@@ -79,7 +80,8 @@ static int x11_server_config_valid(const x11_server_config* config)
             config->window_id != 0ul) &&
            (!config->allow_drive ||
             (config->drive_mount && config->drive_mount[0] != '\0' &&
-             server_fuse_available()));
+             server_fuse_available())) &&
+           (config->drive_read_only == 0 || config->drive_read_only == 1);
 }
 
 static void x11_server_shm_release(x11_server_context* context)
@@ -302,6 +304,7 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
         context->config.drive_mount = context->drive_mount;
         server_fuse_config_init(&fuse_config);
         fuse_config.mount_path = context->drive_mount;
+        fuse_config.read_only = config->drive_read_only;
         context->fuse = server_fuse_new(&fuse_config);
         if (!context->fuse)
         {

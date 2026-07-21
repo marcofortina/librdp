@@ -41,6 +41,7 @@
 #define SERVER_FUSE_MAX_CLIPBOARD_URI_BYTES (16u * 1024u * 1024u)
 #define SERVER_FUSE_MAX_REPLY_BYTES SERVER_FUSE_DEFAULT_MAX_READ_BYTES
 #define SERVER_FUSE_FILE_GENERIC_READ 0x00120089u
+#define SERVER_FUSE_FILE_GENERIC_WRITE 0x00120116u
 #define SERVER_FUSE_FILE_SHARE_ALL 0x00000007u
 #define SERVER_FUSE_FILE_OPEN 0x00000001u
 #define SERVER_FUSE_FILE_DIRECTORY 0x00000001u
@@ -50,15 +51,10 @@
 #define SERVER_FUSE_FILETIME_UNITS_PER_SECOND 10000000ull
 
 #if defined(__FreeBSD__)
-/*
- * mount_fusefs rejects nodev; this read-only backend exposes no mknod
- * operation.
- */
-#define SERVER_FUSE_MOUNT_OPTIONS                                           \
-    "ro,default_permissions,nosuid,noexec,fsname=librdp-client-drives"
+#define SERVER_FUSE_MOUNT_SECURITY_OPTIONS "default_permissions,nosuid,noexec"
 #else
-#define SERVER_FUSE_MOUNT_OPTIONS                                           \
-    "ro,default_permissions,nosuid,nodev,noexec,fsname=librdp-client-drives"
+#define SERVER_FUSE_MOUNT_SECURITY_OPTIONS                                  \
+    "default_permissions,nosuid,nodev,noexec"
 #endif
 
 typedef enum server_fuse_node_kind
@@ -80,7 +76,11 @@ typedef enum server_fuse_pending_kind
     SERVER_FUSE_PENDING_RELEASE = 5,
     SERVER_FUSE_PENDING_RELEASEDIR = 6,
     SERVER_FUSE_PENDING_READDIR = 7,
-    SERVER_FUSE_PENDING_CLIPBOARD_READ = 8
+    SERVER_FUSE_PENDING_CLIPBOARD_READ = 8,
+    SERVER_FUSE_PENDING_WRITE = 9,
+    SERVER_FUSE_PENDING_FLUSH = 10,
+    SERVER_FUSE_PENDING_LOCK = 11,
+    SERVER_FUSE_PENDING_NOTIFY = 12
 } server_fuse_pending_kind;
 
 typedef enum server_fuse_pending_stage
@@ -108,6 +108,7 @@ typedef struct server_fuse_node
     server_fuse_node_kind kind;
     int valid;
     int metadata_valid;
+    int read_only;
 } server_fuse_node;
 
 typedef struct server_fuse_handle
@@ -122,6 +123,10 @@ typedef struct server_fuse_handle
     int local;
     int directory_loaded;
     int closing;
+    int writable;
+    int append;
+    int notify_pending;
+    int notify_disabled;
     int occupied;
 } server_fuse_handle;
 
@@ -241,7 +246,9 @@ static int server_fuse_config_valid(const server_fuse_config* config)
            config->max_directory_entries <= config->max_nodes &&
            config->max_read_bytes > 0u &&
            config->max_read_bytes <= SERVER_FUSE_MAX_REPLY_BYTES &&
-           config->read_only == 1;
+           config->max_write_bytes > 0u &&
+           config->max_write_bytes <= SERVER_FUSE_MAX_REPLY_BYTES &&
+           (config->read_only == 0 || config->read_only == 1);
 }
 
 static server_fuse_node* server_fuse_find_node(const server_fuse* provider,
@@ -266,6 +273,7 @@ static server_fuse_node* server_fuse_find_child(const server_fuse* provider,
                                                 const char* name)
 {
     uint32_t index = 0u;
+    server_fuse_node* stale = NULL;
 
     if (!provider || parent == 0u || !name)
         return NULL;
@@ -273,11 +281,18 @@ static server_fuse_node* server_fuse_find_child(const server_fuse* provider,
     {
         server_fuse_node* node = &provider->nodes[index];
 
-        if (node->valid && node->parent == parent && node->name &&
-            strcmp(node->name, name) == 0)
-            return node;
+        if (!node->valid || node->parent != parent || !node->name ||
+            strcmp(node->name, name) != 0)
+            continue;
+        if (node->kind == SERVER_FUSE_NODE_REMOTE && !node->metadata_valid)
+        {
+            if (!stale)
+                stale = node;
+            continue;
+        }
+        return node;
     }
-    return NULL;
+    return stale;
 }
 
 static server_fuse_node* server_fuse_find_volume(const server_fuse* provider,
@@ -306,6 +321,15 @@ static server_fuse_node* server_fuse_volume_for_node(
     if (node->kind == SERVER_FUSE_NODE_VOLUME)
         return (server_fuse_node*)node;
     return server_fuse_find_volume(provider, node->volume_id);
+}
+
+static int server_fuse_node_read_only(const server_fuse* provider,
+                                      const server_fuse_node* node)
+{
+    const server_fuse_node* volume =
+        server_fuse_volume_for_node(provider, node);
+
+    return !volume || volume->read_only;
 }
 
 static server_fuse_handle* server_fuse_find_handle(const server_fuse* provider,
@@ -347,7 +371,7 @@ static server_fuse_pending* server_fuse_allocate_pending(
 {
     uint32_t index = 0u;
 
-    if (!provider || !request)
+    if (!provider || (!request && kind != SERVER_FUSE_PENDING_NOTIFY))
         return NULL;
     for (index = 0u; index < provider->config.max_pending; index++)
     {
@@ -403,6 +427,31 @@ static void server_fuse_clear_handle(server_fuse_handle* handle)
         return;
     free(handle->directory_entries);
     memset(handle, 0, sizeof(*handle));
+}
+
+static int server_fuse_node_referenced(const server_fuse* provider,
+                                       fuse_ino_t inode)
+{
+    uint32_t index = 0u;
+
+    if (!provider || inode == 0u)
+        return 0;
+    for (index = 0u; index < provider->config.max_handles; index++)
+    {
+        const server_fuse_handle* handle = &provider->handles[index];
+
+        if (handle->occupied && handle->inode == inode)
+            return 1;
+    }
+    for (index = 0u; index < provider->config.max_pending; index++)
+    {
+        const server_fuse_pending* pending = &provider->pending[index];
+
+        if (pending->occupied &&
+            (pending->inode == inode || pending->parent == inode))
+            return 1;
+    }
+    return 0;
 }
 
 static int server_fuse_join_path(const char* parent, const char* name,
@@ -482,6 +531,17 @@ static void server_fuse_invalidate_node(server_fuse* provider,
     memset(node, 0, sizeof(*node));
 }
 
+static void server_fuse_remove_stale_node(server_fuse* provider,
+                                          fuse_ino_t inode)
+{
+    server_fuse_node* node = server_fuse_find_node(provider, inode);
+
+    if (node && node->kind == SERVER_FUSE_NODE_REMOTE &&
+        !node->metadata_valid &&
+        !server_fuse_node_referenced(provider, inode))
+        server_fuse_invalidate_node(provider, node);
+}
+
 static uint64_t server_fuse_filetime_seconds(uint64_t value)
 {
     if (value <= SERVER_FUSE_UNIX_EPOCH_FILETIME)
@@ -490,11 +550,13 @@ static uint64_t server_fuse_filetime_seconds(uint64_t value)
            SERVER_FUSE_FILETIME_UNITS_PER_SECOND;
 }
 
-static void server_fuse_node_stat(const server_fuse_node* node,
+static void server_fuse_node_stat(const server_fuse* provider,
+                                  const server_fuse_node* node,
                                   struct stat* status)
 {
     uint64_t seconds = 0u;
     int directory = 1;
+    int read_only = 1;
 
     memset(status, 0, sizeof(*status));
     if (!node)
@@ -503,10 +565,14 @@ static void server_fuse_node_stat(const server_fuse_node* node,
          node->kind == SERVER_FUSE_NODE_CLIPBOARD_FILE) &&
         node->metadata_valid)
         directory = node->metadata.directory != 0u;
+    if (node->kind == SERVER_FUSE_NODE_REMOTE ||
+        node->kind == SERVER_FUSE_NODE_VOLUME)
+        read_only = server_fuse_node_read_only(provider, node);
     status->st_ino = node->inode;
     status->st_uid = geteuid();
     status->st_gid = getegid();
-    status->st_mode = directory ? (S_IFDIR | 0500) : (S_IFREG | 0400);
+    status->st_mode = directory ? (S_IFDIR | 0500)
+                                : (S_IFREG | (read_only ? 0400 : 0600));
     status->st_nlink = directory ? 2u : 1u;
     if (node->metadata_valid)
     {
@@ -537,7 +603,9 @@ static int server_fuse_node_is_directory(const server_fuse_node* node)
     return 1;
 }
 
-static void server_fuse_reply_entry(fuse_req_t request, server_fuse_node* node)
+static void server_fuse_reply_entry(server_fuse* provider,
+                                    fuse_req_t request,
+                                    server_fuse_node* node)
 {
     struct fuse_entry_param entry;
 
@@ -546,7 +614,7 @@ static void server_fuse_reply_entry(fuse_req_t request, server_fuse_node* node)
     entry.generation = node->generation;
     entry.attr_timeout = 0.25;
     entry.entry_timeout = 0.25;
-    server_fuse_node_stat(node, &entry.attr);
+    server_fuse_node_stat(provider, node, &entry.attr);
     node->lookup_count++;
     (void)fuse_reply_entry(request, &entry);
 }
@@ -651,7 +719,8 @@ static int server_fuse_prepare_request(server_fuse* provider,
 static int server_fuse_submit_create(server_fuse* provider,
                                      server_fuse_pending* pending,
                                      const server_fuse_node* node,
-                                     const char* path, int directory)
+                                     const char* path, int directory,
+                                     uint32_t desired_access)
 {
     server_platform_drive_request request;
     server_fuse_node* volume = server_fuse_volume_for_node(provider, node);
@@ -662,7 +731,7 @@ static int server_fuse_submit_create(server_fuse* provider,
         return 0;
     request.operation.device = volume->device;
     request.operation.path = path;
-    request.operation.desired_access = SERVER_FUSE_FILE_GENERIC_READ;
+    request.operation.desired_access = desired_access;
     request.operation.file_attributes = SERVER_FUSE_FILE_ATTRIBUTE_NORMAL;
     request.operation.shared_access = SERVER_FUSE_FILE_SHARE_ALL;
     request.operation.create_disposition = SERVER_FUSE_FILE_OPEN;
@@ -712,6 +781,91 @@ static int server_fuse_submit_read(server_fuse* provider,
     return 1;
 }
 
+static int server_fuse_submit_write(server_fuse* provider,
+                                    server_fuse_pending* pending,
+                                    const server_fuse_node* node,
+                                    librdp_server_drive_file_handle file,
+                                    uint64_t offset, const uint8_t* data,
+                                    size_t data_len)
+{
+    server_platform_drive_request request;
+
+    if ((!data && data_len > 0u) || data_len > UINT32_MAX ||
+        !server_fuse_prepare_request(provider, pending, node, &request,
+                                     LIBRDP_SERVER_DRIVE_WRITE))
+        return 0;
+    request.operation.file = file;
+    request.operation.offset = offset;
+    request.operation.data = data;
+    request.operation.data_len = data_len;
+    pending->stage = SERVER_FUSE_STAGE_IO;
+    provider->sink.request(&request, provider->sink.user_data);
+    return 1;
+}
+
+static int server_fuse_submit_flush(server_fuse* provider,
+                                    server_fuse_pending* pending,
+                                    const server_fuse_node* node,
+                                    librdp_server_drive_file_handle file)
+{
+    server_platform_drive_request request;
+
+    if (!server_fuse_prepare_request(provider, pending, node, &request,
+                                     LIBRDP_SERVER_DRIVE_FLUSH))
+        return 0;
+    request.operation.file = file;
+    pending->stage = SERVER_FUSE_STAGE_IO;
+    provider->sink.request(&request, provider->sink.user_data);
+    return 1;
+}
+
+static int server_fuse_submit_lock(
+    server_fuse* provider, server_fuse_pending* pending,
+    const server_fuse_node* node, librdp_server_drive_file_handle file,
+    librdp_server_drive_lock_operation operation,
+    const librdp_server_drive_lock_range* range)
+{
+    server_platform_drive_request request;
+
+    if (!range || range->length == 0u ||
+        !server_fuse_prepare_request(provider, pending, node, &request,
+                                     LIBRDP_SERVER_DRIVE_LOCK))
+        return 0;
+    request.operation.file = file;
+    request.operation.lock_operation = operation;
+    request.operation.locks = range;
+    request.operation.lock_count = 1u;
+    pending->stage = SERVER_FUSE_STAGE_IO;
+    provider->sink.request(&request, provider->sink.user_data);
+    return 1;
+}
+
+static int server_fuse_submit_notify(server_fuse* provider,
+                                     server_fuse_pending* pending,
+                                     const server_fuse_node* node,
+                                     librdp_server_drive_file_handle file)
+{
+    server_platform_drive_request request;
+
+    if (!server_fuse_prepare_request(provider, pending, node, &request,
+                                     LIBRDP_SERVER_DRIVE_NOTIFY_DIRECTORY))
+        return 0;
+    request.operation.file = file;
+    request.operation.watch_tree = 0u;
+    request.operation.completion_filter =
+        LIBRDP_SERVER_DRIVE_NOTIFY_FILE_NAME |
+        LIBRDP_SERVER_DRIVE_NOTIFY_DIRECTORY_NAME |
+        LIBRDP_SERVER_DRIVE_NOTIFY_ATTRIBUTES |
+        LIBRDP_SERVER_DRIVE_NOTIFY_SIZE |
+        LIBRDP_SERVER_DRIVE_NOTIFY_LAST_WRITE |
+        LIBRDP_SERVER_DRIVE_NOTIFY_LAST_ACCESS |
+        LIBRDP_SERVER_DRIVE_NOTIFY_CREATION |
+        LIBRDP_SERVER_DRIVE_NOTIFY_SECURITY;
+    pending->stage = SERVER_FUSE_STAGE_IO;
+    provider->sink.request(&request, provider->sink.user_data);
+    return 1;
+}
+
 static int server_fuse_submit_close(server_fuse* provider,
                                     server_fuse_pending* pending,
                                     const server_fuse_node* node,
@@ -728,12 +882,126 @@ static int server_fuse_submit_close(server_fuse* provider,
     return 1;
 }
 
+/* Arm one long-lived remote watch without retaining a kernel FUSE request. */
+static int server_fuse_start_notify(server_fuse* provider,
+                                    server_fuse_handle* handle)
+{
+    server_fuse_node* node = NULL;
+    server_fuse_pending* pending = NULL;
+
+    if (!provider || !handle || !handle->occupied || !handle->directory ||
+        handle->local || handle->closing || handle->notify_pending ||
+        handle->notify_disabled)
+        return 0;
+    node = server_fuse_find_node(provider, handle->inode);
+    if (!node)
+    {
+        handle->notify_disabled = 1;
+        return 0;
+    }
+    pending = server_fuse_allocate_pending(provider, NULL,
+                                           SERVER_FUSE_PENDING_NOTIFY);
+    if (!pending)
+        return 0;
+    pending->inode = handle->inode;
+    pending->handle_id = handle->id;
+    handle->notify_pending = 1;
+    if (!server_fuse_submit_notify(provider, pending, node, handle->remote))
+    {
+        handle->notify_pending = 0;
+        handle->notify_disabled = 1;
+        server_fuse_clear_pending(pending);
+        return 0;
+    }
+    return 1;
+}
+
+/* Cancel an outstanding watch before its remote directory handle is closed. */
+static void server_fuse_cancel_notify(server_fuse* provider,
+                                      server_fuse_handle* handle)
+{
+    uint32_t index = 0u;
+
+    if (!provider || !handle || !handle->notify_pending)
+        return;
+    for (index = 0u; index < provider->config.max_pending; index++)
+    {
+        server_fuse_pending* pending = &provider->pending[index];
+        server_fuse_node* node = NULL;
+        server_fuse_node* volume = NULL;
+
+        if (!pending->occupied ||
+            pending->kind != SERVER_FUSE_PENDING_NOTIFY ||
+            pending->handle_id != handle->id)
+            continue;
+        node = server_fuse_find_node(provider, handle->inode);
+        volume = server_fuse_volume_for_node(provider, node);
+        if (provider->started && provider->sink.cancel && volume)
+        {
+            provider->sink.cancel(volume->peer_id, volume->generation,
+                                  pending->request_id,
+                                  provider->sink.user_data);
+        }
+        if (pending->occupied)
+            server_fuse_clear_pending(pending);
+        break;
+    }
+    handle->notify_pending = 0;
+}
+
+/*
+ * Invalidate every cached view of a changed remote directory. Inodes used by
+ * open files stay addressable but stale until their final handle is closed.
+ */
+static void server_fuse_invalidate_directory_cache(server_fuse* provider,
+                                                   fuse_ino_t inode)
+{
+    uint32_t index = 0u;
+
+    if (!provider || inode == 0u)
+        return;
+    for (index = 0u; index < provider->config.max_handles; index++)
+    {
+        server_fuse_handle* handle = &provider->handles[index];
+
+        if (!handle->occupied || !handle->directory ||
+            handle->inode != inode)
+            continue;
+        free(handle->directory_entries);
+        handle->directory_entries = NULL;
+        handle->directory_count = 0u;
+        handle->directory_loaded = 0;
+        handle->query_count = 0u;
+    }
+    for (index = 0u; index < provider->config.max_nodes; index++)
+    {
+        server_fuse_node* child = &provider->nodes[index];
+
+        if (!child->valid || child->kind != SERVER_FUSE_NODE_REMOTE ||
+            child->parent != inode)
+            continue;
+        if (provider->mounted)
+        {
+            (void)fuse_lowlevel_notify_inval_entry(
+                provider->session, inode, child->name, strlen(child->name));
+            (void)fuse_lowlevel_notify_inval_inode(provider->session,
+                                                   child->inode, 0, 0);
+        }
+        child->metadata_valid = 0;
+        if (!server_fuse_node_referenced(provider, child->inode))
+            server_fuse_invalidate_node(provider, child);
+    }
+    if (provider->mounted)
+        (void)fuse_lowlevel_notify_inval_inode(provider->session, inode, 0, 0);
+}
+
 static void server_fuse_reply_pending_error(server_fuse_pending* pending,
                                             int error)
 {
     if (!pending)
         return;
-    (void)fuse_reply_err(pending->request, error != 0 ? error : EIO);
+    if (pending->request)
+        (void)fuse_reply_err(pending->request, error != 0 ? error : EIO);
     server_fuse_clear_pending(pending);
 }
 
@@ -1086,6 +1354,9 @@ static server_fuse_node* server_fuse_add_remote_node(
     if (!provider || !parent || !metadata ||
         !server_fuse_join_path(parent->path, name, path))
         return NULL;
+    if (node && !node->metadata_valid &&
+        server_fuse_node_referenced(provider, node->inode))
+        node = NULL;
     if (!node)
     {
         node = server_fuse_allocate_node(provider, SERVER_FUSE_NODE_REMOTE,
@@ -1199,13 +1470,18 @@ static int server_fuse_decode_directory_page(
                 completion->data_len, offset, &metadata, name, sizeof(name),
                 &name_length, &next_offset);
         }
-        if (status != LIBRDP_STATUS_OK || name_length == 0u ||
-            !server_fuse_name_valid(name))
+        if (status != LIBRDP_STATUS_OK || name_length == 0u)
             return EPROTO;
-        node = server_fuse_add_remote_node(provider, parent, name, &metadata);
-        if (!node || !server_fuse_handle_add_directory_entry(provider, handle,
-                                                             node->inode))
-            return ENOSPC;
+        if (strcmp(name, ".") != 0 && strcmp(name, "..") != 0)
+        {
+            if (!server_fuse_name_valid(name))
+                return EPROTO;
+            node =
+                server_fuse_add_remote_node(provider, parent, name, &metadata);
+            if (!node || !server_fuse_handle_add_directory_entry(
+                             provider, handle, node->inode))
+                return ENOSPC;
+        }
         (*decoded_count)++;
         if (next_offset == 0u)
             break;
@@ -1275,7 +1551,7 @@ static void server_fuse_reply_directory(server_fuse* provider,
             }
             name = node->name;
         }
-        server_fuse_node_stat(node, &status);
+        server_fuse_node_stat(provider, node, &status);
         entry_size = fuse_add_direntry(pending->request, NULL, 0u, name,
                                        &status, (off_t)(position + 1u));
         if (entry_size > capacity - used)
@@ -1289,6 +1565,7 @@ static void server_fuse_reply_directory(server_fuse* provider,
     (void)fuse_reply_buf(pending->request, buffer, used);
     free(buffer);
     server_fuse_clear_pending(pending);
+    (void)server_fuse_start_notify(provider, handle);
 }
 
 static void server_fuse_finish_close(server_fuse* provider,
@@ -1305,7 +1582,7 @@ static void server_fuse_finish_close(server_fuse* provider,
 
         if (error == 0 && node)
         {
-            server_fuse_reply_entry(pending->request, node);
+            server_fuse_reply_entry(provider, pending->request, node);
             server_fuse_clear_pending(pending);
         }
         else
@@ -1318,11 +1595,13 @@ static void server_fuse_finish_close(server_fuse* provider,
     {
         server_fuse_handle* handle =
             server_fuse_find_handle(provider, pending->handle_id);
+        fuse_ino_t inode = handle ? handle->inode : 0u;
 
         if (handle)
             server_fuse_clear_handle(handle);
         (void)fuse_reply_err(pending->request, error);
         server_fuse_clear_pending(pending);
+        server_fuse_remove_stale_node(provider, inode);
         return;
     }
     server_fuse_reply_pending_error(pending, error != 0 ? error : EIO);
@@ -1403,11 +1682,40 @@ static void server_fuse_complete_open(
         return;
     }
     handle->remote = completion->file;
+    handle->writable =
+        (pending->file_info.flags & O_ACCMODE) != O_RDONLY;
+    handle->append =
+        (pending->file_info.flags & O_APPEND) != 0;
     pending->file_info.fh = handle->id;
     pending->file_info.keep_cache = 0u;
     pending->file_info.cache_readdir = 0u;
     (void)fuse_reply_open(pending->request, &pending->file_info);
     server_fuse_clear_pending(pending);
+    if (handle->directory)
+        (void)server_fuse_start_notify(provider, handle);
+}
+
+static void server_fuse_complete_notify(
+    server_fuse* provider, server_fuse_pending* pending, int error)
+{
+    server_fuse_handle* handle =
+        server_fuse_find_handle(provider, pending->handle_id);
+
+    if (handle)
+        handle->notify_pending = 0;
+    server_fuse_clear_pending(pending);
+    if (!handle || handle->closing)
+        return;
+    if (error != 0)
+    {
+        if (error == ECANCELED)
+            (void)server_fuse_start_notify(provider, handle);
+        else
+            handle->notify_disabled = 1;
+        return;
+    }
+    server_fuse_invalidate_directory_cache(provider, handle->inode);
+    (void)server_fuse_start_notify(provider, handle);
 }
 
 static void server_fuse_complete_readdir(
@@ -1454,6 +1762,11 @@ static void server_fuse_complete_readdir(
         server_fuse_reply_pending_error(pending, EIO);
 }
 
+/*
+ * Resolve exactly one correlated remote completion into its pending FUSE
+ * reply. Validation happens before mutating cache state; terminal paths clear
+ * the slot once, while staged directory and lookup operations retain it.
+ */
 static librdp_status server_fuse_complete(
     void* opaque, const server_platform_drive_completion* completion)
 {
@@ -1486,11 +1799,53 @@ static librdp_status server_fuse_complete(
             server_fuse_reply_pending_error(pending,
                                             error != 0 ? error : EPROTO);
     }
+    else if (pending->kind == SERVER_FUSE_PENDING_WRITE)
+    {
+        server_fuse_node* node =
+            server_fuse_find_node(provider, pending->inode);
+
+        if (error == 0 && node && completion->transferred > 0u &&
+            completion->transferred <= pending->requested_size)
+        {
+            uint64_t base = pending->requested_offset < 0
+                                ? node->metadata.file_size
+                                : (uint64_t)pending->requested_offset;
+            uint64_t end = 0u;
+
+            if (base > UINT64_MAX - completion->transferred)
+            {
+                server_fuse_reply_pending_error(pending, EFBIG);
+                return LIBRDP_STATUS_OK;
+            }
+            end = base + completion->transferred;
+
+            if (pending->requested_offset >= 0 &&
+                end > node->metadata.file_size)
+                node->metadata.file_size = end;
+            node->metadata_valid = 1;
+            (void)fuse_reply_write(pending->request,
+                                   (size_t)completion->transferred);
+            server_fuse_clear_pending(pending);
+        }
+        else
+            server_fuse_reply_pending_error(
+                pending, error != 0 ? error : EPROTO);
+    }
+    else if (pending->kind == SERVER_FUSE_PENDING_FLUSH ||
+             pending->kind == SERVER_FUSE_PENDING_LOCK)
+    {
+        if (pending->kind == SERVER_FUSE_PENDING_LOCK && error == EACCES)
+            error = EAGAIN;
+        (void)fuse_reply_err(pending->request, error);
+        server_fuse_clear_pending(pending);
+    }
     else if (pending->kind == SERVER_FUSE_PENDING_RELEASE ||
              pending->kind == SERVER_FUSE_PENDING_RELEASEDIR)
         server_fuse_finish_close(provider, pending, error);
     else if (pending->kind == SERVER_FUSE_PENDING_READDIR)
         server_fuse_complete_readdir(provider, pending, completion, error);
+    else if (pending->kind == SERVER_FUSE_PENDING_NOTIFY)
+        server_fuse_complete_notify(provider, pending, error);
     else
         server_fuse_reply_pending_error(pending, EPROTO);
     return LIBRDP_STATUS_OK;
@@ -1510,9 +1865,10 @@ static void server_fuse_lookup(fuse_req_t request, fuse_ino_t parent_inode,
         (void)fuse_reply_err(request, parent ? EINVAL : ESTALE);
         return;
     }
-    if (child)
+    if (child &&
+        (child->kind != SERVER_FUSE_NODE_REMOTE || child->metadata_valid))
     {
-        server_fuse_reply_entry(request, child);
+        server_fuse_reply_entry(provider, request, child);
         return;
     }
     if (parent->kind == SERVER_FUSE_NODE_ROOT ||
@@ -1532,7 +1888,8 @@ static void server_fuse_lookup(fuse_req_t request, fuse_ino_t parent_inode,
     }
     pending->parent = parent_inode;
     memcpy(pending->name, name, strlen(name) + 1u);
-    if (!server_fuse_submit_create(provider, pending, parent, parent->path, 1))
+    if (!server_fuse_submit_create(provider, pending, parent, parent->path, 1,
+                                   SERVER_FUSE_FILE_GENERIC_READ))
         server_fuse_reply_pending_error(pending, EIO);
 }
 
@@ -1565,7 +1922,12 @@ static void server_fuse_getattr(fuse_req_t request, fuse_ino_t inode,
         (void)fuse_reply_err(request, ESTALE);
         return;
     }
-    server_fuse_node_stat(node, &status);
+    if (node->kind == SERVER_FUSE_NODE_REMOTE && !node->metadata_valid)
+    {
+        (void)fuse_reply_err(request, ESTALE);
+        return;
+    }
+    server_fuse_node_stat(provider, node, &status);
     (void)fuse_reply_attr(request, &status, 0.25);
 }
 
@@ -1577,8 +1939,21 @@ static void server_fuse_open_common(fuse_req_t request, fuse_ino_t inode,
     server_fuse_node* node = server_fuse_find_node(provider, inode);
     server_fuse_handle* handle = NULL;
     server_fuse_pending* pending = NULL;
+    uint32_t desired_access = SERVER_FUSE_FILE_GENERIC_READ;
 
     if (!node || !file_info)
+    {
+        (void)fuse_reply_err(request, EINVAL);
+        return;
+    }
+    if (node->kind == SERVER_FUSE_NODE_REMOTE && !node->metadata_valid)
+    {
+        (void)fuse_reply_err(request, ESTALE);
+        return;
+    }
+    if ((file_info->flags & O_ACCMODE) != O_RDONLY &&
+        (file_info->flags & O_ACCMODE) != O_WRONLY &&
+        (file_info->flags & O_ACCMODE) != O_RDWR)
     {
         (void)fuse_reply_err(request, EINVAL);
         return;
@@ -1590,8 +1965,14 @@ static void server_fuse_open_common(fuse_req_t request, fuse_ino_t inode,
     }
     if (!directory && (file_info->flags & O_ACCMODE) != O_RDONLY)
     {
-        (void)fuse_reply_err(request, EROFS);
-        return;
+        if (server_fuse_node_read_only(provider, node))
+        {
+            (void)fuse_reply_err(request, EROFS);
+            return;
+        }
+        desired_access = SERVER_FUSE_FILE_GENERIC_WRITE;
+        if ((file_info->flags & O_ACCMODE) == O_RDWR)
+            desired_access |= SERVER_FUSE_FILE_GENERIC_READ;
     }
     if (node->kind == SERVER_FUSE_NODE_ROOT ||
         node->kind == SERVER_FUSE_NODE_PEER ||
@@ -1619,7 +2000,7 @@ static void server_fuse_open_common(fuse_req_t request, fuse_ino_t inode,
     pending->inode = inode;
     pending->file_info = *file_info;
     if (!server_fuse_submit_create(provider, pending, node, node->path,
-                                   directory))
+                                   directory, desired_access))
         server_fuse_reply_pending_error(pending, EIO);
 }
 
@@ -1730,6 +2111,155 @@ static void server_fuse_read(fuse_req_t request, fuse_ino_t inode, size_t size,
     request_size = (uint32_t)pending->requested_size;
     if (!server_fuse_submit_read(provider, pending, node, handle->remote,
                                  (uint64_t)offset, request_size))
+        server_fuse_reply_pending_error(pending, EIO);
+}
+
+/*
+ * Forward one bounded kernel write through the existing asynchronous drive
+ * request path. Writable access is granted only when both the local mount and
+ * the client-announced volume permit it; append handles use the protocol's
+ * append sentinel rather than a cached file size.
+ */
+static void server_fuse_write(fuse_req_t request, fuse_ino_t inode,
+                              const char* data, size_t size, off_t offset,
+                              struct fuse_file_info* file_info)
+{
+    server_fuse* provider = (server_fuse*)fuse_req_userdata(request);
+    server_fuse_node* node = server_fuse_find_node(provider, inode);
+    server_fuse_handle* handle =
+        file_info ? server_fuse_find_handle(provider, file_info->fh) : NULL;
+    server_fuse_pending* pending = NULL;
+    size_t request_size = size;
+    uint64_t request_offset = 0u;
+
+    if (!node || !handle || handle->inode != inode || handle->directory ||
+        handle->closing || offset < 0 || (!data && size > 0u))
+    {
+        (void)fuse_reply_err(request, ESTALE);
+        return;
+    }
+    if (!handle->writable || server_fuse_node_read_only(provider, node))
+    {
+        (void)fuse_reply_err(request, EROFS);
+        return;
+    }
+    if (size == 0u)
+    {
+        (void)fuse_reply_write(request, 0u);
+        return;
+    }
+    if (request_size > provider->config.max_write_bytes)
+        request_size = provider->config.max_write_bytes;
+    pending = server_fuse_allocate_pending(provider, request,
+                                           SERVER_FUSE_PENDING_WRITE);
+    if (!pending)
+    {
+        (void)fuse_reply_err(request, EBUSY);
+        return;
+    }
+    pending->inode = inode;
+    pending->handle_id = handle->id;
+    pending->requested_size = request_size;
+    pending->requested_offset = handle->append ? (off_t)-1 : offset;
+    request_offset = handle->append ? UINT64_MAX : (uint64_t)offset;
+    if (!server_fuse_submit_write(provider, pending, node, handle->remote,
+                                  request_offset, (const uint8_t*)data,
+                                  request_size))
+        server_fuse_reply_pending_error(pending, EIO);
+}
+
+static void server_fuse_flush_common(fuse_req_t request, fuse_ino_t inode,
+                                     struct fuse_file_info* file_info)
+{
+    server_fuse* provider = (server_fuse*)fuse_req_userdata(request);
+    server_fuse_node* node = server_fuse_find_node(provider, inode);
+    server_fuse_handle* handle =
+        file_info ? server_fuse_find_handle(provider, file_info->fh) : NULL;
+    server_fuse_pending* pending = NULL;
+
+    if (!node || !handle || handle->inode != inode || handle->directory ||
+        handle->closing)
+    {
+        (void)fuse_reply_err(request, ESTALE);
+        return;
+    }
+    pending = server_fuse_allocate_pending(provider, request,
+                                           SERVER_FUSE_PENDING_FLUSH);
+    if (!pending)
+    {
+        (void)fuse_reply_err(request, EBUSY);
+        return;
+    }
+    pending->inode = inode;
+    pending->handle_id = handle->id;
+    if (!server_fuse_submit_flush(provider, pending, node, handle->remote))
+        server_fuse_reply_pending_error(pending, EIO);
+}
+
+static void server_fuse_flush(fuse_req_t request, fuse_ino_t inode,
+                              struct fuse_file_info* file_info)
+{
+    server_fuse_flush_common(request, inode, file_info);
+}
+
+static void server_fuse_fsync(fuse_req_t request, fuse_ino_t inode,
+                              int data_only,
+                              struct fuse_file_info* file_info)
+{
+    (void)data_only;
+    server_fuse_flush_common(request, inode, file_info);
+}
+
+static void server_fuse_setlk(fuse_req_t request, fuse_ino_t inode,
+                              struct fuse_file_info* file_info,
+                              struct flock* lock, int sleep)
+{
+    server_fuse* provider = (server_fuse*)fuse_req_userdata(request);
+    server_fuse_node* node = server_fuse_find_node(provider, inode);
+    server_fuse_handle* handle =
+        file_info ? server_fuse_find_handle(provider, file_info->fh) : NULL;
+    server_fuse_pending* pending = NULL;
+    librdp_server_drive_lock_range range;
+    librdp_server_drive_lock_operation operation =
+        LIBRDP_SERVER_DRIVE_UNLOCK;
+
+    (void)sleep;
+    if (!node || !handle || !lock || handle->inode != inode ||
+        handle->directory || handle->closing || lock->l_whence != SEEK_SET ||
+        lock->l_start < 0 || lock->l_len < 0)
+    {
+        (void)fuse_reply_err(request, EINVAL);
+        return;
+    }
+    if (lock->l_type == F_RDLCK)
+        operation = LIBRDP_SERVER_DRIVE_LOCK_SHARED;
+    else if (lock->l_type == F_WRLCK)
+        operation = LIBRDP_SERVER_DRIVE_LOCK_EXCLUSIVE;
+    else if (lock->l_type != F_UNLCK)
+    {
+        (void)fuse_reply_err(request, EINVAL);
+        return;
+    }
+    range.offset = (uint64_t)lock->l_start;
+    range.length = lock->l_len == 0
+                       ? UINT64_MAX - range.offset
+                       : (uint64_t)lock->l_len;
+    if (range.length == 0u || range.offset > UINT64_MAX - range.length)
+    {
+        (void)fuse_reply_err(request, EOVERFLOW);
+        return;
+    }
+    pending = server_fuse_allocate_pending(provider, request,
+                                           SERVER_FUSE_PENDING_LOCK);
+    if (!pending)
+    {
+        (void)fuse_reply_err(request, EBUSY);
+        return;
+    }
+    pending->inode = inode;
+    pending->handle_id = handle->id;
+    if (!server_fuse_submit_lock(provider, pending, node, handle->remote,
+                                 operation, &range))
         server_fuse_reply_pending_error(pending, EIO);
 }
 
@@ -1863,9 +2393,12 @@ static void server_fuse_release_common(fuse_req_t request, fuse_ino_t inode,
     pending->inode = inode;
     pending->handle_id = handle->id;
     handle->closing = 1;
+    server_fuse_cancel_notify(provider, handle);
     if (!server_fuse_submit_close(provider, pending, node, handle->remote))
     {
         handle->closing = 0;
+        if (!handle->notify_disabled)
+            (void)server_fuse_start_notify(provider, handle);
         server_fuse_reply_pending_error(pending, EIO);
     }
 }
@@ -1889,14 +2422,18 @@ static void server_fuse_access(fuse_req_t request, fuse_ino_t inode, int mask)
 
     if (!node)
         (void)fuse_reply_err(request, ESTALE);
-    else if ((mask & W_OK) != 0)
+    else if ((mask & W_OK) != 0 &&
+             server_fuse_node_read_only(provider, node))
         (void)fuse_reply_err(request, EROFS);
+    else if ((mask & W_OK) != 0 && server_fuse_node_is_directory(node))
+        (void)fuse_reply_err(request, EACCES);
     else
         (void)fuse_reply_err(request, 0);
 }
 
 static void server_fuse_statfs(fuse_req_t request, fuse_ino_t inode)
 {
+    server_fuse* provider = (server_fuse*)fuse_req_userdata(request);
     struct statvfs status;
 
     (void)inode;
@@ -1904,16 +2441,34 @@ static void server_fuse_statfs(fuse_req_t request, fuse_ino_t inode)
     status.f_bsize = 4096u;
     status.f_frsize = 4096u;
     status.f_namemax = SERVER_FUSE_MAX_NAME_BYTES;
-    status.f_flag = ST_RDONLY;
+    status.f_flag = provider && provider->config.read_only ? ST_RDONLY : 0u;
     (void)fuse_reply_statfs(request, &status);
 }
 
+/*
+ * Ask the kernel to forward POSIX record locks to the remote drive provider.
+ * Without this negotiated capability fcntl locks are satisfied locally and
+ * never reach the RDPDR lock-control path.
+ */
+static void server_fuse_init(void* opaque, struct fuse_conn_info* connection)
+{
+    (void)opaque;
+    if (connection &&
+        (connection->capable & (unsigned int)FUSE_CAP_POSIX_LOCKS) != 0u)
+        connection->want |= (unsigned int)FUSE_CAP_POSIX_LOCKS;
+}
+
 static const struct fuse_lowlevel_ops server_fuse_operations = {
+    .init = server_fuse_init,
     .lookup = server_fuse_lookup,
     .forget = server_fuse_forget,
     .getattr = server_fuse_getattr,
     .open = server_fuse_open,
     .read = server_fuse_read,
+    .write = server_fuse_write,
+    .flush = server_fuse_flush,
+    .fsync = server_fuse_fsync,
+    .setlk = server_fuse_setlk,
     .release = server_fuse_release,
     .opendir = server_fuse_opendir,
     .readdir = server_fuse_readdir,
@@ -2026,6 +2581,14 @@ static void server_fuse_abort_pending(server_fuse* provider, int error)
 
         if (!pending->occupied)
             continue;
+        if (pending->kind == SERVER_FUSE_PENDING_NOTIFY)
+        {
+            server_fuse_handle* handle =
+                server_fuse_find_handle(provider, pending->handle_id);
+
+            if (handle)
+                handle->closing = 1;
+        }
         if (pending->kind == SERVER_FUSE_PENDING_CLIPBOARD_READ)
         {
             server_fuse_node* node =
@@ -2066,15 +2629,24 @@ static librdp_status server_fuse_start(void* opaque,
 {
     server_fuse* provider = (server_fuse*)opaque;
     struct fuse_args arguments = FUSE_ARGS_INIT(0, NULL);
+    char mount_options[160];
+    int mount_options_len = 0;
     int created = 1;
 
     if (!provider || !sink || !sink->request || !sink->cancel ||
         provider->started ||
         !server_fuse_mount_path_secure(provider->mount_path))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mount_options_len = snprintf(
+        mount_options, sizeof(mount_options), "%s,%s,fsname=librdp-client-drives",
+        provider->config.read_only ? "ro" : "rw",
+        SERVER_FUSE_MOUNT_SECURITY_OPTIONS);
+    if (mount_options_len <= 0 ||
+        (size_t)mount_options_len >= sizeof(mount_options))
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
     if (fuse_opt_add_arg(&arguments, "librdp-server-drive") != 0 ||
         fuse_opt_add_arg(&arguments, "-o") != 0 ||
-        fuse_opt_add_arg(&arguments, SERVER_FUSE_MOUNT_OPTIONS) != 0)
+        fuse_opt_add_arg(&arguments, mount_options) != 0)
         created = 0;
     if (created)
     {
@@ -2183,7 +2755,9 @@ static librdp_status server_fuse_present(
         volume->peer_id == 0u || volume->generation == 0u ||
         volume->device.device_id == 0u ||
         volume->device.reconnect_generation == 0u ||
-        !server_fuse_name_valid(volume->name) || !volume->read_only ||
+        !server_fuse_name_valid(volume->name) ||
+        (volume->read_only != 0 && volume->read_only != 1) ||
+        (!volume->read_only && provider->config.read_only) ||
         server_fuse_find_volume(provider, volume->volume_id))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     peer =
@@ -2209,6 +2783,7 @@ static librdp_status server_fuse_present(
     node->peer_id = volume->peer_id;
     node->generation = volume->generation;
     node->device = volume->device;
+    node->read_only = provider->config.read_only || volume->read_only;
     node->metadata.directory = 1u;
     node->metadata.attributes = LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_DIRECTORY;
     node->metadata_valid = 1;
@@ -2250,6 +2825,14 @@ static void server_fuse_abort_matching(server_fuse* provider, uint32_t peer_id,
             volume->generation != generation ||
             (!all_peer && volume->device.device_id != device_id))
             continue;
+        if (pending->kind == SERVER_FUSE_PENDING_NOTIFY)
+        {
+            server_fuse_handle* handle =
+                server_fuse_find_handle(provider, pending->handle_id);
+
+            if (handle)
+                handle->closing = 1;
+        }
         if (provider->started && provider->sink.cancel)
         {
             provider->sink.cancel(peer_id, generation, pending->request_id,
@@ -2345,6 +2928,7 @@ void server_fuse_config_init(server_fuse_config* config)
     config->max_pending = SERVER_FUSE_DEFAULT_MAX_PENDING;
     config->max_directory_entries = SERVER_FUSE_DEFAULT_MAX_DIRECTORY_ENTRIES;
     config->max_read_bytes = SERVER_FUSE_DEFAULT_MAX_READ_BYTES;
+    config->max_write_bytes = SERVER_FUSE_DEFAULT_MAX_WRITE_BYTES;
     config->read_only = 1;
 }
 
@@ -2587,6 +3171,7 @@ void server_fuse_config_init(server_fuse_config* config)
     config->max_pending = SERVER_FUSE_DEFAULT_MAX_PENDING;
     config->max_directory_entries = SERVER_FUSE_DEFAULT_MAX_DIRECTORY_ENTRIES;
     config->max_read_bytes = SERVER_FUSE_DEFAULT_MAX_READ_BYTES;
+    config->max_write_bytes = SERVER_FUSE_DEFAULT_MAX_WRITE_BYTES;
     config->read_only = 1;
 }
 

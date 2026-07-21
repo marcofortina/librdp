@@ -8,7 +8,8 @@
 /*
  * Module: opt-in X11 server interoperability smoke.
  * Coverage: Standard, TLS and NLA activation, negotiated desktop geometry,
- * framebuffer delivery and client-drive traversal through an external client.
+ * framebuffer delivery and read-only or writable client-drive access through
+ * an external client.
  * Bug classes: activation ordering, capture-size mismatches, channel startup
  * races, stalled child processes and incomplete drive request correlation.
  * Determinism: the test uses isolated Xvfb displays and synthetic credentials;
@@ -18,6 +19,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -629,6 +631,7 @@ static int interop_generate_tls_material(const char* certificate_path,
 static pid_t interop_start_server(const char* display,
                                   uint16_t port,
                                   const char* mount_path,
+                                  int writable_drive,
                                   interop_security security,
                                   const char* certificate_path,
                                   const char* private_key_path,
@@ -697,6 +700,8 @@ static pid_t interop_start_server(const char* display,
     arguments[argument_count++] = (char*)"--allow-drive";
     arguments[argument_count++] = (char*)"--drive-mount";
     arguments[argument_count++] = (char*)mount_path;
+    if (writable_drive)
+        arguments[argument_count++] = (char*)"--drive-read-write";
     arguments[argument_count++] = (char*)"--max-peers";
     arguments[argument_count++] = (char*)"1";
     arguments[argument_count++] = (char*)"--max-fps";
@@ -784,18 +789,46 @@ static pid_t interop_start_client(const char* executable,
     _exit(127);
 }
 
+static int interop_drive_directory_contains_marker(const char* path)
+{
+    DIR* directory = opendir(path);
+    struct dirent* entry = NULL;
+    int found = 0;
+
+    if (!directory)
+        return 0;
+    while ((entry = readdir(directory)) != NULL)
+    {
+        if (strcmp(entry->d_name, "marker.txt") == 0)
+        {
+            found = 1;
+            break;
+        }
+    }
+    closedir(directory);
+    return found;
+}
+
 static pid_t interop_start_drive_reader(const char* mount_path)
 {
     static const char expected[] = "synthetic drive marker\n";
+    char directory_path[PATH_MAX];
     char path[PATH_MAX];
-    int length = 0;
+    int directory_length = 0;
+    int path_length = 0;
     pid_t child = 0;
 
-    length = snprintf(path,
-                      sizeof(path),
-                      "%s/peer-1-1/SMOKE/marker.txt",
-                      mount_path);
-    if (length <= 0 || (size_t)length >= sizeof(path))
+    directory_length = snprintf(directory_path,
+                                sizeof(directory_path),
+                                "%s/peer-1-1/SMOKE",
+                                mount_path);
+    path_length = snprintf(path,
+                           sizeof(path),
+                           "%s/peer-1-1/SMOKE/marker.txt",
+                           mount_path);
+    if (directory_length <= 0 ||
+        (size_t)directory_length >= sizeof(directory_path) ||
+        path_length <= 0 || (size_t)path_length >= sizeof(path))
         return -1;
     child = fork();
     if (child != 0)
@@ -805,6 +838,11 @@ static pid_t interop_start_drive_reader(const char* mount_path)
 
         for (attempt = 0u; attempt < INTEROP_SESSION_STEPS; attempt++)
         {
+            if (!interop_drive_directory_contains_marker(directory_path))
+            {
+                interop_sleep_ms(INTEROP_WAIT_STEP_MS);
+                continue;
+            }
             int file = open(path, O_RDONLY);
 
             if (file >= 0)
@@ -822,6 +860,128 @@ static pid_t interop_start_drive_reader(const char* mount_path)
         }
     }
     _exit(3);
+}
+
+static pid_t interop_start_drive_writer(const char* mount_path)
+{
+    static const char replacement[] = "validated drive marker\n";
+    char directory_path[PATH_MAX];
+    char path[PATH_MAX];
+    int directory_length = 0;
+    int path_length = 0;
+    pid_t child = 0;
+
+    directory_length = snprintf(directory_path,
+                                sizeof(directory_path),
+                                "%s/peer-1-1/SMOKE",
+                                mount_path);
+    path_length = snprintf(path,
+                           sizeof(path),
+                           "%s/peer-1-1/SMOKE/marker.txt",
+                           mount_path);
+    if (directory_length <= 0 ||
+        (size_t)directory_length >= sizeof(directory_path) ||
+        path_length <= 0 || (size_t)path_length >= sizeof(path))
+        return -1;
+    child = fork();
+    if (child != 0)
+        return child;
+    {
+        unsigned int attempt = 0u;
+
+        for (attempt = 0u; attempt < INTEROP_SESSION_STEPS; attempt++)
+        {
+            if (!interop_drive_directory_contains_marker(directory_path))
+            {
+                interop_sleep_ms(INTEROP_WAIT_STEP_MS);
+                continue;
+            }
+            int file = open(path, O_RDWR);
+
+            if (file >= 0)
+            {
+                struct flock lock;
+                ssize_t written = 0;
+                int ok = 0;
+
+                memset(&lock, 0, sizeof(lock));
+                lock.l_type = F_WRLCK;
+                lock.l_whence = SEEK_SET;
+                lock.l_len = 8;
+                if (fcntl(file, F_SETLK, &lock) == 0)
+                {
+                    int sync_status = 0;
+
+                    written = pwrite(file,
+                                     replacement,
+                                     sizeof(replacement) - 1u,
+                                     0);
+                    sync_status = fsync(file);
+                    ok = written == (ssize_t)(sizeof(replacement) - 1u) &&
+                         (sync_status == 0 || errno == ENOTSUP);
+                    lock.l_type = F_UNLCK;
+                    if (fcntl(file, F_SETLK, &lock) != 0)
+                        ok = 0;
+                }
+                close(file);
+                _exit(ok ? 0 : 2);
+            }
+            interop_sleep_ms(INTEROP_WAIT_STEP_MS);
+        }
+    }
+    _exit(3);
+}
+
+static int interop_file_equals(const char* path,
+                               const void* expected,
+                               size_t expected_len)
+{
+    uint8_t buffer[128];
+    int file = -1;
+    ssize_t count = 0;
+
+    if (!path || (!expected && expected_len > 0u) ||
+        expected_len > sizeof(buffer))
+        return 0;
+    file = open(path, O_RDONLY);
+    if (file < 0)
+        return 0;
+    count = read(file, buffer, sizeof(buffer));
+    close(file);
+    return count == (ssize_t)expected_len &&
+           memcmp(buffer, expected, expected_len) == 0;
+}
+
+static int interop_wait_path_absent(const char* path)
+{
+    unsigned int attempt = 0u;
+
+    if (!path)
+        return 0;
+    for (attempt = 0u; attempt < INTEROP_STARTUP_STEPS; attempt++)
+    {
+        if (access(path, F_OK) != 0 && errno == ENOENT)
+            return 1;
+        interop_sleep_ms(INTEROP_WAIT_STEP_MS);
+    }
+    return 0;
+}
+
+static int interop_wait_unmounted_directory(const char* path)
+{
+    unsigned int attempt = 0u;
+
+    if (!path)
+        return 0;
+    for (attempt = 0u; attempt < INTEROP_STARTUP_STEPS; attempt++)
+    {
+        if (rmdir(path) == 0)
+            return 1;
+        if (errno != EBUSY && errno != ENOTEMPTY)
+            return 0;
+        interop_sleep_ms(INTEROP_WAIT_STEP_MS);
+    }
+    return 0;
 }
 
 static int interop_wait_child_success(pid_t* process,
@@ -954,6 +1114,7 @@ static void interop_cleanup_files(const char* root,
 int main(int argc, char** argv)
 {
     static const char marker[] = "synthetic drive marker\n";
+    static const char replacement[] = "validated drive marker\n";
     const char* external_client = getenv("LIBRDP_TEST_EXTERNAL_CLIENT");
     char root[] = "/tmp/librdp-x11-interop-XXXXXX";
     char drive_path[PATH_MAX] = {0};
@@ -973,6 +1134,7 @@ int main(int argc, char** argv)
     interop_security security = INTEROP_SECURITY_STANDARD;
     uint16_t port = 0u;
     int marker_file = -1;
+    int writable_drive = 0;
     int result = 1;
 
     memset(&processes, 0, sizeof(processes));
@@ -980,9 +1142,13 @@ int main(int argc, char** argv)
         security = INTEROP_SECURITY_TLS;
     else if (argc == 2 && strcmp(argv[1], "nla") == 0)
         security = INTEROP_SECURITY_NLA;
+    else if (argc == 2 && strcmp(argv[1], "standard-writable") == 0)
+        writable_drive = 1;
     else if (argc != 1 && !(argc == 2 && strcmp(argv[1], "standard") == 0))
     {
-        fprintf(stderr, "usage: %s [standard|tls|nla]\n", argv[0]);
+        fprintf(stderr,
+                "usage: %s [standard|standard-writable|tls|nla]\n",
+                argv[0]);
         return 2;
     }
     if (!external_client || external_client[0] == '\0')
@@ -1062,6 +1228,7 @@ int main(int argc, char** argv)
     processes.server = interop_start_server(server_display,
                                             port,
                                             mount_path,
+                                            writable_drive,
                                             security,
                                             certificate_path,
                                             private_key_path,
@@ -1080,18 +1247,38 @@ int main(int argc, char** argv)
         !interop_wait_session(server_log, processes.server, processes.client) ||
         !interop_framebuffer_has_pattern(client_display, framebuffer_path))
         goto cleanup;
-    processes.drive_reader = interop_start_drive_reader(mount_path);
+    processes.drive_reader = writable_drive
+                                 ? interop_start_drive_writer(mount_path)
+                                 : interop_start_drive_reader(mount_path);
     if (processes.drive_reader <= 0 ||
         !interop_wait_child_success(&processes.drive_reader,
                                     processes.client,
                                     INTEROP_SESSION_STEPS))
         goto cleanup;
-    if (!interop_file_contains(server_log, "event=server.host.drive.request") ||
-        interop_file_contains(server_log, "status=protocol_error") ||
-        interop_file_contains(server_log, "status=invalid_argument"))
+    if (writable_drive &&
+        !interop_file_equals(marker_path,
+                             replacement,
+                             sizeof(replacement) - 1u))
         goto cleanup;
     if (!interop_request_client_close(client_display) ||
         !interop_wait_clean_exit(&processes.client, INTEROP_STARTUP_STEPS))
+        goto cleanup;
+    {
+        char remote_path[PATH_MAX];
+        int path_len = snprintf(remote_path,
+                                sizeof(remote_path),
+                                "%s/peer-1-1/SMOKE/marker.txt",
+                                mount_path);
+
+        if (path_len <= 0 || (size_t)path_len >= sizeof(remote_path) ||
+            !interop_wait_path_absent(remote_path))
+            goto cleanup;
+    }
+    interop_stop_process(&processes.server);
+    if (!interop_wait_unmounted_directory(mount_path) ||
+        !interop_file_contains(server_log, "event=server.host.drive.request") ||
+        interop_file_contains(server_log, "status=protocol_error") ||
+        interop_file_contains(server_log, "status=invalid_argument"))
         goto cleanup;
     result = 0;
 

@@ -58,7 +58,8 @@ void x11_server_usage(FILE* stream, const char* program)
         "[--max-fps count] [--max-frame-bytes bytes] "
         "[--allow-standard-security] [--user name] [--domain name] "
         "[--password-env name] [--allow-input] [--allow-clipboard] "
-        "[--allow-drive --drive-mount path [--drive-read-only]]\n"
+        "[--allow-drive --drive-mount path "
+        "[--drive-read-only|--drive-read-write]]\n"
         "       %s --mode managed --managed-action "
         "start|attach|query|resize|detach|terminate "
         "[--broker path] [--session-id id] [--token-env name] "
@@ -498,6 +499,8 @@ int x11_server_parse_options(int argc,
             options->allow_drive = 1;
         else if (strcmp(option, "--drive-read-only") == 0)
             options->drive_read_only = 1;
+        else if (strcmp(option, "--drive-read-write") == 0)
+            options->drive_read_only = 0;
         else if (strcmp(option, "--persistent") == 0)
             options->persistent_session = 1;
         else if (strcmp(option, "--reconnect") == 0)
