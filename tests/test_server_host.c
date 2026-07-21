@@ -107,10 +107,28 @@ typedef struct mock_trace_context
     size_t dropped;
 } mock_trace_context;
 
+typedef struct mock_stalled_host_dispatch
+{
+    server_host* host;
+    librdp_status status;
+} mock_stalled_host_dispatch;
+
 static int connect_loopback(uint16_t port);
 static librdp_status accept_loopback_peer(server_host* host);
 static void configure_mock_platform(server_host_config* config,
                                     mock_platform_context* mock);
+
+/* Block in the host poll loop until the test thread signals cancellation. */
+static void* run_stalled_host_dispatch(void* argument)
+{
+    mock_stalled_host_dispatch* dispatch =
+        (mock_stalled_host_dispatch*)argument;
+
+    if (!dispatch || !dispatch->host)
+        return NULL;
+    dispatch->status = server_host_run_once(dispatch->host, 5000);
+    return NULL;
+}
 
 static int check_int(int condition, const char* expression, int line)
 {
@@ -1620,6 +1638,109 @@ static int test_host_provider_failures(void)
 }
 
 /*
+ * Leave every asynchronous provider silent while one accepted peer is idle,
+ * then cancel from another thread. The host wakeup must preempt the provider
+ * deadline and close the peer, listener and provider set deterministically.
+ */
+static int test_host_stalled_provider(
+    server_platform_provider_kind stalled_provider)
+{
+    server_host_config config;
+    mock_platform_context mock;
+    mock_stalled_host_dispatch dispatch;
+    server_host_metrics metrics;
+    server_platform_capture_vtable capture = mock_capture;
+    server_platform_pointer_vtable pointer = mock_pointer;
+    server_platform_clipboard_vtable clipboard = mock_clipboard;
+    server_platform_drive_vtable drive = mock_drive;
+    server_platform_permission_vtable permission = mock_permission;
+    server_host* host = NULL;
+    pthread_t thread;
+    struct timespec delay = {0, 50000000L};
+    uint64_t started_ns = 0u;
+    uint64_t elapsed_ns = 0u;
+    int event_descriptors[2] = {-1, -1};
+    int client = -1;
+
+    server_host_config_init(&config);
+    configure_mock_platform(&config, &mock);
+    capture.events = stalled_provider == SERVER_PLATFORM_PROVIDER_CAPTURE
+                         ? &mock_events
+                         : NULL;
+    pointer.events = NULL;
+    clipboard.events = stalled_provider == SERVER_PLATFORM_PROVIDER_CLIPBOARD
+                           ? &mock_events
+                           : NULL;
+    drive.events = stalled_provider == SERVER_PLATFORM_PROVIDER_DRIVE
+                       ? &mock_events
+                       : NULL;
+    permission.events = stalled_provider == SERVER_PLATFORM_PROVIDER_PERMISSION
+                            ? &mock_events
+                            : NULL;
+    config.platform.capture.vtable = &capture;
+    config.platform.pointer.vtable = &pointer;
+    config.platform.clipboard.vtable = &clipboard;
+    config.platform.drive.vtable = &drive;
+    config.platform.permission.vtable = &permission;
+    CHECK(pipe(event_descriptors) == 0);
+    mock.event_read_fd = event_descriptors[0];
+    mock.event_write_fd = event_descriptors[1];
+    mock.timeout_ms = 5000;
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    client = connect_loopback(server_host_local_port(host));
+    CHECK(client >= 0);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_peer_count(host) == 1u);
+
+    memset(&dispatch, 0, sizeof(dispatch));
+    dispatch.host = host;
+    dispatch.status = LIBRDP_STATUS_AGAIN;
+    started_ns = server_host_now_ns();
+    CHECK(started_ns != 0u);
+    CHECK(pthread_create(&thread,
+                         NULL,
+                         run_stalled_host_dispatch,
+                         &dispatch) == 0);
+    while (nanosleep(&delay, &delay) != 0 && errno == EINTR)
+    {
+    }
+    CHECK(server_host_cancel(host) == LIBRDP_STATUS_OK);
+    CHECK(pthread_join(thread, NULL) == 0);
+    elapsed_ns = server_host_now_ns() - started_ns;
+    CHECK(dispatch.status == LIBRDP_STATUS_CANCELLED);
+    CHECK(elapsed_ns < UINT64_C(2000000000));
+    CHECK(server_host_get_state(host) == SERVER_HOST_STOPPED);
+    CHECK(server_host_peer_count(host) == 0u);
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.cancellations == 1u);
+    CHECK(metrics.peers_closed == 1u);
+    CHECK(mock.stops == 5u);
+
+    server_host_free(host);
+    close(client);
+    close(event_descriptors[0]);
+    close(event_descriptors[1]);
+    return 0;
+}
+
+/* Exercise each asynchronous provider as the sole stalled event source. */
+static int test_host_stalled_providers(void)
+{
+    CHECK(test_host_stalled_provider(
+              SERVER_PLATFORM_PROVIDER_CAPTURE) == 0);
+    CHECK(test_host_stalled_provider(
+              SERVER_PLATFORM_PROVIDER_CLIPBOARD) == 0);
+    CHECK(test_host_stalled_provider(
+              SERVER_PLATFORM_PROVIDER_DRIVE) == 0);
+    CHECK(test_host_stalled_provider(
+              SERVER_PLATFORM_PROVIDER_PERMISSION) == 0);
+    return 0;
+}
+
+/*
  * Own listener and peer slots through start, bounded accept, slot reuse,
  * capture resize and deterministic stop while all native providers remain
  * represented only by opaque mock contexts.
@@ -2300,6 +2421,8 @@ int main(void)
     if (test_dirty_scheduler() != 0)
         return 1;
     if (test_host_provider_failures() != 0)
+        return 1;
+    if (test_host_stalled_providers() != 0)
         return 1;
     if (test_host_lifecycle() != 0)
         return 1;

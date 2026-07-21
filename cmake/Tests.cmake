@@ -171,6 +171,7 @@ if(LIBRDP_BUILD_TESTS)
         tests/test_server_features.c
         tests/test_server_extension_lifecycle.c
         tests/test_server_multitransport.c
+        tests/test_server_backpressure.c
         tests/test_server_focused.c
         tests/test_server_runtime.c
         tests/test_server_security.c
@@ -633,6 +634,7 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME server_extension_lifecycle
              COMMAND test_server extension-lifecycle)
     add_test(NAME server_multitransport COMMAND test_server multitransport)
+    add_test(NAME server_backpressure COMMAND test_server backpressure)
     add_test(NAME server_channels COMMAND test_server channels)
     add_test(NAME server_drive_metadata COMMAND test_server drive-metadata)
     add_test(NAME server_graphics COMMAND test_server graphics)
@@ -1032,6 +1034,7 @@ if(LIBRDP_BUILD_TESTS)
         server_desktop_limits
         server_extension_lifecycle
         server_multitransport
+        server_backpressure
         server_channels
         server_drive_metadata
         server_graphics
