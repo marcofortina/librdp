@@ -54,6 +54,7 @@
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "platform/socket.h"
+#include "protocol/capabilities.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
 #include "protocol/slowpath.h"
@@ -183,7 +184,7 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
                 peer->dynamic_channel_static_index = channel_index;
         }
         server_config.version = client_data.version ? client_data.version : RDP_GCC_CLIENT_VERSION_5;
-        server_config.selected_protocol = peer->selected_protocol;
+        server_config.requested_protocols = peer->requested_protocols;
         server_config.early_capability_flags = 0u;
         server_config.mcs_channel_id = (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID;
         server_config.channel_count = client_data.channel_count;
@@ -235,6 +236,11 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
         status = rdp_gcc_write_conference_create_response(&gcc_response, server_blocks.data, server_blocks.length);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_mcs_write_connect_response(&mcs_response, gcc_response.data, gcc_response.length);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_hexdump("server.mcs.connect.response",
+                          RDP_TRACE_SENSITIVITY_HEADER,
+                          mcs_response.data,
+                          mcs_response.length);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_mcs_pdu(peer, &mcs_response);
     rdp_buffer_free(&mcs_response);
@@ -306,7 +312,7 @@ librdp_status rdp_server_send_demand_active(librdp_server_peer* peer)
     rdp_buffer_init(&demand);
     status = rdp_slowpath_write_demand_active(&demand,
                                               peer->share_id,
-                                              (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                              (uint16_t)RDP_MCS_SERVER_CHANNEL_ID,
                                               peer->width,
                                               peer->height,
                                               peer->server_name ? peer->server_name : "librdp-server");
@@ -329,7 +335,7 @@ librdp_status rdp_server_send_deactivate_all(librdp_server_peer* peer)
     status = rdp_slowpath_write_deactivate_all(
         &deactivate,
         peer->share_id,
-        (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID);
+        (uint16_t)RDP_MCS_SERVER_CHANNEL_ID);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_slowpath(peer, &deactivate);
     rdp_buffer_free(&deactivate);
@@ -425,7 +431,7 @@ static librdp_status rdp_server_send_activation_responses(librdp_server_peer* pe
     rdp_buffer_init(&response);
     status = rdp_slowpath_write_server_synchronize(&response,
                                                    peer->share_id,
-                                                   (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                   (uint16_t)RDP_MCS_SERVER_CHANNEL_ID,
                                                    peer->user_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_slowpath(peer, &response);
@@ -433,7 +439,7 @@ static librdp_status rdp_server_send_activation_responses(librdp_server_peer* pe
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_server_control(&response,
                                                    peer->share_id,
-                                                   (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                   (uint16_t)RDP_MCS_SERVER_CHANNEL_ID,
                                                    4);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_slowpath(peer, &response);
@@ -441,7 +447,7 @@ static librdp_status rdp_server_send_activation_responses(librdp_server_peer* pe
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_server_control(&response,
                                                    peer->share_id,
-                                                   (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                   (uint16_t)RDP_MCS_SERVER_CHANNEL_ID,
                                                    2);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_slowpath(peer, &response);
@@ -459,7 +465,7 @@ static librdp_status rdp_server_send_font_map(librdp_server_peer* peer)
     rdp_buffer_init(&font_map);
     status = rdp_slowpath_write_server_font_map(&font_map,
                                                 peer->share_id,
-                                                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID);
+                                                (uint16_t)RDP_MCS_SERVER_CHANNEL_ID);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_slowpath(peer, &font_map);
     rdp_buffer_free(&font_map);
@@ -817,6 +823,52 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
              confirm.header.channel_id !=
                  peer->user_id))
             status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK)
+        {
+            const rdp_capability_set* general_set =
+                rdp_capabilities_find(&confirm.capabilities,
+                                      RDP_CAPABILITY_TYPE_GENERAL);
+            const rdp_capability_set* bitmap_set =
+                rdp_capabilities_find(&confirm.capabilities,
+                                      RDP_CAPABILITY_TYPE_BITMAP);
+            rdp_capability_general general;
+            rdp_capability_bitmap bitmap;
+
+            memset(&general, 0, sizeof(general));
+            memset(&bitmap, 0, sizeof(bitmap));
+            peer->client_fastpath_output = 0u;
+            if (general_set &&
+                rdp_capability_parse_general(general_set, &general) ==
+                    LIBRDP_STATUS_OK)
+            {
+                peer->client_fastpath_output =
+                    (general.extra_flags &
+                     RDP_CAPABILITY_GENERAL_FASTPATH_OUTPUT_SUPPORTED) != 0u;
+                rdp_trace_event(
+                    RDP_TRACE_PROTOCOL,
+                    "server.activation.confirm_active.general",
+                    "extra_flags=%u fastpath_output=%u refresh_rect=%u suppress_output=%u",
+                    general.extra_flags,
+                    peer->client_fastpath_output,
+                    general.refresh_rect_support,
+                    general.suppress_output_support);
+            }
+            if (bitmap_set &&
+                rdp_capability_parse_bitmap(bitmap_set, &bitmap) ==
+                    LIBRDP_STATUS_OK)
+            {
+                rdp_trace_event(
+                    RDP_TRACE_PROTOCOL,
+                    "server.activation.confirm_active.bitmap",
+                    "bits_per_pixel=%u width=%u height=%u compression=%u drawing_flags=%u multiple_rectangles=%u",
+                    bitmap.preferred_bits_per_pixel,
+                    bitmap.desktop_width,
+                    bitmap.desktop_height,
+                    bitmap.bitmap_compression_flag,
+                    bitmap.drawing_flags,
+                    bitmap.multiple_rectangle_support);
+            }
+        }
         if (status == LIBRDP_STATUS_OK)
         {
             peer->confirm_active_seen = 1;

@@ -1884,9 +1884,19 @@ librdp_status server_host_dispatch_peer_input(
     status = input->inject(host->platform.input.context, event);
     if (status != LIBRDP_STATUS_OK)
     {
-        server_host_release_input_owner(host);
-        host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] =
-            SERVER_HOST_PROVIDER_FAILED;
+        server_host_metric_add(&host->metrics.input_rejections, 1u);
+        server_host_trace_emit(host,
+                               SERVER_HOST_TRACE_INPUT_REJECTED,
+                               slot,
+                               status,
+                               (uint64_t)event->type,
+                               1u);
+        if (status == LIBRDP_STATUS_IO_ERROR)
+        {
+            server_host_release_input_owner(host);
+            host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] =
+                SERVER_HOST_PROVIDER_FAILED;
+        }
     }
     else
     {
@@ -1984,6 +1994,12 @@ static void server_host_peer_event(librdp_server_peer* peer,
     else if (event->type == LIBRDP_SERVER_EVENT_ERROR)
     {
         slot->state = SERVER_HOST_PEER_FAILED;
+        server_host_trace_emit(slot->host,
+                               SERVER_HOST_TRACE_PEER_ERROR,
+                               slot,
+                               event->status,
+                               (uint64_t)event->component,
+                               1u);
     }
     else if (event->type == LIBRDP_SERVER_EVENT_SURFACE)
     {

@@ -186,7 +186,7 @@ typedef struct rdp_gcc_server_data
 typedef struct rdp_gcc_server_config
 {
     uint32_t version;
-    uint32_t selected_protocol;
+    uint32_t requested_protocols;
     uint32_t early_capability_flags;
     uint32_t encryption_method;
     uint32_t encryption_level;

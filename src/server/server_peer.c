@@ -491,6 +491,39 @@ static int rdp_server_peer_has_complete_tpkt(const librdp_server_peer* peer)
     return total >= 4u && total <= peer->input.length;
 }
 
+/*
+ * Refresh readiness without blocking while dispatch drains a notification.
+ * Exact TPKT reads deliberately leave the next plaintext packet or TLS record
+ * on the descriptor, while SSL_pending covers records already decrypted by
+ * OpenSSL but no longer visible to poll().
+ */
+static int rdp_server_peer_has_pending_input(librdp_server_peer* peer)
+{
+    struct pollfd pfd;
+    int ready = 0;
+
+    if (!peer || peer->fd < 0)
+        return 0;
+    if (peer->pending_revents != 0 ||
+        rdp_server_peer_has_complete_tpkt(peer))
+        return 1;
+    if (peer->tls_active && peer->tls && SSL_pending(peer->tls) > 0)
+    {
+        peer->pending_revents = POLLIN;
+        return 1;
+    }
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.fd = peer->fd;
+    pfd.events = POLLIN;
+    do
+    {
+        ready = poll(&pfd, 1u, 0);
+    } while (ready < 0 && errno == EINTR);
+    if (ready > 0)
+        peer->pending_revents = pfd.revents;
+    return peer->pending_revents != 0;
+}
+
 librdp_status librdp_server_peer_dispatch_pending(librdp_server_peer* peer)
 {
     librdp_status status = LIBRDP_STATUS_OK;
@@ -499,15 +532,13 @@ librdp_status librdp_server_peer_dispatch_pending(librdp_server_peer* peer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (peer->fd < 0 || peer->state == LIBRDP_SERVER_PEER_CLOSED)
         return LIBRDP_STATUS_STATE;
-    if (peer->pending_revents == 0 &&
-        !rdp_server_peer_has_complete_tpkt(peer))
+    if (!rdp_server_peer_has_pending_input(peer))
         return LIBRDP_STATUS_OK;
     do
     {
         status = librdp_server_peer_run_once(peer, 0);
     } while (status == LIBRDP_STATUS_OK &&
-             (peer->pending_revents != 0 ||
-              rdp_server_peer_has_complete_tpkt(peer)));
+             rdp_server_peer_has_pending_input(peer));
     return status == LIBRDP_STATUS_TIMEOUT ? LIBRDP_STATUS_OK : status;
 }
 

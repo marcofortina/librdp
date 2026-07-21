@@ -71,6 +71,8 @@ typedef struct rdp_mcs_send_data_indication
 
 #define RDP_MCS_GLOBAL_CHANNEL_ID 1003u
 #define RDP_MCS_BASE_CHANNEL_ID 1001u
+#define RDP_MCS_SERVER_CHANNEL_ID 1002u
+#define RDP_MCS_MAX_PDU_SIZE 65528u
 #define RDP_MCS_DOMAIN_PDU_DISCONNECT_PROVIDER_ULTIMATUM 8u
 
 librdp_status rdp_mcs_write_ber_length(rdp_buffer* buffer, size_t length);

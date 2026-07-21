@@ -606,6 +606,32 @@ static int test_mcs_gcc_capabilities(void)
         0x02, 0x0c, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x03, 0x0c, 0x0a, 0x00, 0xeb, 0x03, 0x01, 0x00, 0xec, 0x03
     };
+    const uint8_t gcc_written_response[] = {
+        0x00, 0x05, 0x00, 0x14, 0x7c, 0x00, 0x01, 0x2a,
+        0x14, 0x76, 0x0a, 0x01, 0x01, 0x00, 0x01, 0xc0,
+        0x00, 'M',  'c',  'D',  'n',  0x26,
+        0x01, 0x0c, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+        0x02, 0x0c, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x03, 0x0c, 0x0a, 0x00, 0xeb, 0x03, 0x01, 0x00,
+        0xec, 0x03
+    };
+    const uint8_t mcs_written_prefix[] = {
+        0x7f, 0x66, 0x60,
+        0x0a, 0x01, 0x00,
+        0x02, 0x01, 0x00,
+        0x30, 0x1a,
+        0x02, 0x01, 0x22,
+        0x02, 0x01, 0x03,
+        0x02, 0x01, 0x00,
+        0x02, 0x01, 0x01,
+        0x02, 0x01, 0x00,
+        0x02, 0x01, 0x01,
+        0x02, 0x03, 0x00, 0xff, 0xf8,
+        0x02, 0x01, 0x02,
+        0x04, 0x3c
+    };
     const uint8_t caps[] = {
         0x02, 0x00, 0x00, 0x00,
         0x01, 0x00, 0x08, 0x00, 0xaa, 0xbb, 0xcc, 0xdd,
@@ -629,6 +655,8 @@ static int test_mcs_gcc_capabilities(void)
     rdp_buffer client_blocks;
     rdp_buffer server_blocks;
     rdp_buffer gcc_request;
+    rdp_buffer gcc_response_wire;
+    rdp_buffer mcs_response_wire;
     rdp_buffer mcs_initial;
     rdp_buffer mcs_domain;
     rdp_gcc_client_config config;
@@ -645,6 +673,8 @@ static int test_mcs_gcc_capabilities(void)
     rdp_buffer_init(&client_blocks);
     rdp_buffer_init(&server_blocks);
     rdp_buffer_init(&gcc_request);
+    rdp_buffer_init(&gcc_response_wire);
+    rdp_buffer_init(&mcs_response_wire);
     rdp_buffer_init(&mcs_initial);
     rdp_buffer_init(&mcs_domain);
 
@@ -749,6 +779,8 @@ static int test_mcs_gcc_capabilities(void)
 
         memset(&server_config, 0, sizeof(server_config));
         server_config.channel_count = 1u;
+        server_config.requested_protocols =
+            RDP_X224_PROTOCOL_TLS | RDP_X224_PROTOCOL_NLA;
         server_config.enable_message_channel = 1u;
         server_config.message_channel_id =
             (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 2u);
@@ -760,6 +792,8 @@ static int test_mcs_gcc_capabilities(void)
                     server_blocks.length,
                     &server_data) == LIBRDP_STATUS_OK);
         PCHECK(server_data.has_message_channel);
+        PCHECK(server_data.requested_protocols ==
+               (RDP_X224_PROTOCOL_TLS | RDP_X224_PROTOCOL_NLA));
         PCHECK(server_data.message_channel_id ==
                server_config.message_channel_id);
         rdp_buffer_free(&server_blocks);
@@ -787,6 +821,32 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(rdp_gcc_parse_server_data_blocks(conference_response.user_data,
                                             conference_response.user_data_len,
                                             &server_data) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gcc_write_conference_create_response(
+               &gcc_response_wire,
+               gcc_server_blocks,
+               sizeof(gcc_server_blocks)) == LIBRDP_STATUS_OK);
+    PCHECK(gcc_response_wire.length == sizeof(gcc_written_response));
+    PCHECK(memcmp(gcc_response_wire.data,
+                  gcc_written_response,
+                  sizeof(gcc_written_response)) == 0);
+    PCHECK(rdp_gcc_parse_conference_create_response(
+               gcc_response_wire.data,
+               gcc_response_wire.length,
+               &conference_response) == LIBRDP_STATUS_OK);
+    PCHECK(conference_response.node_id == 0x79f3u);
+    PCHECK(conference_response.tag == 1u);
+    PCHECK(rdp_mcs_write_connect_response(
+               &mcs_response_wire,
+               gcc_response_wire.data,
+               gcc_response_wire.length) == LIBRDP_STATUS_OK);
+    PCHECK(mcs_response_wire.length ==
+           sizeof(mcs_written_prefix) + sizeof(gcc_written_response));
+    PCHECK(memcmp(mcs_response_wire.data,
+                  mcs_written_prefix,
+                  sizeof(mcs_written_prefix)) == 0);
+    PCHECK(memcmp(mcs_response_wire.data + sizeof(mcs_written_prefix),
+                  gcc_written_response,
+                  sizeof(gcc_written_response)) == 0);
     PCHECK(rdp_gcc_parse_conference_create_response(gcc_response, sizeof(gcc_response) - 1u, &conference_response) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
 
@@ -988,6 +1048,8 @@ static int test_mcs_gcc_capabilities(void)
     rdp_buffer_free(&mcs_domain);
     rdp_buffer_free(&mcs_initial);
     rdp_buffer_free(&gcc_request);
+    rdp_buffer_free(&gcc_response_wire);
+    rdp_buffer_free(&mcs_response_wire);
     rdp_buffer_free(&server_blocks);
     rdp_buffer_free(&client_blocks);
     rdp_buffer_free(&ber);

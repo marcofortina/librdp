@@ -1043,7 +1043,7 @@ librdp_status rdp_server_peer_send_pointer_wire_update(
             status = rdp_slowpath_write_data_pdu(
                 &slowpath,
                 peer->share_id,
-                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                (uint16_t)RDP_MCS_SERVER_CHANNEL_ID,
                 RDP_SLOWPATH_DATA_PDU_UPDATE,
                 update_payload.data,
                 update_payload.length);

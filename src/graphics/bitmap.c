@@ -320,14 +320,7 @@ librdp_status rdp_bitmap_write_update(rdp_buffer* buffer, const rdp_bitmap_rect*
 
 librdp_status rdp_bitmap_write_fastpath_update(rdp_buffer* buffer, const rdp_bitmap_rect* rects, uint16_t count)
 {
-    librdp_status status = LIBRDP_STATUS_OK;
-
-    if (!buffer || (!rects && count > 0) || count > RDP_BITMAP_MAX_RECTS)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_buffer_append_u16_le(buffer, count);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_bitmap_write_rects(buffer, rects, count);
+    return rdp_bitmap_write_update(buffer, rects, count);
 }
 
 librdp_status rdp_bitmap_write_palette_update(rdp_buffer* buffer, const rdp_palette_update* palette)
@@ -361,28 +354,7 @@ librdp_status rdp_bitmap_write_palette_update(rdp_buffer* buffer, const rdp_pale
 
 librdp_status rdp_bitmap_write_fastpath_palette_update(rdp_buffer* buffer, const rdp_palette_update* palette)
 {
-    librdp_status status = LIBRDP_STATUS_OK;
-    uint32_t i = 0;
-
-    if (!buffer || !palette || palette->count > RDP_BITMAP_PALETTE_MAX_ENTRIES)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_buffer_append_u16_le(buffer, 0);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, palette->count);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    for (i = 0; i < palette->count; i++)
-    {
-        status = rdp_buffer_append_u8(buffer, palette->entries[i].red);
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_buffer_append_u8(buffer, palette->entries[i].green);
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_buffer_append_u8(buffer, palette->entries[i].blue);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-    }
-    return LIBRDP_STATUS_OK;
+    return rdp_bitmap_write_palette_update(buffer, palette);
 }
 
 static uint8_t rdp_scale_5_to_8(uint16_t value)

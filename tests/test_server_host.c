@@ -68,6 +68,7 @@ typedef struct mock_platform_context
     size_t reported_pollfds;
     librdp_status clipboard_written_status;
     librdp_status fail_start_status;
+    librdp_status inject_status;
     uint8_t clipboard_written_data[64];
     server_platform_clipboard_file_request last_file_request;
     int event_read_fd;
@@ -365,7 +366,7 @@ static librdp_status mock_inject(void* context,
     if (!mock || !event)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     mock->injections++;
-    return LIBRDP_STATUS_OK;
+    return mock->inject_status;
 }
 
 static void mock_release_all(void* context)
@@ -2044,6 +2045,15 @@ static int test_host_input_ownership(void)
     CHECK(server_host_dispatch_peer_input(first_slot, &event) ==
           LIBRDP_STATUS_OK);
     CHECK(mock.injections == 1u);
+    mock.inject_status = LIBRDP_STATUS_UNSUPPORTED;
+    CHECK(server_host_dispatch_peer_input(first_slot, &event) ==
+          LIBRDP_STATUS_UNSUPPORTED);
+    CHECK(server_host_input_owner(host) == first.id);
+    CHECK(mock.releases == 0u);
+    mock.inject_status = LIBRDP_STATUS_OK;
+    CHECK(server_host_dispatch_peer_input(first_slot, &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(mock.injections == 3u);
     CHECK(server_host_dispatch_peer_input(second_slot, &event) ==
           LIBRDP_STATUS_STATE);
     CHECK(server_host_set_input_owner(host, second.id) == LIBRDP_STATUS_OK);
@@ -2052,7 +2062,7 @@ static int test_host_input_ownership(void)
           LIBRDP_STATUS_STATE);
     CHECK(server_host_dispatch_peer_input(second_slot, &event) ==
           LIBRDP_STATUS_OK);
-    CHECK(mock.injections == 2u);
+    CHECK(mock.injections == 4u);
     CHECK(server_host_revoke_permission(
               host,
               SERVER_PLATFORM_PERMISSION_INPUT) == LIBRDP_STATUS_OK);
@@ -2313,7 +2323,7 @@ static int test_host_trace_metrics(void)
         CHECK(strstr(event->name, (const char*)canary_data) == NULL);
     }
     for (index = SERVER_HOST_TRACE_LISTENER_START;
-         index <= SERVER_HOST_TRACE_PROVIDER_DISPATCH;
+         index <= SERVER_HOST_TRACE_PEER_ERROR;
          index++)
     {
         CHECK(strcmp(server_host_trace_name((server_host_trace_type)index),

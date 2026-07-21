@@ -149,6 +149,11 @@ int test_protocol_authentication_vectors(void)
         0x26, 0xe2, 0x57, 0xb3, 0x00, 0x00, 0x00, 0x00,
         0x04, 0x8d, 0x3d, 0x6c
     };
+    const uint8_t ntlm_expected_server_wrapped_data[] = {
+        0x01, 0x00, 0x00, 0x00, 0xfa, 0xfa, 0x52, 0xcc,
+        0xd8, 0x58, 0xcf, 0xbf, 0x00, 0x00, 0x00, 0x00,
+        0xa6, 0x3b, 0xf4, 0xcd
+    };
     librdp_status ntlm_auth_status;
     rdp_credssp_state cred_state;
     rdp_buffer ntlm_negotiate;
@@ -165,6 +170,7 @@ int test_protocol_authentication_vectors(void)
     rdp_buffer server_pub_key_auth;
     rdp_buffer client_sequence_pub_key_auth;
     rdp_buffer server_sequence_pub_key_auth;
+    rdp_buffer server_vector_wrapped;
     rdp_buffer client_sequence_auth_info;
     rdp_buffer ts_credentials;
     rdp_buffer auth_info;
@@ -183,6 +189,7 @@ int test_protocol_authentication_vectors(void)
     rdp_ntlm_security_context corrupt_server_security;
     rdp_ntlm_security_context client_sequence_security;
     rdp_ntlm_security_context server_sequence_security;
+    rdp_ntlm_security_context server_vector_security;
     const uint8_t* extracted_ntlm = NULL;
     size_t extracted_ntlm_len = 0;
     uint8_t server_hash[32];
@@ -203,6 +210,7 @@ int test_protocol_authentication_vectors(void)
     memset(&corrupt_server_security, 0, sizeof(corrupt_server_security));
     memset(&client_sequence_security, 0, sizeof(client_sequence_security));
     memset(&server_sequence_security, 0, sizeof(server_sequence_security));
+    memset(&server_vector_security, 0, sizeof(server_vector_security));
     rdp_buffer_init(&ntlm_negotiate);
     rdp_buffer_init(&ntlm_challenge_written);
     rdp_buffer_init(&spnego_challenge_written);
@@ -217,6 +225,7 @@ int test_protocol_authentication_vectors(void)
     rdp_buffer_init(&server_pub_key_auth);
     rdp_buffer_init(&client_sequence_pub_key_auth);
     rdp_buffer_init(&server_sequence_pub_key_auth);
+    rdp_buffer_init(&server_vector_wrapped);
     rdp_buffer_init(&client_sequence_auth_info);
     rdp_buffer_init(&ts_credentials);
     rdp_buffer_init(&auth_info);
@@ -470,6 +479,16 @@ int test_protocol_authentication_vectors(void)
                LIBRDP_STATUS_OK);
         PCHECK(rdp_credssp_ntlm_server_security_init(&server_sequence_security, &server_auth_result) ==
                LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_ntlm_server_security_init(&server_vector_security, &server_auth_result) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_ntlm_wrap(&server_vector_security,
+                                     "data",
+                                     4u,
+                                     &server_vector_wrapped) == LIBRDP_STATUS_OK);
+        PCHECK(server_vector_wrapped.length == sizeof(ntlm_expected_server_wrapped_data));
+        PCHECK(memcmp(server_vector_wrapped.data,
+                      ntlm_expected_server_wrapped_data,
+                      sizeof(ntlm_expected_server_wrapped_data)) == 0);
         PCHECK(rdp_credssp_encrypt_public_key_hash(&client_sequence_security,
                                                    credssp_client_nonce,
                                                    sizeof(credssp_client_nonce),
@@ -513,6 +532,7 @@ int test_protocol_authentication_vectors(void)
     rdp_buffer_free(&ts_credentials);
     rdp_buffer_free(&client_sequence_auth_info);
     rdp_buffer_free(&server_sequence_pub_key_auth);
+    rdp_buffer_free(&server_vector_wrapped);
     rdp_buffer_free(&client_sequence_pub_key_auth);
     rdp_buffer_free(&server_pub_key_auth);
     rdp_buffer_free(&pub_key_auth);

@@ -1051,6 +1051,11 @@ int test_protocol_update_vectors(void)
     rdp_buffer_free(&decoded_bitmap);
     rdp_buffer_init(&decoded_bitmap);
     PCHECK(rdp_bitmap_write_fastpath_update(&decoded_bitmap, &bitmap_rect, 1) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_bitmap.length >= 4u &&
+           decoded_bitmap.data[0] == RDP_UPDATE_TYPE_BITMAP &&
+           decoded_bitmap.data[1] == 0u &&
+           decoded_bitmap.data[2] == 1u &&
+           decoded_bitmap.data[3] == 0u);
     PCHECK(rdp_bitmap_parse_fastpath_update(decoded_bitmap.data,
                                             decoded_bitmap.length,
                                             &bitmap_update) == LIBRDP_STATUS_OK);
@@ -1093,6 +1098,9 @@ int test_protocol_update_vectors(void)
     rdp_buffer_free(&decoded_bitmap);
     rdp_buffer_init(&decoded_bitmap);
     PCHECK(rdp_bitmap_write_fastpath_palette_update(&decoded_bitmap, &palette_update) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_bitmap.length >= 2u &&
+           decoded_bitmap.data[0] == RDP_UPDATE_TYPE_PALETTE &&
+           decoded_bitmap.data[1] == 0u);
     PCHECK(rdp_bitmap_parse_fastpath_palette_update(decoded_bitmap.data,
                                                     decoded_bitmap.length,
                                                     &palette_roundtrip) == LIBRDP_STATUS_OK);

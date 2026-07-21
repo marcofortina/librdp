@@ -271,7 +271,10 @@ static librdp_status rdp_server_present_tile(librdp_server_peer* peer,
     rect.flags = 0;
     rect.data = raw.data;
     rect.data_len = (uint32_t)raw.length;
-    status = rdp_bitmap_write_update(&update, &rect, 1);
+    if (peer->client_fastpath_output)
+        status = rdp_bitmap_write_fastpath_update(&update, &rect, 1);
+    else
+        status = rdp_bitmap_write_update(&update, &rect, 1);
     if (status != LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "server.surface.tile.bitmap_failed",
@@ -282,14 +285,21 @@ static librdp_status rdp_server_present_tile(librdp_server_peer* peer,
                         width,
                         height,
                         (unsigned)raw.length);
-    if (status == LIBRDP_STATUS_OK)
+    if (status == LIBRDP_STATUS_OK && peer->client_fastpath_output)
+    {
+        status = rdp_server_send_fastpath_update(peer,
+                                                 RDP_FASTPATH_UPDATE_BITMAP,
+                                                 update.data,
+                                                 update.length);
+    }
+    else if (status == LIBRDP_STATUS_OK)
     {
         rdp_buffer slowpath;
 
         rdp_buffer_init(&slowpath);
         status = rdp_slowpath_write_data_pdu(&slowpath,
                                              peer->share_id,
-                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                             (uint16_t)RDP_MCS_SERVER_CHANNEL_ID,
                                              RDP_SLOWPATH_DATA_PDU_UPDATE,
                                              update.data,
                                              update.length);
@@ -325,11 +335,11 @@ out:
 }
 
 /*
- * Present a dirty rectangle by splitting it into MCS-sized bitmap tiles. The
- * limiting budget is the T.125 SendDataIndication payload size, so the tile
- * planner accounts for bitmap-update and slow-path headers before choosing
- * horizontal and vertical chunks. Any failed tile aborts the presentation and
- * leaves the stored framebuffer intact for a later retry.
+ * Present a dirty rectangle as bitmap tiles bounded by the negotiated output
+ * path. Slow-path tiles fit one T.125 SendDataIndication; fast-path tiles fit
+ * one implementation-compatible output PDU without relying on multifragment
+ * support. Any failed tile aborts the presentation and leaves the stored
+ * framebuffer intact for a later retry.
  */
 static librdp_status rdp_server_surface_present_rect(librdp_server_peer* peer,
                                                      uint32_t x,
@@ -365,10 +375,24 @@ static librdp_status rdp_server_surface_present_rect(librdp_server_peer* peer,
                         peer->height);
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
-    security_overhead = rdp_server_outbound_security_overhead(peer);
-    if (max_mcs_payload <= bitmap_update_overhead + slowpath_data_overhead + security_overhead)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    max_raw_tile = max_mcs_payload - bitmap_update_overhead - slowpath_data_overhead - security_overhead;
+    if (peer->client_fastpath_output)
+    {
+        if (RDP_SERVER_FASTPATH_FRAGMENT_DATA_MAX <=
+            bitmap_update_overhead)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        max_raw_tile = RDP_SERVER_FASTPATH_FRAGMENT_DATA_MAX -
+                       bitmap_update_overhead;
+    }
+    else
+    {
+        security_overhead = rdp_server_outbound_security_overhead(peer);
+        if (max_mcs_payload <= bitmap_update_overhead +
+                                   slowpath_data_overhead +
+                                   security_overhead)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        max_raw_tile = max_mcs_payload - bitmap_update_overhead -
+                       slowpath_data_overhead - security_overhead;
+    }
     max_tile_width = (uint32_t)(max_raw_tile / 4u);
     if (max_tile_width == 0 || width > UINT32_MAX - x || height > UINT32_MAX - y)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -973,7 +997,7 @@ static librdp_status rdp_server_peer_send_desktop_composition_payload(librdp_ser
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_data_pdu(&slowpath,
                                              peer->share_id,
-                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                             (uint16_t)RDP_MCS_SERVER_CHANNEL_ID,
                                              RDP_SLOWPATH_DATA_PDU_UPDATE,
                                              update.data,
                                              update.length);
@@ -1046,7 +1070,7 @@ librdp_status librdp_server_peer_send_desktop_composition_start(librdp_server_pe
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_data_pdu(&slowpath,
                                              peer->share_id,
-                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                             (uint16_t)RDP_MCS_SERVER_CHANNEL_ID,
                                              RDP_SLOWPATH_DATA_PDU_UPDATE,
                                              update.data,
                                              update.length);

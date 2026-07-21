@@ -414,8 +414,10 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
                                         0,
                                         NULL,
                                         0,
-                                        client_nonce,
-                                        sizeof(client_nonce)) == LIBRDP_STATUS_OK);
+                                        (flags & TEST_SERVER_NLA_COMBINED_PUBLIC_KEY) ? client_nonce : NULL,
+                                        (flags & TEST_SERVER_NLA_COMBINED_PUBLIC_KEY) ?
+                                            sizeof(client_nonce) :
+                                            0u) == LIBRDP_STATUS_OK);
     SCHECK(test_server_tls_write_all(client_tls, request.data, request.length));
     status = librdp_server_peer_run_once(peer, 1000);
     if (flags & TEST_SERVER_NLA_BAD_TS_VERSION)

@@ -31,6 +31,7 @@ static const server_host_trace_name_entry server_host_trace_names[] = {
     {SERVER_HOST_TRACE_LISTENER_STOP, "server.host.listener.stop"},
     {SERVER_HOST_TRACE_PEER_ACCEPTED, "server.host.peer.accepted"},
     {SERVER_HOST_TRACE_PEER_STATE, "server.host.peer.state"},
+    {SERVER_HOST_TRACE_PEER_ERROR, "server.host.peer.error"},
     {SERVER_HOST_TRACE_PEER_CLEANUP, "server.host.peer.cleanup"},
     {SERVER_HOST_TRACE_CAPTURE_FRAME, "server.host.capture.frame"},
     {SERVER_HOST_TRACE_CAPTURE_DROPPED, "server.host.capture.dropped"},
@@ -52,6 +53,8 @@ static const server_host_trace_name_entry server_host_trace_names[] = {
     {SERVER_HOST_TRACE_POINTER_FAILED, "server.host.pointer.failed"},
     {SERVER_HOST_TRACE_PROVIDER_POLL, "server.host.provider.poll"},
     {SERVER_HOST_TRACE_PROVIDER_DISPATCH, "server.host.provider.dispatch"},
+    {SERVER_HOST_TRACE_REFRESH_REQUEST, "server.host.refresh.request"},
+    {SERVER_HOST_TRACE_OUTPUT_SUPPRESSION, "server.host.output.suppression"},
 };
 
 uint64_t server_host_now_ns(void)

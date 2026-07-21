@@ -15,12 +15,15 @@
 #include "test_server_suites.h"
 #include "channels/filesystem_redirection.h"
 #include "channels/virtual_channel.h"
+#include "graphics/bitmap.h"
+#include "protocol/fastpath.h"
 #include "protocol/mcs.h"
 #include "protocol/slowpath.h"
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
 #include "security/security.h"
 #include "server/server_channels.h"
+#include "server/server_security.h"
 
 #include <string.h>
 #include <unistd.h>
@@ -312,6 +315,63 @@ static void test_server_peer_fixture_close(test_server_peer_fixture* fixture)
     fixture->client_fd = -1;
 }
 
+/*
+ * Keep a coalesced TLS record on the socket after consuming the plaintext
+ * X.224 TPKT. This guards the transport handoff where OpenSSL must receive
+ * every ClientHello byte directly from the descriptor.
+ */
+static int test_server_plaintext_tpkt_boundary(void)
+{
+    static const uint8_t tpkt[] = {
+        0x03u, 0x00u, 0x00u, 0x07u, 0x02u, 0xf0u, 0x80u
+    };
+    static const uint8_t tls_record[] = {
+        0x16u, 0x03u, 0x03u, 0x00u, 0x01u, 0x01u
+    };
+    test_server_peer_fixture fixture;
+    uint8_t coalesced[sizeof(tpkt) + sizeof(tls_record)];
+    uint8_t retained[sizeof(tls_record)];
+    rdp_tpkt packet;
+    size_t packet_len = 0u;
+    librdp_status status = LIBRDP_STATUS_TIMEOUT;
+    ssize_t retained_len = 0;
+    int valid = 0;
+
+    if (!test_server_peer_fixture_open(&fixture))
+        return 0;
+    memcpy(coalesced, tpkt, sizeof(tpkt));
+    memcpy(coalesced + sizeof(tpkt), tls_record, sizeof(tls_record));
+    if (test_server_send_all(
+            fixture.client_fd,
+            coalesced,
+            sizeof(coalesced)))
+    {
+        for (size_t attempt = 0u;
+             attempt < 3u && status == LIBRDP_STATUS_TIMEOUT;
+             attempt++)
+        {
+            status = rdp_server_read_tpkt(
+                fixture.peer,
+                1000,
+                &packet,
+                &packet_len);
+        }
+        if (status == LIBRDP_STATUS_OK && packet_len == sizeof(tpkt) &&
+            fixture.peer->input.length == sizeof(tpkt))
+        {
+            retained_len = recv(
+                fixture.peer->fd,
+                retained,
+                sizeof(retained),
+                MSG_DONTWAIT);
+            valid = retained_len == (ssize_t)sizeof(tls_record) &&
+                    memcmp(retained, tls_record, sizeof(tls_record)) == 0;
+        }
+    }
+    test_server_peer_fixture_close(&fixture);
+    return valid;
+}
+
 static int test_server_wrap_mcs_packet(
     const rdp_buffer* mcs,
     rdp_buffer* packet)
@@ -497,6 +557,7 @@ int test_server_lifecycle_focused(void)
     SCHECK(librdp_server_peer_get_pollfds(fixture.peer, NULL, 0, &count) == LIBRDP_STATUS_STATE);
     test_server_peer_fixture_close(&fixture);
     SCHECK(test_server_transport_eof());
+    SCHECK(test_server_plaintext_tpkt_boundary());
     return 0;
 }
 
@@ -1704,7 +1765,12 @@ int test_server_channels_focused(void)
 
 int test_server_graphics_focused(void)
 {
+    uint8_t response[4096];
     test_server_peer_fixture fixture;
+    rdp_fastpath_header fastpath_header;
+    rdp_fastpath_update_list fastpath_updates;
+    rdp_bitmap_update bitmap_update;
+    int response_len = 0;
     static const uint8_t pixels[] = {
         0x10, 0x20, 0x30, 0xff, 0x40, 0x50, 0x60, 0xff,
         0x70, 0x80, 0x90, 0xff, 0xa0, 0xb0, 0xc0, 0xff,
@@ -1738,6 +1804,33 @@ int test_server_graphics_focused(void)
                pixels) == LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_surface_present(fixture.peer, 2, 1, 2, 2) ==
            LIBRDP_STATUS_STATE);
+    fixture.peer->state = LIBRDP_SERVER_PEER_ACTIVE;
+    fixture.peer->client_fastpath_output = 1u;
+    SCHECK(librdp_server_peer_surface_present(fixture.peer, 2, 1, 2, 2) ==
+           LIBRDP_STATUS_OK);
+    response_len = test_server_read_response(fixture.client_fd,
+                                             response,
+                                             sizeof(response));
+    SCHECK(response_len > 0);
+    SCHECK(rdp_fastpath_parse_header(response,
+                                     (size_t)response_len,
+                                     &fastpath_header) == LIBRDP_STATUS_OK);
+    SCHECK(fastpath_header.length == (size_t)response_len);
+    SCHECK(rdp_fastpath_parse_updates(response,
+                                      (size_t)response_len,
+                                      &fastpath_updates) == LIBRDP_STATUS_OK);
+    SCHECK(fastpath_updates.count == 1u);
+    SCHECK(fastpath_updates.updates[0].update_code ==
+           RDP_FASTPATH_UPDATE_BITMAP);
+    SCHECK(rdp_bitmap_parse_fastpath_update(
+               fastpath_updates.updates[0].data,
+               fastpath_updates.updates[0].data_len,
+               &bitmap_update) == LIBRDP_STATUS_OK);
+    SCHECK(bitmap_update.count == 1u);
+    SCHECK(bitmap_update.rects[0].dest_left == 2u);
+    SCHECK(bitmap_update.rects[0].dest_top == 1u);
+    SCHECK(bitmap_update.rects[0].width == 2u);
+    SCHECK(bitmap_update.rects[0].height == 2u);
     SCHECK(librdp_server_peer_set_graphics_frame_queue_limit(fixture.peer, 0) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_set_graphics_frame_queue_limit(fixture.peer, 4) ==

@@ -368,7 +368,16 @@ librdp_status rdp_mcs_write_connect_response(rdp_buffer* buffer, const void* gcc
     if (status == LIBRDP_STATUS_OK)
         status = rdp_mcs_write_ber_integer(&body, 0);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_mcs_write_domain_parameters(&body, 34, 3, 0, 1, 0, 1, 65535, 2);
+        status = rdp_mcs_write_domain_parameters(
+            &body,
+            34,
+            3,
+            0,
+            1,
+            0,
+            1,
+            RDP_MCS_MAX_PDU_SIZE,
+            2);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_mcs_write_ber_octet_string(&body, gcc_data, gcc_data_len);
     if (status == LIBRDP_STATUS_OK)

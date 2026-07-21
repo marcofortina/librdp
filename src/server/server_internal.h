@@ -115,6 +115,7 @@ struct librdp_server_peer
 {
     int fd;
     librdp_server_peer_state state;
+    uint32_t requested_protocols;
     uint32_t selected_protocol;
     uint32_t share_id;
     uint16_t user_id;
@@ -229,6 +230,7 @@ struct librdp_server_peer
     uint32_t drive_pending_count;
     rdp_server_drive_pending drive_pending[RDP_SERVER_MAX_DRIVE_REQUESTS];
     uint8_t confirm_active_seen;
+    uint8_t client_fastpath_output;
     uint8_t licensing_done;
     uint8_t client_info_seen;
     uint8_t synchronize_seen;

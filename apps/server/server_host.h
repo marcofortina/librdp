@@ -101,7 +101,8 @@ typedef enum server_host_trace_type
     SERVER_HOST_TRACE_PROVIDER_POLL = 26,
     SERVER_HOST_TRACE_PROVIDER_DISPATCH = 27,
     SERVER_HOST_TRACE_REFRESH_REQUEST = 28,
-    SERVER_HOST_TRACE_OUTPUT_SUPPRESSION = 29
+    SERVER_HOST_TRACE_OUTPUT_SUPPRESSION = 29,
+    SERVER_HOST_TRACE_PEER_ERROR = 30
 } server_host_trace_type;
 
 typedef struct server_host_trace_event
