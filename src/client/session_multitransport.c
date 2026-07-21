@@ -856,6 +856,10 @@ librdp_status librdp_session_process_udp_datagram(librdp_session* session,
         rdp_session_metric_add(
             &session->multitransport_metrics.udp_tcp_fallbacks,
             metric_tcp_fallback);
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.udp.fallback",
+                        "mode=%s reason=receive_window",
+                        reliable ? "reliable" : "lossy");
     }
     if (status != LIBRDP_STATUS_OK)
         rdp_session_set_last_error(session,
@@ -1130,6 +1134,9 @@ librdp_status librdp_session_process_udp2_datagram(librdp_session* session,
         rdp_session_metric_add(
             &session->multitransport_metrics.udp2_tcp_fallbacks,
             metric_tcp_fallback);
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.udp2.fallback",
+                        "reason=receive_window");
     }
     if (status != LIBRDP_STATUS_OK)
         rdp_session_set_last_error(session,

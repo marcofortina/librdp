@@ -15,6 +15,7 @@
  */
 
 #include "client/session_internal.h"
+#include "client/session_autodetect.h"
 #include "client/error_internal.h"
 #include "common/trace.h"
 
@@ -1007,6 +1008,8 @@ librdp_status librdp_session_reset_metrics(librdp_session* session)
     if (status == LIBRDP_STATUS_OK)
         status = librdp_multitransport_metrics_init(
             &session->multitransport_metrics);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_session_autodetect_reset_metrics(session);
     return status;
 }
 

@@ -717,6 +717,7 @@ struct librdp_session
     uint32_t autodetect_bandwidth_kbps;
     uint64_t autodetect_requests_received;
     uint64_t autodetect_responses_sent;
+    uint64_t autodetect_result_reports;
     uint16_t dynamic_channel_id;
     uint16_t clipboard_channel_id;
     uint8_t clipboard_ready;

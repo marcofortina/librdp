@@ -89,6 +89,7 @@ typedef enum librdp_session_lifecycle
 
 #define LIBRDP_METRICS_VERSION 1u /**< Current librdp_metrics version. */
 #define LIBRDP_MULTITRANSPORT_METRICS_VERSION 1u /**< Current multitransport metrics version. */
+#define LIBRDP_NETWORK_AUTODETECT_METRICS_VERSION 1u /**< Current Network Auto Detect metrics version. */
 #define LIBRDP_MULTITRANSPORT_PROVIDER_VERSION 1u /**< Current side-transport provider version. */
 #define LIBRDP_MULTITRANSPORT_REQUEST_VERSION 1u /**< Current side-transport request version. */
 #define LIBRDP_MULTITRANSPORT_COOKIE_SIZE 16u /**< Security-cookie size carried by a bootstrap request. */
@@ -205,6 +206,28 @@ typedef struct librdp_multitransport_metrics
     uint64_t udp2_reordered_packets; /**< Duplicate or reordered UDP2 data packets observed. */
     uint64_t udp2_tcp_fallbacks; /**< UDP2 gaps that exceeded the negotiated window. */
 } librdp_multitransport_metrics;
+
+/**
+ * @brief Versioned client Network Auto Detect metrics snapshot.
+ *
+ * Counters and latest-result fields describe protocol messages accepted on
+ * the current RDP connection. RTT values and bandwidth are server-provided
+ * Network Characteristics Detection results; the client does not infer them
+ * from local wall-clock timing. Counters saturate at UINT64_MAX.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_network_autodetect_metrics
+{
+    uint32_t version; /**< Struct version, LIBRDP_NETWORK_AUTODETECT_METRICS_VERSION. */
+    uint32_t size;    /**< Size of this struct in bytes. */
+    uint64_t requests_received; /**< Syntactically valid Auto Detect requests received from the server. */
+    uint64_t responses_sent; /**< Auto Detect responses successfully sent by the client. */
+    uint64_t result_reports; /**< Valid network-result reports accepted from the server. */
+    uint32_t base_rtt_ms; /**< Latest server-reported base round-trip time in milliseconds. */
+    uint32_t average_rtt_ms; /**< Latest server-reported average round-trip time in milliseconds. */
+    uint32_t bandwidth_kbps; /**< Latest server-reported bandwidth in kilobits per second. */
+} librdp_network_autodetect_metrics;
 
 /**
  * @brief Side-transport protocol requested by the RDP server.
@@ -645,6 +668,22 @@ LIBRDP_API librdp_status librdp_metrics_init(librdp_metrics* metrics);
  */
 LIBRDP_API librdp_status librdp_multitransport_metrics_init(
     librdp_multitransport_metrics* metrics);
+
+/**
+ * @brief Initialize a Network Auto Detect metrics descriptor.
+ *
+ * The descriptor is cleared and assigned the current version and size.
+ *
+ * @param[out] metrics Caller-owned descriptor; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success or LIBRDP_STATUS_INVALID_ARGUMENT when
+ * metrics is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_network_autodetect_metrics_init(
+    librdp_network_autodetect_metrics* metrics);
 
 /**
  * @brief Initialize a side-transport provider descriptor.
@@ -1584,11 +1623,34 @@ LIBRDP_API librdp_status librdp_session_get_multitransport_metrics(
     librdp_multitransport_metrics* metrics);
 
 /**
+ * @brief Copy current client Network Auto Detect metrics.
+ *
+ * The destination must first be initialized with
+ * librdp_network_autodetect_metrics_init(). A zero result_reports value means
+ * that RTT and bandwidth fields have not been supplied on this connection.
+ * No transport payload or timing history is retained by this query.
+ *
+ * @param[in] session Session to query; must not be NULL.
+ * @param[out] metrics Caller-owned initialized destination; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid pointers or metadata; LIBRDP_STATUS_STATE from an owner-thread
+ * violation.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_get_network_autodetect_metrics(
+    const librdp_session* session,
+    librdp_network_autodetect_metrics* metrics);
+
+/**
  * @brief Reset all counters in the session metrics snapshots.
  *
  * The metrics version and size remain LIBRDP_METRICS_VERSION and
- * sizeof(librdp_metrics). Multitransport counters are also reset while active
- * protocol, receive-window, and channel state remain unchanged.
+ * sizeof(librdp_metrics). Multitransport and Network Auto Detect metrics are
+ * also reset while active protocol, receive-window, measurement, and channel
+ * state remain unchanged.
  *
  * @param[in,out] session Session whose metrics are reset; must not be NULL.
  *

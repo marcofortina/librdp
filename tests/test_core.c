@@ -207,7 +207,8 @@ int test_client_core_named(const char* name)
         return test_webauthn_mock_runtime_sequence();
     if (strcmp(name, "multitransport-smoke") == 0)
     {
-        if (test_multitransport_provider_lifecycle() != 0)
+        if (test_network_autodetect_client_state() != 0 ||
+            test_multitransport_provider_lifecycle() != 0)
             return 1;
         return test_dynamic_channel_soft_sync_runtime();
     }

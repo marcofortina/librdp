@@ -22,6 +22,8 @@
 
 void rdp_session_autodetect_reset(librdp_session* session);
 
+void rdp_session_autodetect_reset_metrics(librdp_session* session);
+
 void rdp_session_autodetect_account_bytes(librdp_session* session,
                                           size_t payload_len);
 

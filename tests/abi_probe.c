@@ -115,6 +115,12 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_session_lifecycle", librdp_session_lifecycle, ",");
     ABI_TYPE_ENTRY("librdp_metrics", librdp_metrics, ",");
     ABI_TYPE_ENTRY("librdp_multitransport_metrics", librdp_multitransport_metrics, ",");
+    ABI_TYPE_ENTRY("librdp_network_autodetect_metrics", librdp_network_autodetect_metrics, ",");
+    ABI_TYPE_ENTRY("librdp_multitransport_protocol", librdp_multitransport_protocol, ",");
+    ABI_TYPE_ENTRY("librdp_multitransport_request", librdp_multitransport_request, ",");
+    ABI_TYPE_ENTRY("librdp_multitransport_start_callback", librdp_multitransport_start_callback, ",");
+    ABI_TYPE_ENTRY("librdp_multitransport_release_callback", librdp_multitransport_release_callback, ",");
+    ABI_TYPE_ENTRY("librdp_multitransport_provider", librdp_multitransport_provider, ",");
     ABI_TYPE_ENTRY("librdp_echo_stats", librdp_echo_stats, ",");
     ABI_TYPE_ENTRY("librdp_reconnect_policy", librdp_reconnect_policy, ",");
     ABI_TYPE_ENTRY("librdp_graphics_update_type", librdp_graphics_update_type, ",");

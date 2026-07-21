@@ -218,9 +218,13 @@ static int expect_multitransport_response(rdp_transport* peer_transport,
 int test_network_autodetect_client_state(void)
 {
     librdp_session session;
+    librdp_settings* metrics_settings = NULL;
+    librdp_session* metrics_session = NULL;
+    librdp_network_autodetect_metrics metrics;
     rdp_buffer packet;
 
     memset(&session, 0, sizeof(session));
+    memset(&metrics, 0, sizeof(metrics));
     session.message_channel_id = 1006u;
     session.message_channel_joined = 1u;
     rdp_session_autodetect_reset(&session);
@@ -324,11 +328,67 @@ int test_network_autodetect_client_state(void)
           session.autodetect_bandwidth_kbps == 22000u &&
           session.autodetect_average_rtt_ms == 17u);
 
+    CHECK(librdp_network_autodetect_metrics_init(NULL) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_network_autodetect_metrics_init(&metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_network_autodetect_metrics(NULL, &metrics) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    metrics_settings = librdp_settings_new();
+    CHECK(metrics_settings != NULL);
+    metrics_session = librdp_session_new(metrics_settings);
+    CHECK(metrics_session != NULL);
+    metrics_session->message_channel_id = 1006u;
+    metrics_session->message_channel_joined = 1u;
+    CHECK(librdp_session_get_network_autodetect_metrics(metrics_session,
+                                                        &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.requests_received == 0u && metrics.responses_sent == 0u &&
+          metrics.result_reports == 0u);
+    CHECK(rdp_session_handle_autodetect_message(
+              metrics_session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_network_autodetect_metrics(metrics_session,
+                                                        &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.requests_received == 1u && metrics.responses_sent == 0u &&
+          metrics.result_reports == 1u && metrics.base_rtt_ms == 11u &&
+          metrics.average_rtt_ms == 17u &&
+          metrics.bandwidth_kbps == 22000u);
+    metrics_session->autodetect_requests_received = UINT64_MAX;
+    metrics_session->autodetect_result_reports = UINT64_MAX;
+    CHECK(rdp_session_handle_autodetect_message(
+              metrics_session,
+              RDP_SEC_AUTODETECT_REQ,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_network_autodetect_metrics(metrics_session,
+                                                        &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.requests_received == UINT64_MAX &&
+          metrics.result_reports == UINT64_MAX);
+    metrics.size--;
+    CHECK(librdp_session_get_network_autodetect_metrics(metrics_session,
+                                                        &metrics) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    metrics.size++;
+    CHECK(librdp_session_reset_metrics(metrics_session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_network_autodetect_metrics(metrics_session,
+                                                        &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.requests_received == 0u && metrics.responses_sent == 0u &&
+          metrics.result_reports == 0u && metrics.base_rtt_ms == 0u &&
+          metrics.average_rtt_ms == 0u && metrics.bandwidth_kbps == 0u);
+
     CHECK(rdp_session_handle_autodetect_message(
               &session,
               RDP_SEC_AUTODETECT_REQ,
               packet.data,
               packet.length - 1u) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    librdp_session_free(metrics_session);
+    librdp_settings_free(metrics_settings);
     rdp_buffer_free(&packet);
     return 0;
 }

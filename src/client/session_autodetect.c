@@ -24,6 +24,7 @@
 #include "security/security.h"
 
 #include <limits.h>
+#include <string.h>
 
 static void rdp_session_autodetect_add_bytes(librdp_session* session,
                                              size_t payload_len)
@@ -49,11 +50,20 @@ void rdp_session_autodetect_reset(librdp_session* session)
     session->autodetect_measurement_type = 0u;
     session->autodetect_measurement_start_ns = 0u;
     session->autodetect_measurement_bytes = 0u;
+    rdp_session_autodetect_reset_metrics(session);
+}
+
+/* Clear observable counters and latest result gauges without stopping a measurement. */
+void rdp_session_autodetect_reset_metrics(librdp_session* session)
+{
+    if (!session)
+        return;
     session->autodetect_base_rtt_ms = 0u;
     session->autodetect_average_rtt_ms = 0u;
     session->autodetect_bandwidth_kbps = 0u;
     session->autodetect_requests_received = 0u;
     session->autodetect_responses_sent = 0u;
+    session->autodetect_result_reports = 0u;
 }
 
 void rdp_session_autodetect_account_bytes(librdp_session* session,
@@ -107,7 +117,7 @@ static librdp_status rdp_session_autodetect_send_rtt_response(
             &response,
             "rdp.autodetect.rtt.response");
     if (status == LIBRDP_STATUS_OK)
-        session->autodetect_responses_sent++;
+        rdp_session_metric_add(&session->autodetect_responses_sent, 1u);
     rdp_buffer_free(&response);
     return status;
 }
@@ -146,7 +156,7 @@ static librdp_status rdp_session_autodetect_send_bandwidth_results(
             "rdp.autodetect.bandwidth.response");
     if (status == LIBRDP_STATUS_OK)
     {
-        session->autodetect_responses_sent++;
+        rdp_session_metric_add(&session->autodetect_responses_sent, 1u);
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "rdp.autodetect.bandwidth.response",
                         "sequence=%u elapsed_ms=%u byte_count=%u",
@@ -185,7 +195,7 @@ librdp_status rdp_session_handle_autodetect_message(
     if (status != LIBRDP_STATUS_OK ||
         request.header_type != RDP_NETWORK_AUTODETECT_REQUEST)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    session->autodetect_requests_received++;
+    rdp_session_metric_add(&session->autodetect_requests_received, 1u);
     rdp_trace_event(RDP_TRACE_PROTOCOL,
                     "rdp.autodetect.request",
                     "sequence=%u type=%u payload_len=%u",
@@ -278,6 +288,7 @@ librdp_status rdp_session_handle_autodetect_message(
             RDP_NETWORK_AUTODETECT_NETWORK_RESULT_RTT)
             session->autodetect_bandwidth_kbps = request.bandwidth_kbps;
         session->autodetect_average_rtt_ms = request.average_rtt_ms;
+        rdp_session_metric_add(&session->autodetect_result_reports, 1u);
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "rdp.autodetect.network.result",
                         "sequence=%u base_rtt_ms=%u bandwidth_kbps=%u average_rtt_ms=%u",
@@ -288,4 +299,41 @@ librdp_status rdp_session_handle_autodetect_message(
         return LIBRDP_STATUS_OK;
     }
     return LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+/* Initialize caller-owned metadata for a complete public metrics snapshot. */
+librdp_status librdp_network_autodetect_metrics_init(
+    librdp_network_autodetect_metrics* metrics)
+{
+    if (!metrics)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(metrics, 0, sizeof(*metrics));
+    metrics->version = LIBRDP_NETWORK_AUTODETECT_METRICS_VERSION;
+    metrics->size = (uint32_t)sizeof(*metrics);
+    return LIBRDP_STATUS_OK;
+}
+
+/* Copy one owner-thread-consistent view of counters and latest server results. */
+librdp_status librdp_session_get_network_autodetect_metrics(
+    const librdp_session* session,
+    librdp_network_autodetect_metrics* metrics)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !metrics ||
+        metrics->version != LIBRDP_NETWORK_AUTODETECT_METRICS_VERSION ||
+        metrics->size < sizeof(*metrics))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner_const(
+        session,
+        "client.autodetect.metrics.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    metrics->requests_received = session->autodetect_requests_received;
+    metrics->responses_sent = session->autodetect_responses_sent;
+    metrics->result_reports = session->autodetect_result_reports;
+    metrics->base_rtt_ms = session->autodetect_base_rtt_ms;
+    metrics->average_rtt_ms = session->autodetect_average_rtt_ms;
+    metrics->bandwidth_kbps = session->autodetect_bandwidth_kbps;
+    return LIBRDP_STATUS_OK;
 }
