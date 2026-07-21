@@ -201,6 +201,8 @@ int test_client_core_named(const char* name)
         return run_channels();
     if (strcmp(name, "webauthn-mock-smoke") == 0)
         return test_webauthn_mock_runtime_sequence();
+    if (strcmp(name, "multitransport-smoke") == 0)
+        return test_dynamic_channel_soft_sync_runtime();
     if (strcmp(name, "display-resize-smoke") == 0)
         return test_display_control_resize_frame_stability();
     if (strcmp(name, "display-layout-smoke") == 0)

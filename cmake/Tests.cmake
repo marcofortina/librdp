@@ -498,6 +498,12 @@ if(LIBRDP_BUILD_TESTS)
         ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=trace;LIBRDP_TRACE_HEX_BYTES=96"
         TIMEOUT 30
     )
+    add_test(NAME smoke_multitransport_udp
+        COMMAND test_core multitransport-smoke)
+    set_tests_properties(smoke_multitransport_udp PROPERTIES
+        ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_TRANSPORT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=trace;LIBRDP_TRACE_HEX_BYTES=96"
+        TIMEOUT 30
+    )
     add_test(NAME core_storage_devices COMMAND test_core storage)
     add_test(NAME core_graphics COMMAND test_core graphics)
     add_test(NAME smoke_gdi_orders COMMAND test_core gdi-orders-smoke)
