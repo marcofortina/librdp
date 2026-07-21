@@ -162,6 +162,41 @@ static int server_runtime_complete_dynamic_close(
 }
 
 /*
+ * Send one typed static-channel extension message and expose the exact
+ * decrypted payload returned to the client-side fixture.
+ */
+static int server_runtime_send_static_extension(
+    const server_runtime_dynamic_path* path,
+    librdp_server_extension_family family,
+    uint16_t channel_id,
+    const rdp_buffer* message,
+    const uint8_t** payload,
+    size_t* payload_len)
+{
+    uint16_t response_channel_id = 0;
+
+    if (!path || !path->peer || !path->response || !path->security ||
+        !path->plaintext || !message || !payload || !payload_len)
+        return 0;
+    if (librdp_server_peer_send_static_extension_data(path->peer,
+                                                      family,
+                                                      channel_id,
+                                                      message->data,
+                                                      message->length) != LIBRDP_STATUS_OK)
+        return 0;
+    if (!test_server_read_encrypted_static_channel_data(path->client_fd,
+                                                        path->response,
+                                                        path->response_len,
+                                                        path->security,
+                                                        path->plaintext,
+                                                        &response_channel_id,
+                                                        payload,
+                                                        payload_len))
+        return 0;
+    return response_channel_id == channel_id;
+}
+
+/*
  * Drives one in-process client/server pair through the server activation path.
  * The sequence catches truncated or misordered X.224/MCS/GCC wrapping,
  * channel-join accounting, Demand Active framing, and Confirm Active state
@@ -218,7 +253,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_input_channel_sc_ready input_ready;
     rdp_mouse_cursor_header mouse_cursor_header;
     rdp_telemetry_pdu telemetry_pdu;
-    rdp_multiparty_header multiparty_header;
+    rdp_multiparty_message multiparty_message;
     rdp_pnp_redirection_version pnp_version;
     rdp_pnp_redirection_info_header pnp_info;
     rdp_pnp_redirection_io_version pnp_io_version;
@@ -311,6 +346,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer pointer_pixels;
     rdp_buffer cr2_payload;
     rdp_buffer media_payload;
+    rdp_buffer multiparty_payload;
     rdp_slowpath_demand_active demand;
     rdp_slowpath_deactivate_all deactivate;
     rdp_slowpath_data_pdu data_pdu;
@@ -390,6 +426,7 @@ int test_server_loopback_standard_activation_sequence(void)
     static const uint8_t usb_container_utf16[] = {'{', 0, '1', 0, '}', 0, 0, 0};
     static const uint8_t rail_app_utf16[] = {'a', 0, 'p', 0, 'p', 0, 0, 0};
     static const uint8_t camera_name_utf16[] = {'C', 0, 'a', 0, 'm', 0, 0, 0};
+    static const uint8_t participant_name_utf16[] = {'G', 0, 'u', 0, 'e', 0, 's', 0, 't', 0};
     static const uint8_t cr2_clear_color[16] = {
         0x10, 0x20, 0x30, 0x40, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0
@@ -449,6 +486,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_init(&pointer_pixels);
     rdp_buffer_init(&cr2_payload);
     rdp_buffer_init(&media_payload);
+    rdp_buffer_init(&multiparty_payload);
     rdp_composited_render_tree_init(&cr2_tree);
     memset(&dynamic_path, 0, sizeof(dynamic_path));
     memset(&runtime_context, 0, sizeof(runtime_context));
@@ -4057,15 +4095,81 @@ int test_server_loopback_standard_activation_sequence(void)
                                                           &static_payload,
                                                           &static_payload_len));
     SCHECK(response_channel_id == multiparty_channel_id);
-    SCHECK(rdp_multiparty_parse_header(static_payload,
-                                       static_payload_len,
-                                       &multiparty_header) == LIBRDP_STATUS_OK);
-    SCHECK(multiparty_header.type == RDP_MULTIPARTY_TYPE_FILTER_STATE_UPDATED);
+    SCHECK(rdp_multiparty_parse_message(static_payload,
+                                        static_payload_len,
+                                        &multiparty_message) == LIBRDP_STATUS_OK);
+    SCHECK(multiparty_message.type == RDP_MULTIPARTY_TYPE_FILTER_STATE_UPDATED &&
+           multiparty_message.body.filter_state.flags == RDP_MULTIPARTY_FILTER_ENABLED);
+
+    SCHECK(rdp_multiparty_write_participant_created(
+               &multiparty_payload,
+               42u,
+               7u,
+               RDP_MULTIPARTY_MAY_VIEW | RDP_MULTIPARTY_MAY_INTERACT,
+               participant_name_utf16,
+               (uint16_t)(sizeof(participant_name_utf16) / 2u)) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_send_static_extension(&dynamic_path,
+                                                LIBRDP_SERVER_EXTENSION_MULTIPARTY,
+                                                multiparty_channel_id,
+                                                &multiparty_payload,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(rdp_multiparty_parse_message(static_payload,
+                                        static_payload_len,
+                                        &multiparty_message) == LIBRDP_STATUS_OK);
+    SCHECK(multiparty_message.type == RDP_MULTIPARTY_TYPE_PARTICIPANT_CREATED &&
+           multiparty_message.body.participant_created.participant_id == 42u &&
+           multiparty_message.body.participant_created.group_id == 7u &&
+           multiparty_message.body.participant_created.friendly_name.utf16_len ==
+               sizeof(participant_name_utf16));
+
+    multiparty_payload.length = 0;
+    SCHECK(rdp_multiparty_write_control_change(
+               &multiparty_payload,
+               RDP_MULTIPARTY_MAY_VIEW | RDP_MULTIPARTY_MAY_INTERACT,
+               42u) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_send_static_extension(&dynamic_path,
+                                                LIBRDP_SERVER_EXTENSION_MULTIPARTY,
+                                                multiparty_channel_id,
+                                                &multiparty_payload,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(rdp_multiparty_parse_message(static_payload,
+                                        static_payload_len,
+                                        &multiparty_message) == LIBRDP_STATUS_OK);
+    SCHECK(multiparty_message.type == RDP_MULTIPARTY_TYPE_PARTICIPANT_CTRL_CHANGED &&
+           multiparty_message.body.control_change.participant_id == 42u &&
+           multiparty_message.body.control_change.flags ==
+               (RDP_MULTIPARTY_MAY_VIEW | RDP_MULTIPARTY_MAY_INTERACT));
+
+    multiparty_payload.length = 0;
+    SCHECK(rdp_multiparty_write_participant_removed(&multiparty_payload,
+                                                    42u,
+                                                    1u,
+                                                    0u) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_send_static_extension(&dynamic_path,
+                                                LIBRDP_SERVER_EXTENSION_MULTIPARTY,
+                                                multiparty_channel_id,
+                                                &multiparty_payload,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(rdp_multiparty_parse_message(static_payload,
+                                        static_payload_len,
+                                        &multiparty_message) == LIBRDP_STATUS_OK);
+    SCHECK(multiparty_message.type == RDP_MULTIPARTY_TYPE_PARTICIPANT_REMOVED &&
+           multiparty_message.body.participant_removed.participant_id == 42u &&
+           multiparty_message.body.participant_removed.disconnect_type == 1u &&
+           multiparty_message.body.participant_removed.disconnect_code == 0u);
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_MULTIPARTY,
                                                  &feature_status) == LIBRDP_STATUS_OK);
     SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
            feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    SCHECK(librdp_server_extension_state_init(&extension_state) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_extension_state(peer,
+                                                  LIBRDP_SERVER_EXTENSION_MULTIPARTY,
+                                                  &extension_state) == LIBRDP_STATUS_OK);
+    SCHECK(extension_state.tx_messages == 4u && extension_state.tx_bytes > 0u);
     SCHECK(librdp_server_peer_send_video_capability_response(peer,
                                                              video_channel_id,
                                                              0x40u,
@@ -4478,6 +4582,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_free(&pointer_pixels);
     rdp_buffer_free(&cr2_payload);
     rdp_buffer_free(&media_payload);
+    rdp_buffer_free(&multiparty_payload);
     rdp_buffer_free(&geometry_rect_payload);
     rdp_buffer_free(&geometry_payload);
     rdp_buffer_free(&graphics_payload);
