@@ -40,7 +40,7 @@ static rdp_session_graphics_surface* rdp_session_graphics_surface_find_slot(libr
 
     if (!session)
         return NULL;
-    for (i = 0; i < RDP_SESSION_MAX_GRAPHICS_SURFACES; i++)
+    for (i = 0; i < session->limits.surface_count; i++)
     {
         if (session->graphics_surfaces[i].active && session->graphics_surfaces[i].surface_id == surface_id)
             return &session->graphics_surfaces[i];
@@ -289,7 +289,7 @@ static librdp_status rdp_session_graphics_surface_create(librdp_session* session
 
     surface = rdp_session_graphics_surface_find_slot(session, create->surface_id);
     if (!surface)
-        return LIBRDP_STATUS_NO_MEMORY;
+        return rdp_session_limit_rejected(session);
 
     if (surface->active)
         rdp_session_progressive_tiles_clear_surface(session, create->surface_id);

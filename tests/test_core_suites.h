@@ -24,6 +24,7 @@ int test_buffer_stream(void);
 int test_charset(void);
 int test_pointer_decode(void);
 int test_settings_surface_input_session(void);
+int test_public_limit_boundaries(void);
 int test_reconnect_policy(void);
 int test_connect_cancellation(void);
 int test_connect_timeout(void);

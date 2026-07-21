@@ -30,6 +30,14 @@ void rdp_session_clipboard_local_clear(librdp_session* session);
 librdp_status rdp_session_send_clipboard_packet(librdp_session* session, const rdp_buffer* payload, const char* event);
 librdp_status rdp_session_send_clipboard_format_list(librdp_session* session);
 librdp_status rdp_session_send_clipboard_handshake(librdp_session* session);
+librdp_status rdp_session_clipboard_store_remote_formats(
+    librdp_session* session,
+    const rdp_clipboard_format_list* list,
+    int long_names,
+    librdp_clipboard_format* formats,
+    uint32_t capacity,
+    uint32_t* stored,
+    uint32_t* total);
 librdp_status rdp_session_clipboard_write_local_data_response(librdp_session* session,
                                                               uint32_t format_id,
                                                               rdp_buffer* response,

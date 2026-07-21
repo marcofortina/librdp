@@ -113,6 +113,7 @@ if(LIBRDP_BUILD_TESTS)
         tests/test_core_enterprise.c
         tests/test_core_features.c
         tests/test_core_graphics.c
+        tests/test_core_limits.c
         tests/test_core_licensing.c
         tests/test_core_settings.c
         tests/test_core_storage.c
@@ -490,6 +491,11 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME core_resolution_failure COMMAND test_core resolution)
     add_test(NAME core_activation_timeout COMMAND test_core activation-timeout)
     add_test(NAME core_idle_transport_eof COMMAND test_core idle-eof)
+    add_test(NAME smoke_client_limits COMMAND test_core limits-smoke)
+    set_tests_properties(smoke_client_limits PROPERTIES
+        ENVIRONMENT "LIBRDP_TRACE_CLIENT=1;LIBRDP_TRACE_TRANSPORT=1;LIBRDP_TRACE_PROTOCOL=1;LIBRDP_TRACE_LEVEL=trace;LIBRDP_TRACE_HEX_BYTES=16"
+        TIMEOUT 60
+    )
     add_test(NAME core_features COMMAND test_core features)
     add_test(NAME core_channels COMMAND test_core channels)
     add_test(NAME smoke_webauthn_mock

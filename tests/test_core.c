@@ -44,6 +44,14 @@ static int run_idle_eof(void)
     return test_idle_transport_eof();
 }
 
+static int run_limits(void)
+{
+    if (test_public_limit_boundaries() != 0 ||
+        test_unknown_channels_bounded() != 0)
+        return 1;
+    return test_gdi_bitmap_cache_limits();
+}
+
 static int run_features(void)
 {
     if (test_telemetry_runtime_privacy() != 0 ||
@@ -197,6 +205,8 @@ int test_client_core_named(const char* name)
         return run_activation_timeout();
     if (strcmp(name, "idle-eof") == 0)
         return run_idle_eof();
+    if (strcmp(name, "limits-smoke") == 0)
+        return run_limits();
     if (strcmp(name, "features") == 0)
         return run_features();
     if (strcmp(name, "video-geometry-smoke") == 0)

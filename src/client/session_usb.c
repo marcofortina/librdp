@@ -2700,13 +2700,17 @@ static librdp_status rdp_session_usb_queue_job(
     if (!session || !data || data_len == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (data_len > session->limits.device_io_bytes)
-        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+        return rdp_session_limit_rejected(session);
     job = rdp_session_usb_job_new(kind, data, data_len, expected_function_id);
     if (!job)
         return LIBRDP_STATUS_NO_MEMORY;
     status = rdp_session_usb_worker_enqueue(session, job);
     if (status != LIBRDP_STATUS_OK)
+    {
         rdp_session_usb_job_free(job);
+        if (status == LIBRDP_STATUS_LIMIT_EXCEEDED)
+            return rdp_session_limit_rejected(session);
+    }
     return status;
 }
 

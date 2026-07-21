@@ -691,30 +691,19 @@ static librdp_status rdp_session_handle_clipboard_message(librdp_session* sessio
         librdp_event event;
         uint32_t count = 0;
         uint32_t stored = 0;
-        uint32_t i = 0;
         int long_names = (packet.flags & RDP_CLIPBOARD_CB_ASCII_NAMES) == 0;
 
         memset(formats, 0, sizeof(formats));
         status = rdp_clipboard_parse_format_list(&packet, &list);
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_clipboard_format_list_entry_count(&list, long_names, &count);
-        if (status == LIBRDP_STATUS_OK)
-        {
-            session->clipboard_remote_format_count = 0;
-            for (i = 0; i < count && i < RDP_SESSION_CLIPBOARD_MAX_FORMATS; i++)
-            {
-                rdp_clipboard_format_entry item;
-
-                status = rdp_clipboard_format_list_get_entry(&list, long_names, i, &item);
-                if (status != LIBRDP_STATUS_OK)
-                    break;
-                formats[i].format_id = item.format_id;
-                formats[i].name = item.name;
-                formats[i].name_len = item.name_len;
-                session->clipboard_remote_formats[i] = item.format_id;
-                stored++;
-            }
-        }
+            status = rdp_session_clipboard_store_remote_formats(
+                session,
+                &list,
+                long_names,
+                formats,
+                RDP_SESSION_CLIPBOARD_MAX_FORMATS,
+                &stored,
+                &count);
         if (status == LIBRDP_STATUS_OK)
         {
             session->clipboard_remote_format_count = stored;

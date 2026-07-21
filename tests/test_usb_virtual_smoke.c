@@ -722,6 +722,70 @@ static librdp_status test_usb_virtual_write_transfer(
     return status;
 }
 
+static librdp_status test_usb_virtual_write_control_out(
+    rdp_buffer* packet,
+    uint32_t request_id,
+    uint16_t payload_len)
+{
+    rdp_buffer payload;
+    rdp_buffer urb;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!packet)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    rdp_buffer_init(&urb);
+    status = rdp_buffer_append_u32_le(&payload, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&payload, LIBUSB_ENDPOINT_OUT);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&payload, 0x55u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 0x0102u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, 0x0304u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, payload_len);
+    for (uint16_t index = 0u;
+         status == LIBRDP_STATUS_OK && index < payload_len;
+         index++)
+        status = rdp_buffer_append_u8(&payload, (uint8_t)(0xa0u + index));
+    if (status == LIBRDP_STATUS_OK &&
+        payload.length > UINT16_MAX - 8u)
+        status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(
+            &urb,
+            (uint16_t)(8u + payload.length));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(
+            &urb,
+            RDP_USB_REDIRECTION_URB_CONTROL_TRANSFER);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&urb, request_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&urb, payload.data, payload.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_usb_redirection_write_header(
+            packet,
+            TEST_USB_INTERFACE_ID,
+            RDP_USB_REDIRECTION_MASK_PROXY,
+            request_id,
+            1,
+            RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(packet, (uint32_t)urb.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(packet, urb.data, urb.length);
+    rdp_buffer_free(&urb);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
 static int test_usb_virtual_drain(librdp_session* session,
                                   uint32_t timeout_ms)
 {
@@ -967,9 +1031,102 @@ static int test_usb_virtual_close_race(void)
     return 0;
 }
 
+/*
+ * Accept one complete URB exactly at the device byte and pending-request caps.
+ * A trailing byte and a second in-flight URB must be rejected before backend
+ * execution, counted once each, and leave the first request cancellable.
+ */
+static int test_usb_virtual_limit_boundaries(void)
+{
+    test_usb_virtual_provider provider;
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_limits limits;
+    librdp_metrics metrics;
+    rdp_buffer packet;
+    rdp_buffer oversized;
+    rdp_buffer cancel;
+    const uint32_t first_request_id = 1u;
+
+    test_usb_virtual_provider_init(&provider);
+    rdp_buffer_init(&packet);
+    rdp_buffer_init(&oversized);
+    rdp_buffer_init(&cancel);
+    CHECK(test_usb_virtual_write_control_out(
+              &packet,
+              first_request_id,
+              1u) == LIBRDP_STATUS_OK);
+    CHECK(test_usb_virtual_write_control_out(
+              &oversized,
+              first_request_id + 1u,
+              2u) == LIBRDP_STATUS_OK);
+    CHECK(oversized.length == packet.length + 1u);
+    CHECK(packet.length < UINT32_MAX);
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_limits_init(&limits) == LIBRDP_STATUS_OK);
+    limits.device_io_bytes = (uint32_t)packet.length;
+    limits.pending_requests = 1u;
+    CHECK(librdp_settings_set_limits(settings, &limits) ==
+          LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    test_usb_virtual_attach(session, &provider);
+
+    CHECK(rdp_session_handle_usb_redirection_message(
+              session,
+              oversized.data,
+              oversized.length) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+
+    atomic_store_explicit(&provider.mode,
+                          TEST_USB_VIRTUAL_WAIT_CANCEL,
+                          memory_order_release);
+    CHECK(rdp_session_handle_usb_redirection_message(
+              session,
+              packet.data,
+              packet.length) == LIBRDP_STATUS_OK);
+    CHECK(test_usb_virtual_wait_active(&provider));
+
+    oversized.length = 0u;
+    CHECK(test_usb_virtual_write_control_out(
+              &oversized,
+              first_request_id + 1u,
+              1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_usb_redirection_message(
+              session,
+              oversized.data,
+              oversized.length) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+
+    CHECK(rdp_usb_redirection_write_cancel_request(
+              &cancel,
+              TEST_USB_INTERFACE_ID,
+              first_request_id + 2u,
+              first_request_id) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_usb_redirection_message(
+              session,
+              cancel.data,
+              cancel.length) == LIBRDP_STATUS_OK);
+    CHECK(test_usb_virtual_drain(session, 1000u));
+    CHECK(atomic_load_explicit(&provider.cancel_observed,
+                               memory_order_relaxed) == 1u);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.limits_rejected == 2u);
+
+    rdp_buffer_free(&cancel);
+    rdp_buffer_free(&oversized);
+    rdp_buffer_free(&packet);
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 int main(void)
 {
-    if (test_usb_virtual_all_urbs() != 0)
+    if (test_usb_virtual_all_urbs() != 0 ||
+        test_usb_virtual_limit_boundaries() != 0)
         return 1;
     return test_usb_virtual_close_race();
 }

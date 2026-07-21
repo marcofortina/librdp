@@ -28,6 +28,72 @@ static librdp_status rdp_session_clipboard_format_name(const char* name, rdp_buf
     return rdp_session_utf8_to_utf16le(name, out, 0);
 }
 
+/*
+ * Parse a remote format list transactionally and retain only the configured
+ * number of entries. The event view borrows names from the caller's packet,
+ * while the session stores only numeric identifiers that survive dispatch.
+ */
+librdp_status rdp_session_clipboard_store_remote_formats(
+    librdp_session* session,
+    const rdp_clipboard_format_list* list,
+    int long_names,
+    librdp_clipboard_format* formats,
+    uint32_t capacity,
+    uint32_t* stored,
+    uint32_t* total)
+{
+    uint32_t identifiers[RDP_SESSION_CLIPBOARD_MAX_FORMATS];
+    uint32_t available = 0u;
+    uint32_t retained = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !list || !formats || !stored || !total)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_clipboard_format_list_entry_count(list,
+                                                   long_names,
+                                                   &available);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    retained = available;
+    if (retained > session->limits.clipboard_formats)
+        retained = session->limits.clipboard_formats;
+    if (retained > capacity || retained > RDP_SESSION_CLIPBOARD_MAX_FORMATS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(identifiers, 0, sizeof(identifiers));
+    for (uint32_t index = 0u; index < retained; index++)
+    {
+        rdp_clipboard_format_entry item;
+
+        status = rdp_clipboard_format_list_get_entry(list,
+                                                     long_names,
+                                                     index,
+                                                     &item);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        formats[index].format_id = item.format_id;
+        formats[index].name = item.name;
+        formats[index].name_len = item.name_len;
+        identifiers[index] = item.format_id;
+    }
+
+    memset(session->clipboard_remote_formats,
+           0,
+           sizeof(session->clipboard_remote_formats));
+    if (retained > 0u)
+    {
+        memcpy(session->clipboard_remote_formats,
+               identifiers,
+               (size_t)retained * sizeof(identifiers[0]));
+    }
+    session->clipboard_remote_format_count = retained;
+    if (available > retained)
+        rdp_session_metric_add(&session->metrics.limits_rejected, 1u);
+    *stored = retained;
+    *total = available;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_clipboard_file_descriptors(const librdp_session* session,
                                                             rdp_clipboard_file_descriptor* files,
                                                             uint32_t* count)
@@ -759,5 +825,4 @@ librdp_status librdp_session_clipboard_request_file_range(librdp_session* sessio
                                               position,
                                               requested);
 }
-
 
