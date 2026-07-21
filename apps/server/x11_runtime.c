@@ -21,6 +21,7 @@
 #include "server_host.h"
 #include "server_options.h"
 
+#include <openssl/crypto.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,12 +31,48 @@ struct x11_server_runtime
 {
     x11_server_context* native;
     server_host* host;
+    char* nla_username;
+    char* nla_domain;
+    char* nla_password;
     librdp_security_mode security_mode;
     volatile sig_atomic_t revoke_requested;
     int started;
 };
 
 static x11_server_runtime* x11_server_signal_runtime = NULL;
+
+static void x11_server_runtime_clear_credentials(x11_server_runtime* runtime)
+{
+    if (!runtime)
+        return;
+    free(runtime->nla_username);
+    free(runtime->nla_domain);
+    if (runtime->nla_password)
+    {
+        OPENSSL_cleanse(runtime->nla_password, strlen(runtime->nla_password));
+        free(runtime->nla_password);
+    }
+    runtime->nla_username = NULL;
+    runtime->nla_domain = NULL;
+    runtime->nla_password = NULL;
+}
+
+static librdp_status x11_server_credentials_provider(
+    librdp_server_peer* peer,
+    const librdp_server_credentials_request* request,
+    librdp_credentials* credentials,
+    void* user_data)
+{
+    const x11_server_runtime* runtime = (const x11_server_runtime*)user_data;
+
+    if (!peer || !request || !credentials || !runtime ||
+        !runtime->nla_username || !runtime->nla_password)
+        return LIBRDP_STATUS_AUTHENTICATION_FAILED;
+    return librdp_credentials_set(credentials,
+                                  runtime->nla_username,
+                                  runtime->nla_password,
+                                  runtime->nla_domain);
+}
 
 static void x11_server_signal_handler(int signal_number)
 {
@@ -156,8 +193,6 @@ x11_server_runtime* x11_server_runtime_new(
     host_config.server.security_mode = options->security_mode;
     host_config.server.tls_certificate_path = options->tls_certificate;
     host_config.server.tls_private_key_path = options->tls_private_key;
-    host_config.server.nla_username = options->nla_username;
-    host_config.server.nla_domain = options->nla_domain;
     if (options->security_mode == LIBRDP_SECURITY_NLA)
     {
         password = options->nla_password
@@ -170,7 +205,22 @@ x11_server_runtime* x11_server_runtime_new(
             free(runtime);
             return NULL;
         }
-        host_config.server.nla_password = password;
+        runtime->nla_username = strdup(options->nla_username);
+        runtime->nla_domain =
+            options->nla_domain ? strdup(options->nla_domain) : NULL;
+        runtime->nla_password = strdup(password);
+        if (!runtime->nla_username ||
+            (options->nla_domain && !runtime->nla_domain) ||
+            !runtime->nla_password)
+        {
+            *output_status = LIBRDP_STATUS_NO_MEMORY;
+            x11_server_context_free(runtime->native);
+            x11_server_runtime_clear_credentials(runtime);
+            free(runtime);
+            return NULL;
+        }
+        host_config.credentials_provider = x11_server_credentials_provider;
+        host_config.credentials_provider_user_data = runtime;
     }
     host_config.max_peers = options->max_peers;
     host_config.dirty.frame_interval_ns =
@@ -188,6 +238,7 @@ x11_server_runtime* x11_server_runtime_new(
     {
         *output_status = status;
         x11_server_context_free(runtime->native);
+        x11_server_runtime_clear_credentials(runtime);
         free(runtime);
         return NULL;
     }
@@ -196,6 +247,7 @@ x11_server_runtime* x11_server_runtime_new(
     {
         *output_status = LIBRDP_STATUS_NO_MEMORY;
         x11_server_context_free(runtime->native);
+        x11_server_runtime_clear_credentials(runtime);
         free(runtime);
         return NULL;
     }
@@ -211,6 +263,7 @@ void x11_server_runtime_free(x11_server_runtime* runtime)
     (void)server_host_stop(runtime->host);
     server_host_free(runtime->host);
     x11_server_context_free(runtime->native);
+    x11_server_runtime_clear_credentials(runtime);
     memset(runtime, 0, sizeof(*runtime));
     free(runtime);
 }

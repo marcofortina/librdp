@@ -729,6 +729,7 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
             add_dependencies(librdp_tests test_x11_server)
 
             if(LIBRDP_FUSE3_FOUND)
+                find_program(LIBRDP_OPENSSL_EXECUTABLE NAMES openssl)
                 add_executable(test_x11_server_interop
                     tests/test_x11_server_interop.c
                 )
@@ -736,6 +737,20 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
                     test_x11_server_interop PRIVATE
                     LIBRDP_TEST_XVFB_PATH="${LIBRDP_XVFB_EXECUTABLE}"
                     LIBRDP_TEST_X11_SERVER_PATH="$<TARGET_FILE:librdp-server>"
+                )
+                if(LIBRDP_OPENSSL_EXECUTABLE)
+                    target_compile_definitions(
+                        test_x11_server_interop PRIVATE
+                        LIBRDP_TEST_OPENSSL_PATH="${LIBRDP_OPENSSL_EXECUTABLE}"
+                    )
+                else()
+                    target_compile_definitions(
+                        test_x11_server_interop PRIVATE
+                        LIBRDP_TEST_OPENSSL_PATH="openssl"
+                    )
+                endif()
+                target_link_libraries(test_x11_server_interop PRIVATE
+                    PkgConfig::LIBRDP_X11_SERVER
                 )
                 librdp_apply_system_definitions(
                     test_x11_server_interop)
@@ -746,9 +761,23 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
                 librdp_apply_sanitizer_link_options(
                     test_x11_server_interop)
                 add_test(NAME x11_server_external_interop
-                    COMMAND test_x11_server_interop)
+                    COMMAND test_x11_server_interop standard)
+                set(LIBRDP_X11_SERVER_INTEROP_TESTS
+                    x11_server_external_interop
+                )
+                if(LIBRDP_OPENSSL_EXECUTABLE)
+                    add_test(NAME x11_server_external_interop_tls
+                        COMMAND test_x11_server_interop tls)
+                    add_test(NAME x11_server_external_interop_nla
+                        COMMAND test_x11_server_interop nla)
+                    list(APPEND LIBRDP_X11_SERVER_INTEROP_TESTS
+                        x11_server_external_interop_tls
+                        x11_server_external_interop_nla
+                    )
+                endif()
                 set_tests_properties(
-                    x11_server_external_interop PROPERTIES
+                    ${LIBRDP_X11_SERVER_INTEROP_TESTS}
+                    PROPERTIES
                     SKIP_RETURN_CODE 77
                     TIMEOUT 45
                 )
