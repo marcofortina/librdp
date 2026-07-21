@@ -316,9 +316,11 @@ static const smoke_drive_profile smoke_drive_locking = {
 static const smoke_drive_profile smoke_drive_notify = {
     SMOKE_DRIVE_NOTIFY,
 };
+#if defined(RDP_HAVE_ATTR) && defined(__linux__)
 static const smoke_drive_profile smoke_drive_metadata = {
     SMOKE_DRIVE_METADATA,
 };
+#endif
 static const smoke_drive_profile smoke_drive_confinement = {
     SMOKE_DRIVE_CONFINEMENT,
 };
