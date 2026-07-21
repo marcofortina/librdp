@@ -39,6 +39,35 @@ static void trace_protocol_hexdump(void)
     unsetenv("LIBRDP_TRACE_HEX_BYTES");
 }
 
+static void trace_bounded_hexdumps(void)
+{
+    const uint8_t exact[] = {'A', 'B', 'C', 'D'};
+    uint8_t oversized[512];
+    rdp_trace_session_scope scope;
+
+    memset(oversized, 'Z', sizeof(oversized));
+    memset(&scope, 0, sizeof(scope));
+    scope.categories = RDP_TRACE_PROTOCOL;
+    scope.level = RDP_TRACE_LEVEL_TRACE;
+    scope.sink = LIBRDP_TRACE_SINK_STDERR;
+    rdp_trace_reset_for_tests();
+    rdp_trace_push_session(&scope);
+
+    scope.hex_limit = 0u;
+    rdp_trace_hexdump("trace.limit.zero", RDP_TRACE_SENSITIVITY_HEADER, exact, sizeof(exact));
+    scope.hex_limit = 1u;
+    rdp_trace_hexdump("trace.limit.one", RDP_TRACE_SENSITIVITY_HEADER, exact, sizeof(exact));
+    scope.hex_limit = sizeof(exact);
+    rdp_trace_hexdump("trace.limit.exact", RDP_TRACE_SENSITIVITY_HEADER, exact, sizeof(exact));
+    scope.hex_limit = 7u;
+    rdp_trace_hexdump("trace.limit.oversized",
+                      RDP_TRACE_SENSITIVITY_HEADER,
+                      oversized,
+                      sizeof(oversized));
+
+    rdp_trace_pop_session(&scope);
+}
+
 static void trace_emit_sensitive_hexdumps(void)
 {
     const uint8_t x224_request[] =
@@ -163,6 +192,26 @@ static void trace_level_debug_event(void)
 }
 
 /*
+ * Coverage: verifies zero, single-byte, exact and oversized protocol dump
+ * limits without exposing bytes beyond the configured boundary.
+ */
+int test_trace_bounds(void)
+{
+    char output[4096];
+
+    CHECK(capture_stderr(trace_bounded_hexdumps, output, sizeof(output)));
+    CHECK(strstr(output,
+                 "event=trace.limit.zero level=trace session_id= connection_id= trace_id= payload_len=4 dumped=0 hex= ascii=\"\"") != NULL);
+    CHECK(strstr(output,
+                 "event=trace.limit.one level=trace session_id= connection_id= trace_id= payload_len=4 dumped=1 hex=41 ascii=\"A\"") != NULL);
+    CHECK(strstr(output,
+                 "event=trace.limit.exact level=trace session_id= connection_id= trace_id= payload_len=4 dumped=4 hex=41424344 ascii=\"ABCD\"") != NULL);
+    CHECK(strstr(output,
+                 "event=trace.limit.oversized level=trace session_id= connection_id= trace_id= payload_len=512 dumped=7 hex=5a5a5a5a5a5a5a ascii=\"ZZZZZZZ\"") != NULL);
+    return 0;
+}
+
+/*
  * Coverage: validates trace environment parsing, category filtering, monotonic
  * formatting, redaction boundaries, and bounded hexdump behavior.
  */
@@ -253,6 +302,8 @@ int test_trace(void)
     CHECK(strstr(output, "level=trace") != NULL);
     CHECK(strstr(output, "payload_len=4 dumped=2 hex=4142 ascii=\"AB\"") != NULL);
     CHECK(strstr(output, "sensitivity=header redacted=0 unsafe=0") != NULL);
+
+    CHECK(test_trace_bounds() == 0);
 
     CHECK(capture_stderr(trace_sensitive_hexdumps, output, sizeof(output)));
     CHECK(strstr(output, "sensitivity=auth redacted=1 unsafe=0") != NULL);

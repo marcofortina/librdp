@@ -515,6 +515,11 @@ if(LIBRDP_BUILD_TESTS)
     set_tests_properties(smoke_trace_sensitive_payloads PROPERTIES
         TIMEOUT 30
     )
+    add_test(NAME smoke_trace_hexdump_bounds
+        COMMAND test_core trace-bounds-smoke)
+    set_tests_properties(smoke_trace_hexdump_bounds PROPERTIES
+        TIMEOUT 30
+    )
     add_test(NAME core_features COMMAND test_core features)
     add_test(NAME core_channels COMMAND test_core channels)
     add_test(NAME smoke_webauthn_mock
