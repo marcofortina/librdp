@@ -31,7 +31,6 @@
 #include <fido.h>
 #endif
 
-#define RDP_WEBAUTHN_BACKEND_CTAPHID_REPORT_LENGTH 64u
 #define RDP_WEBAUTHN_BACKEND_CTAPHID_INIT_PAYLOAD_LENGTH 57u
 #define RDP_WEBAUTHN_BACKEND_CTAPHID_CONT_PAYLOAD_LENGTH 59u
 #define RDP_WEBAUTHN_BACKEND_CTAPHID_MAX_PAYLOAD \
@@ -94,6 +93,23 @@ void rdp_webauthn_backend_fido2_info_init(rdp_webauthn_backend_fido2_device* dev
     device->info.status = 0;
 }
 
+librdp_status rdp_webauthn_backend_format_hidraw_report(
+    const uint8_t* frame,
+    size_t frame_len,
+    uint8_t* report,
+    size_t report_capacity,
+    size_t* report_len)
+{
+    if (!frame || frame_len != RDP_WEBAUTHN_BACKEND_CTAPHID_FRAME_LENGTH || !report ||
+        report_capacity < RDP_WEBAUTHN_BACKEND_HIDRAW_REPORT_LENGTH || !report_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    report[0] = 0;
+    memcpy(report + 1u, frame, RDP_WEBAUTHN_BACKEND_CTAPHID_FRAME_LENGTH);
+    *report_len = RDP_WEBAUTHN_BACKEND_HIDRAW_REPORT_LENGTH;
+    return LIBRDP_STATUS_OK;
+}
+
 #if defined(RDP_HAVE_FIDO2) && defined(__linux__)
 static uint32_t rdp_webauthn_backend_ctaphid_read_u32_be(const uint8_t* data)
 {
@@ -120,15 +136,24 @@ static uint64_t rdp_webauthn_backend_time_ms(void)
 
 static int rdp_webauthn_backend_ctaphid_write_frame(int fd, const uint8_t* frame)
 {
+    uint8_t report[RDP_WEBAUTHN_BACKEND_HIDRAW_REPORT_LENGTH];
+    size_t report_len = 0;
     ssize_t written = 0;
 
     if (fd < 0 || !frame)
         return 0;
+    if (rdp_webauthn_backend_format_hidraw_report(
+            frame,
+            RDP_WEBAUTHN_BACKEND_CTAPHID_FRAME_LENGTH,
+            report,
+            sizeof(report),
+            &report_len) != LIBRDP_STATUS_OK)
+        return 0;
     do
     {
-        written = write(fd, frame, RDP_WEBAUTHN_BACKEND_CTAPHID_REPORT_LENGTH);
+        written = write(fd, report, report_len);
     } while (written < 0 && errno == EINTR);
-    return written == (ssize_t)RDP_WEBAUTHN_BACKEND_CTAPHID_REPORT_LENGTH;
+    return written == (ssize_t)report_len;
 }
 
 static int rdp_webauthn_backend_ctaphid_read_frame(int fd,
@@ -156,10 +181,10 @@ static int rdp_webauthn_backend_ctaphid_read_frame(int fd,
         }
         if ((pfd.revents & POLLIN) == 0)
             return 0;
-        count = read(fd, frame, RDP_WEBAUTHN_BACKEND_CTAPHID_REPORT_LENGTH);
+        count = read(fd, frame, RDP_WEBAUTHN_BACKEND_CTAPHID_FRAME_LENGTH);
         if (count < 0 && (errno == EINTR || errno == EAGAIN))
             continue;
-        return count == (ssize_t)RDP_WEBAUTHN_BACKEND_CTAPHID_REPORT_LENGTH;
+        return count == (ssize_t)RDP_WEBAUTHN_BACKEND_CTAPHID_FRAME_LENGTH;
     }
 }
 
@@ -169,7 +194,7 @@ static librdp_status rdp_webauthn_backend_ctaphid_send(uint32_t cid,
                                                        size_t payload_len,
                                                        int fd)
 {
-    uint8_t frame[RDP_WEBAUTHN_BACKEND_CTAPHID_REPORT_LENGTH];
+    uint8_t frame[RDP_WEBAUTHN_BACKEND_CTAPHID_FRAME_LENGTH];
     size_t offset = 0;
     size_t chunk = 0;
     uint8_t seq = 0;
@@ -222,7 +247,7 @@ static librdp_status rdp_webauthn_backend_ctaphid_recv(uint32_t cid,
                                                        rdp_buffer* payload,
                                                        uint32_t timeout_ms)
 {
-    uint8_t frame[RDP_WEBAUTHN_BACKEND_CTAPHID_REPORT_LENGTH];
+    uint8_t frame[RDP_WEBAUTHN_BACKEND_CTAPHID_FRAME_LENGTH];
     uint64_t deadline = rdp_webauthn_backend_time_ms() + timeout_ms;
     uint16_t total = 0;
     size_t copied = 0;

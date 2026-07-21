@@ -191,6 +191,9 @@ if(LIBRDP_BUILD_TESTS)
     add_executable(test_optional_backend_probe tests/optional_backend_probe.c)
     librdp_configure_test_executable(test_optional_backend_probe)
 
+    add_executable(test_webauthn_backend tests/test_webauthn_backend.c)
+    librdp_configure_test_executable(test_webauthn_backend)
+
     add_executable(test_viewer_common tests/test_viewer_common.c)
     target_include_directories(test_viewer_common PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
@@ -436,6 +439,7 @@ if(LIBRDP_BUILD_TESTS)
         test_server
         test_interop_smoke
         test_optional_backend_probe
+        test_webauthn_backend
         test_viewer_common
         test_admin_workspace
         test_server_host
@@ -529,6 +533,8 @@ if(LIBRDP_BUILD_TESTS)
         TIMEOUT 90
     )
     add_test(NAME core_features COMMAND test_core features)
+    add_test(NAME webauthn_backend COMMAND test_webauthn_backend)
+    set_tests_properties(webauthn_backend PROPERTIES TIMEOUT 30)
     add_test(NAME core_channels COMMAND test_core channels)
     add_test(NAME smoke_webauthn_mock
         COMMAND test_core webauthn-mock-smoke)

@@ -32,6 +32,9 @@
 #define RDP_WEBAUTHN_BACKEND_PATH_MAX PATH_MAX
 #endif
 
+#define RDP_WEBAUTHN_BACKEND_CTAPHID_FRAME_LENGTH 64u
+#define RDP_WEBAUTHN_BACKEND_HIDRAW_REPORT_LENGTH 65u
+
 typedef struct rdp_webauthn_backend_fido2_device
 {
     char path[RDP_WEBAUTHN_BACKEND_PATH_MAX];
@@ -42,6 +45,12 @@ typedef struct rdp_webauthn_backend_fido2_device
 } rdp_webauthn_backend_fido2_device;
 
 void rdp_webauthn_backend_fido2_info_init(rdp_webauthn_backend_fido2_device* device);
+librdp_status rdp_webauthn_backend_format_hidraw_report(
+    const uint8_t* frame,
+    size_t frame_len,
+    uint8_t* report,
+    size_t report_capacity,
+    size_t* report_len);
 librdp_status rdp_webauthn_backend_select_fido2_device(
     const char* requested_path,
     rdp_webauthn_backend_fido2_device* device);
