@@ -717,7 +717,7 @@ static pid_t interop_start_client(const char* executable,
     char endpoint[64];
     char drive[PATH_MAX + 32u];
     char security_option[32];
-    char* arguments[16];
+    char* arguments[20];
     size_t argument_count = 0u;
     int endpoint_length = 0;
     int drive_length = 0;
@@ -747,7 +747,10 @@ static pid_t interop_start_client(const char* executable,
     arguments[argument_count++] = endpoint;
     arguments[argument_count++] = (char*)"/u:interop-user";
     if (security == INTEROP_SECURITY_NLA)
+    {
         arguments[argument_count++] = (char*)"/d:interop-domain";
+        arguments[argument_count++] = (char*)"/auth-pkg-list:!kerberos";
+    }
     arguments[argument_count++] = (char*)"/p:interop-secret";
     arguments[argument_count++] = security_option;
     if (security != INTEROP_SECURITY_STANDARD)
@@ -755,6 +758,8 @@ static pid_t interop_start_client(const char* executable,
     arguments[argument_count++] = (char*)"/size:640x480";
     arguments[argument_count++] = drive;
     arguments[argument_count++] = (char*)"/gfx:off";
+    arguments[argument_count++] = (char*)"-multitransport";
+    arguments[argument_count++] = (char*)"-heartbeat";
     arguments[argument_count++] = (char*)"/network:lan";
     arguments[argument_count++] = (char*)"/audio-mode:2";
     arguments[argument_count++] = (char*)"/log-level:INFO";
