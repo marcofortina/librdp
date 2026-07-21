@@ -702,6 +702,7 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
             target_link_libraries(test_x11_server PRIVATE
                 librdp_server_common
                 Iconv::Iconv
+                OpenSSL::Crypto
                 PkgConfig::LIBRDP_X11_SERVER
             )
             if(LIBRDP_FUSE3_FOUND)

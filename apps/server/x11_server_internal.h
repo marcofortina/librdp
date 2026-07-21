@@ -33,6 +33,7 @@
 
 #define X11_SERVER_CLIPBOARD_MAX_FORMATS 8u
 #define X11_SERVER_CLIPBOARD_TIMEOUT_NS 10000000000ull
+#define X11_SERVER_CAPTURE_POLL_INTERVAL_NS 33333333ull
 typedef struct x11_server_shm_image
 {
     XImage* image;
@@ -98,6 +99,8 @@ struct x11_server_context
     int randr_error_base;
     int composite_event_base;
     int composite_error_base;
+    int damage_available;
+    int composite_available;
     int connection_failed;
     int capture_started;
     int pointer_started;
@@ -108,6 +111,7 @@ struct x11_server_context
     int full_capture_due;
     int target_destroyed;
     int shm_available;
+    uint64_t next_capture_poll_ns;
     uint64_t frame_sequence;
     uint64_t pointer_sequence;
     unsigned long cursor_serial;

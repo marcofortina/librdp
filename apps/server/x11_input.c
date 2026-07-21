@@ -21,6 +21,7 @@
 #include <X11/extensions/XTest.h>
 
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define X11_RDP_KBD_RELEASE 0x8000u
@@ -133,6 +134,78 @@ static int x11_server_find_keysym(x11_server_context* context,
     return 0;
 }
 
+/*
+ * XTest can emit only keycodes present in the active X keyboard map. For a
+ * Unicode keysym absent from that map, borrow one currently released keycode,
+ * install the keysym through Xlib, emit it, and restore the complete original
+ * mapping before returning. The X server remains the mapping authority.
+ */
+static librdp_status x11_server_inject_temporary_keysym(
+    x11_server_context* context,
+    KeySym keysym)
+{
+    KeySym* original = NULL;
+    KeySym* replacement = NULL;
+    int minimum = 0;
+    int maximum = 0;
+    int keysyms_per_keycode = 0;
+    int candidate = 0;
+    int injected = 0;
+
+    if (!context || keysym == NoSymbol)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    XDisplayKeycodes(context->display, &minimum, &maximum);
+    for (candidate = maximum; candidate >= minimum; candidate--)
+    {
+        if (candidate < 256 && !context->pressed_keys[candidate])
+            break;
+    }
+    if (candidate < minimum || candidate > 255)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    original = XGetKeyboardMapping(context->display,
+                                   (KeyCode)candidate,
+                                   1,
+                                   &keysyms_per_keycode);
+    if (!original || keysyms_per_keycode <= 0)
+    {
+        if (original)
+            XFree(original);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    replacement = (KeySym*)calloc((size_t)keysyms_per_keycode,
+                                  sizeof(*replacement));
+    if (!replacement)
+    {
+        XFree(original);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    replacement[0] = keysym;
+    XChangeKeyboardMapping(context->display,
+                           candidate,
+                           keysyms_per_keycode,
+                           replacement,
+                           1);
+    XSync(context->display, False);
+    injected =
+        XTestFakeKeyEvent(context->display,
+                          (KeyCode)candidate,
+                          True,
+                          CurrentTime) &&
+        XTestFakeKeyEvent(context->display,
+                          (KeyCode)candidate,
+                          False,
+                          CurrentTime);
+    XChangeKeyboardMapping(context->display,
+                           candidate,
+                           keysyms_per_keycode,
+                           original,
+                           1);
+    XSync(context->display, False);
+    free(replacement);
+    XFree(original);
+    return injected ? LIBRDP_STATUS_OK : LIBRDP_STATUS_IO_ERROR;
+}
+
 static librdp_status x11_server_inject_codepoint(
     x11_server_context* context,
     uint32_t codepoint)
@@ -154,7 +227,7 @@ static librdp_status x11_server_inject_codepoint(
                                 &keycode,
                                 &shift,
                                 &level3))
-        return LIBRDP_STATUS_UNSUPPORTED;
+        return x11_server_inject_temporary_keysym(context, keysym);
     shift_code = XKeysymToKeycode(context->display, XK_Shift_L);
     level3_code =
         XKeysymToKeycode(context->display, XK_ISO_Level3_Shift);

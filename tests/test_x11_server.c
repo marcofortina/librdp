@@ -24,6 +24,8 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 
+#include <openssl/evp.h>
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -80,6 +82,10 @@ typedef struct x11_server_test_state
     uint8_t sample_b;
     uint8_t sample_g;
     uint8_t sample_r;
+    uint8_t frame_sha256[32];
+    size_t last_dirty_count;
+    int frame_hash_valid;
+    int dirty_bounds_valid;
     int pointer_shape;
     int pointer_visible;
     uint8_t clipboard_data[4096];
@@ -148,7 +154,18 @@ static int test_bytes_contains(const uint8_t* data,
     return 0;
 }
 
+static int test_start_xvfb_with_fallback(char display_name[32],
+                                         pid_t* child,
+                                         int disable_capture_extensions);
+
 static int test_start_xvfb(char display_name[32], pid_t* child)
+{
+    return test_start_xvfb_with_fallback(display_name, child, 0);
+}
+
+static int test_start_xvfb_with_fallback(char display_name[32],
+                                         pid_t* child,
+                                         int disable_capture_extensions)
 {
     unsigned int attempt = 0u;
 
@@ -168,15 +185,34 @@ static int test_start_xvfb(char display_name[32], pid_t* child)
             return 0;
         if (pid == 0)
         {
-            execl(LIBRDP_TEST_XVFB_PATH,
-                  LIBRDP_TEST_XVFB_PATH,
-                  display_name,
-                  "-screen",
-                  "0",
-                  "320x240x24",
-                  "-nolisten",
-                  "tcp",
-                  (char*)NULL);
+            if (disable_capture_extensions)
+            {
+                execl(LIBRDP_TEST_XVFB_PATH,
+                      LIBRDP_TEST_XVFB_PATH,
+                      display_name,
+                      "-screen",
+                      "0",
+                      "320x240x24",
+                      "-nolisten",
+                      "tcp",
+                      "-extension",
+                      "DAMAGE",
+                      "-extension",
+                      "Composite",
+                      (char*)NULL);
+            }
+            else
+            {
+                execl(LIBRDP_TEST_XVFB_PATH,
+                      LIBRDP_TEST_XVFB_PATH,
+                      display_name,
+                      "-screen",
+                      "0",
+                      "320x240x24",
+                      "-nolisten",
+                      "tcp",
+                      (char*)NULL);
+            }
             _exit(127);
         }
         for (wait_index = 0u; wait_index < 100u; wait_index++)
@@ -272,6 +308,8 @@ static void test_frame_callback(const server_platform_frame* frame,
 {
     x11_server_test_state* state = (x11_server_test_state*)user_data;
     size_t sample_offset = 0u;
+    size_t index = 0u;
+    unsigned int digest_len = 0u;
 
     if (!state || !frame || !frame->pixels || frame->width <= 20u ||
         frame->height <= 20u || frame->stride < frame->width * 4u)
@@ -285,6 +323,28 @@ static void test_frame_callback(const server_platform_frame* frame,
     state->sample_b = frame->pixels[sample_offset];
     state->sample_g = frame->pixels[sample_offset + 1u];
     state->sample_r = frame->pixels[sample_offset + 2u];
+    state->last_dirty_count = frame->dirty_count;
+    state->dirty_bounds_valid =
+        frame->dirty_count > 0u && frame->dirty_rects ? 1 : 0;
+    if (frame->dirty_count > 0u && !frame->dirty_rects)
+        return;
+    for (index = 0u; index < frame->dirty_count; index++)
+    {
+        const server_platform_rect* rect = &frame->dirty_rects[index];
+
+        if (rect->width == 0u || rect->height == 0u ||
+            (uint64_t)rect->x + rect->width > frame->width ||
+            (uint64_t)rect->y + rect->height > frame->height)
+            state->dirty_bounds_valid = 0;
+    }
+    state->frame_hash_valid =
+        EVP_Digest(frame->pixels,
+                   frame->pixels_len,
+                   state->frame_sha256,
+                   &digest_len,
+                   EVP_sha256(),
+                   NULL) == 1 &&
+        digest_len == sizeof(state->frame_sha256);
 }
 
 static void test_capture_lost(librdp_status status, void* user_data)
@@ -294,6 +354,149 @@ static void test_capture_lost(librdp_status status, void* user_data)
     (void)status;
     if (state)
         state->frame_count = UINT64_MAX;
+}
+
+/*
+ * Exercise one selected capture source through the same provider contract used
+ * by the server host. Geometry is asserted before the context is discarded so
+ * monitor and window selection cannot silently fall back to the root desktop.
+ */
+static int test_capture_source(const char* display_name,
+                               x11_server_source_kind source_kind,
+                               uint32_t monitor_index,
+                               unsigned long window_id,
+                               uint32_t expected_width,
+                               uint32_t expected_height)
+{
+    x11_server_config config;
+    x11_server_context* context = NULL;
+    server_platform platform;
+    const server_platform_capture_vtable* capture = NULL;
+    server_platform_capture_sink sink;
+    x11_server_test_state state;
+
+    memset(&state, 0, sizeof(state));
+    x11_server_config_init(&config);
+    config.display_name = display_name;
+    config.source_kind = source_kind;
+    config.monitor_index = monitor_index;
+    config.window_id = window_id;
+    config.allow_capture = 1;
+    context = x11_server_context_new(&config);
+    CHECK(context != NULL);
+    CHECK(x11_server_context_platform(context, &platform) ==
+          LIBRDP_STATUS_OK);
+    capture =
+        (const server_platform_capture_vtable*)platform.capture.vtable;
+    CHECK(capture != NULL);
+    memset(&sink, 0, sizeof(sink));
+    sink.frame = test_frame_callback;
+    sink.lost = test_capture_lost;
+    sink.user_data = &state;
+    CHECK(capture->start(context, &sink) == LIBRDP_STATUS_OK);
+    CHECK(capture->request_frame(context) == LIBRDP_STATUS_OK);
+    CHECK(state.frame_count == 1u);
+    CHECK(state.last_width == expected_width);
+    CHECK(state.last_height == expected_height);
+    CHECK(state.frame_hash_valid && state.dirty_bounds_valid);
+    capture->stop(context);
+    x11_server_context_free(context);
+    return 0;
+}
+
+/*
+ * Run against an X server with Damage and Composite disabled. The window is
+ * captured directly and a later color change must arrive through timed
+ * full-frame polling rather than a native damage event.
+ */
+static int test_capture_fallback(const char* display_name)
+{
+    Display* display = NULL;
+    int screen = 0;
+    Window root = None;
+    Window window = None;
+    GC graphics = None;
+    XColor red;
+    XColor blue;
+    Colormap colormap = None;
+    x11_server_config config;
+    x11_server_context* context = NULL;
+    server_platform platform;
+    const server_platform_capture_vtable* capture = NULL;
+    server_platform_capture_sink sink;
+    x11_server_test_state state;
+    uint64_t first_frame = 0u;
+    unsigned int index = 0u;
+
+    memset(&state, 0, sizeof(state));
+    display = XOpenDisplay(display_name);
+    CHECK(display != NULL);
+    screen = DefaultScreen(display);
+    root = RootWindow(display, screen);
+    colormap = DefaultColormap(display, screen);
+    memset(&red, 0, sizeof(red));
+    memset(&blue, 0, sizeof(blue));
+    CHECK(XParseColor(display, colormap, "#ff0000", &red));
+    CHECK(XAllocColor(display, colormap, &red));
+    CHECK(XParseColor(display, colormap, "#0000ff", &blue));
+    CHECK(XAllocColor(display, colormap, &blue));
+    window = XCreateSimpleWindow(display,
+                                 root,
+                                 20,
+                                 20,
+                                 80u,
+                                 60u,
+                                 0u,
+                                 0u,
+                                 red.pixel);
+    CHECK(window != None);
+    XMapWindow(display, window);
+    graphics = XCreateGC(display, window, 0ul, NULL);
+    CHECK(graphics != None);
+    XSync(display, False);
+
+    x11_server_config_init(&config);
+    config.display_name = display_name;
+    config.source_kind = X11_SERVER_SOURCE_WINDOW;
+    config.window_id = (unsigned long)window;
+    config.allow_capture = 1;
+    context = x11_server_context_new(&config);
+    CHECK(context != NULL);
+    CHECK(x11_server_context_platform(context, &platform) ==
+          LIBRDP_STATUS_OK);
+    capture =
+        (const server_platform_capture_vtable*)platform.capture.vtable;
+    CHECK(capture != NULL);
+    memset(&sink, 0, sizeof(sink));
+    sink.frame = test_frame_callback;
+    sink.lost = test_capture_lost;
+    sink.user_data = &state;
+    CHECK(capture->start(context, &sink) == LIBRDP_STATUS_OK);
+    CHECK(capture->request_frame(context) == LIBRDP_STATUS_OK);
+    CHECK(state.frame_count == 1u);
+    CHECK(state.last_width == 80u && state.last_height == 60u);
+    CHECK(state.frame_hash_valid && state.dirty_bounds_valid);
+    CHECK(state.sample_r > 200u && state.sample_g < 40u &&
+          state.sample_b < 40u);
+    first_frame = state.frame_count;
+    XSetForeground(display, graphics, blue.pixel);
+    XFillRectangle(display, window, graphics, 0, 0, 80u, 60u);
+    XFlush(display);
+    for (index = 0u;
+         index < 20u && state.frame_count == first_frame;
+         index++)
+        CHECK(test_dispatch_platform(capture, context, 100));
+    CHECK(state.frame_count > first_frame);
+    CHECK(state.frame_hash_valid && state.dirty_bounds_valid);
+    CHECK(state.sample_b > 200u && state.sample_g < 40u &&
+          state.sample_r < 40u);
+
+    capture->stop(context);
+    x11_server_context_free(context);
+    XFreeGC(display, graphics);
+    XDestroyWindow(display, window);
+    XCloseDisplay(display);
+    return 0;
 }
 
 static void test_pointer_callback(const server_platform_pointer* pointer,
@@ -1313,7 +1516,11 @@ static int test_x11_providers(const char* display_name)
     size_t selection_len = 0u;
     uint64_t request_count = 0u;
     uint64_t cancel_count = 0u;
+    uint64_t frame_count = 0u;
+    uint8_t first_hash[32];
+    uint8_t previous_hash[32];
     unsigned int index = 0u;
+    unsigned int wait_index = 0u;
 
     memset(&state, 0, sizeof(state));
     client = XOpenDisplay(display_name);
@@ -1378,6 +1585,25 @@ static int test_x11_providers(const char* display_name)
     XMapWindow(client, owner_requestor);
     graphics = XCreateGC(client, window, 0ul, NULL);
     XSync(client, False);
+
+    CHECK(test_capture_source(display_name,
+                              X11_SERVER_SOURCE_ROOT,
+                              0u,
+                              0ul,
+                              320u,
+                              240u) == 0);
+    CHECK(test_capture_source(display_name,
+                              X11_SERVER_SOURCE_MONITOR,
+                              0u,
+                              0ul,
+                              320u,
+                              240u) == 0);
+    CHECK(test_capture_source(display_name,
+                              X11_SERVER_SOURCE_WINDOW,
+                              0u,
+                              (unsigned long)window,
+                              100u,
+                              80u) == 0);
 
     x11_server_config_init(&config);
     config.display_name = display_name;
@@ -1450,8 +1676,10 @@ static int test_x11_providers(const char* display_name)
     CHECK(capture->request_frame(context) == LIBRDP_STATUS_OK);
     CHECK(state.frame_count == 1u);
     CHECK(state.last_width == 320u && state.last_height == 240u);
+    CHECK(state.frame_hash_valid && state.dirty_bounds_valid);
     CHECK(state.sample_r > 200u && state.sample_g < 40u &&
           state.sample_b < 40u);
+    memcpy(first_hash, state.frame_sha256, sizeof(first_hash));
 
     XSetForeground(client, graphics, blue.pixel);
     XFillRectangle(client, window, graphics, 0, 0, 40u, 40u);
@@ -1459,13 +1687,123 @@ static int test_x11_providers(const char* display_name)
     for (index = 0u; index < 20u && state.frame_count < 2u; index++)
         CHECK(test_dispatch_platform(capture, context, 100));
     CHECK(state.frame_count >= 2u);
+    CHECK(state.frame_hash_valid && state.dirty_bounds_valid);
+    CHECK(memcmp(first_hash,
+                 state.frame_sha256,
+                 sizeof(first_hash)) != 0);
     CHECK(state.sample_b > 200u && state.sample_g < 40u &&
           state.sample_r < 40u);
+
+    for (index = 0u; index < 4u; index++)
+    {
+        frame_count = state.frame_count;
+        memcpy(previous_hash,
+               state.frame_sha256,
+               sizeof(previous_hash));
+        XSetForeground(client,
+                       graphics,
+                       (index & 1u) != 0u ? blue.pixel : red.pixel);
+        XFillRectangle(client, window, graphics, 0, 0, 40u, 40u);
+        XFlush(client);
+        for (wait_index = 0u;
+             wait_index < 20u && state.frame_count == frame_count;
+             wait_index++)
+            CHECK(test_dispatch_platform(capture, context, 100));
+        CHECK(state.frame_count > frame_count);
+        CHECK(state.frame_hash_valid && state.dirty_bounds_valid);
+        CHECK(memcmp(previous_hash,
+                     state.frame_sha256,
+                     sizeof(previous_hash)) != 0);
+    }
+
+    frame_count = state.frame_count;
+    memcpy(previous_hash,
+           state.frame_sha256,
+           sizeof(previous_hash));
+    XMoveWindow(client, window, 60, 40);
+    XFlush(client);
+    for (index = 0u; index < 20u && state.frame_count == frame_count;
+         index++)
+        CHECK(test_dispatch_platform(capture, context, 100));
+    CHECK(state.frame_count > frame_count);
+    CHECK(state.dirty_bounds_valid);
+    CHECK(memcmp(previous_hash,
+                 state.frame_sha256,
+                 sizeof(previous_hash)) != 0);
+
+    frame_count = state.frame_count;
+    memcpy(previous_hash,
+           state.frame_sha256,
+           sizeof(previous_hash));
+    XResizeWindow(client, window, 140u, 100u);
+    XFlush(client);
+    for (index = 0u; index < 20u && state.frame_count == frame_count;
+         index++)
+        CHECK(test_dispatch_platform(capture, context, 100));
+    CHECK(state.frame_count > frame_count);
+    CHECK(state.dirty_bounds_valid);
+    CHECK(memcmp(previous_hash,
+                 state.frame_sha256,
+                 sizeof(previous_hash)) != 0);
+
+    frame_count = state.frame_count;
+    memcpy(previous_hash,
+           state.frame_sha256,
+           sizeof(previous_hash));
+    XMoveResizeWindow(client, window, 0, 0, 320u, 240u);
+    XSetForeground(client, graphics, red.pixel);
+    XFillRectangle(client, window, graphics, 0, 0, 320u, 240u);
+    XFlush(client);
+    for (index = 0u; index < 20u && state.frame_count == frame_count;
+         index++)
+        CHECK(test_dispatch_platform(capture, context, 100));
+    CHECK(state.frame_count > frame_count);
+    CHECK(state.dirty_bounds_valid);
+    CHECK(memcmp(previous_hash,
+                 state.frame_sha256,
+                 sizeof(previous_hash)) != 0);
+
+    XMoveResizeWindow(client, window, 10, 10, 100u, 80u);
+    XSetForeground(client, graphics, blue.pixel);
+    XFillRectangle(client, window, graphics, 0, 0, 100u, 80u);
+    XFlush(client);
+    frame_count = state.frame_count;
+    for (index = 0u; index < 20u && state.frame_count == frame_count;
+         index++)
+        CHECK(test_dispatch_platform(capture, context, 100));
+    CHECK(state.frame_count > frame_count);
+    for (index = 0u; index < 20u; index++)
+    {
+        frame_count = state.frame_count;
+        CHECK(test_dispatch_platform(capture, context, 20));
+        if (state.frame_count == frame_count)
+            break;
+    }
+    CHECK(index < 20u);
+    frame_count = state.frame_count;
+    memcpy(previous_hash,
+           state.frame_sha256,
+           sizeof(previous_hash));
+    for (index = 0u; index < 3u; index++)
+        CHECK(test_dispatch_platform(capture, context, 20));
+    CHECK(state.frame_count == frame_count);
+    CHECK(state.frame_hash_valid && state.dirty_bounds_valid);
+    CHECK(memcmp(previous_hash,
+                 state.frame_sha256,
+                 sizeof(previous_hash)) == 0);
 
     XSetInputFocus(client, window, RevertToParent, CurrentTime);
     XSync(client, False);
     CHECK(librdp_server_input_event_init(&input_event) ==
           LIBRDP_STATUS_OK);
+    input_event.type = LIBRDP_SERVER_INPUT_SCANCODE_KEY;
+    input_event.param1 = 0x2au;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, KeyPress, &event, 1000u));
+    }
     input_event.type = LIBRDP_SERVER_INPUT_SCANCODE_KEY;
     input_event.param1 = 0x1eu;
     CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
@@ -1476,20 +1814,151 @@ static int test_x11_providers(const char* display_name)
     }
     input_event.flags = 0x8000u;
     CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, KeyRelease, &event, 1000u));
+    }
+    input_event.param1 = 0x2au;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, KeyRelease, &event, 1000u));
+    }
+    input_event.type = LIBRDP_SERVER_INPUT_UNICODE_KEY;
+    input_event.flags = 0u;
+    input_event.param1 = 0x00e9u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, KeyPress, &event, 1000u));
+        CHECK(test_wait_for_event(client, KeyRelease, &event, 1000u));
+    }
     input_event.type = LIBRDP_SERVER_INPUT_MOUSE;
     input_event.flags = 0x0800u;
-    input_event.x = 20u;
-    input_event.y = 20u;
+    input_event.x = 30u;
+    input_event.y = 25u;
     CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, MotionNotify, &event, 1000u));
+    }
     input_event.flags = 0x9000u;
     CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
     {
         XEvent event;
 
         CHECK(test_wait_for_event(client, ButtonPress, &event, 1000u));
+        CHECK(event.xbutton.button == 1u);
     }
     input_event.flags = 0x1000u;
     CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonRelease, &event, 1000u));
+        CHECK(event.xbutton.button == 1u);
+    }
+    input_event.flags = 0xa000u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonPress, &event, 1000u));
+        CHECK(event.xbutton.button == 3u);
+    }
+    input_event.flags = 0x2000u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonRelease, &event, 1000u));
+        CHECK(event.xbutton.button == 3u);
+    }
+    input_event.flags = 0xc000u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonPress, &event, 1000u));
+        CHECK(event.xbutton.button == 2u);
+    }
+    input_event.flags = 0x4000u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonRelease, &event, 1000u));
+        CHECK(event.xbutton.button == 2u);
+    }
+    input_event.flags = 0x0278u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonPress, &event, 1000u));
+        CHECK(event.xbutton.button == 4u);
+    }
+    input_event.flags = 0x0388u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonPress, &event, 1000u));
+        CHECK(event.xbutton.button == 5u);
+    }
+    input_event.flags = 0x0478u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonPress, &event, 1000u));
+        CHECK(event.xbutton.button == 7u);
+    }
+    input_event.flags = 0x0588u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonPress, &event, 1000u));
+        CHECK(event.xbutton.button == 6u);
+    }
+    input_event.type = LIBRDP_SERVER_INPUT_EXTENDED_MOUSE;
+    input_event.flags = 0x8001u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonPress, &event, 1000u));
+        CHECK(event.xbutton.button == 8u);
+    }
+    input_event.flags = 0x0001u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonRelease, &event, 1000u));
+        CHECK(event.xbutton.button == 8u);
+    }
+    input_event.flags = 0x8002u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonPress, &event, 1000u));
+        CHECK(event.xbutton.button == 9u);
+    }
+    input_event.flags = 0x0002u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, ButtonRelease, &event, 1000u));
+        CHECK(event.xbutton.button == 9u);
+    }
     input->release_all(context);
 
     XWarpPointer(client, None, root, 0, 0, 0, 0, 50, 50);
@@ -1922,6 +2391,16 @@ int main(void)
         return 1;
     }
     result = test_x11_providers(display_name);
+    test_stop_xvfb(child);
+    child = -1;
+    if (result != 0)
+        return result;
+    if (!test_start_xvfb_with_fallback(display_name, &child, 1))
+    {
+        fprintf(stderr, "unable to start fallback Xvfb\n");
+        return 1;
+    }
+    result = test_capture_fallback(display_name);
     test_stop_xvfb(child);
     return result;
 }

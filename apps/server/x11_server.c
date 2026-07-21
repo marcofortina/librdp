@@ -132,7 +132,8 @@ static void x11_server_capture_resources_release(
         XFreePixmap(context->display, context->composite_pixmap);
         context->composite_pixmap = None;
     }
-    if (context->config.source_kind == X11_SERVER_SOURCE_WINDOW &&
+    if (context->composite_available &&
+        context->config.source_kind == X11_SERVER_SOURCE_WINDOW &&
         context->target != None && !context->target_destroyed)
     {
         XCompositeUnredirectWindow(context->display,
@@ -147,21 +148,28 @@ static int x11_server_query_extensions(x11_server_context* context)
     int major = 0;
     int minor = 0;
 
-    if (!XDamageQueryExtension(context->display,
-                               &context->damage_event_base,
-                               &context->damage_error_base) ||
-        !XFixesQueryExtension(context->display,
+    context->damage_available =
+        XDamageQueryExtension(context->display,
+                              &context->damage_event_base,
+                              &context->damage_error_base)
+            ? 1
+            : 0;
+    context->composite_available =
+        XCompositeQueryExtension(context->display,
+                                 &context->composite_event_base,
+                                 &context->composite_error_base)
+            ? 1
+            : 0;
+    if (!XFixesQueryExtension(context->display,
                               &context->fixes_event_base,
                               &context->fixes_error_base) ||
         !XRRQueryExtension(context->display,
                            &context->randr_event_base,
-                           &context->randr_error_base) ||
-        !XCompositeQueryExtension(context->display,
-                                  &context->composite_event_base,
-                                  &context->composite_error_base))
+                           &context->randr_error_base))
         return 0;
-    if (!XCompositeQueryVersion(context->display, &major, &minor))
-        return 0;
+    if (context->composite_available &&
+        !XCompositeQueryVersion(context->display, &major, &minor))
+        context->composite_available = 0;
 #ifdef LIBRDP_HAVE_XSHM
     context->shm_available =
         XShmQueryExtension(context->display) ? 1 : 0;
@@ -219,7 +227,8 @@ static int x11_server_select_target(x11_server_context* context)
     XFixesSelectCursorInput(context->display,
                             context->root,
                             XFixesDisplayCursorNotifyMask);
-    if (context->config.source_kind == X11_SERVER_SOURCE_WINDOW)
+    if (context->config.source_kind == X11_SERVER_SOURCE_WINDOW &&
+        context->composite_available)
     {
         XCompositeRedirectWindow(context->display,
                                  context->target,
@@ -232,12 +241,15 @@ static int x11_server_select_target(x11_server_context* context)
         context->capture_drawable = context->composite_pixmap;
     }
     else
-        context->capture_drawable = context->root;
-    context->damage = XDamageCreate(context->display,
-                                    context->target,
-                                    XDamageReportNonEmpty);
-    if (context->damage == None)
-        return 0;
+        context->capture_drawable = context->target;
+    if (context->damage_available)
+    {
+        context->damage = XDamageCreate(context->display,
+                                        context->target,
+                                        XDamageReportNonEmpty);
+        if (context->damage == None)
+            context->damage_available = 0;
+    }
     return x11_server_refresh_geometry(context, 1) == LIBRDP_STATUS_OK;
 }
 
@@ -508,6 +520,7 @@ static librdp_status x11_server_events_dispatch(void* opaque,
 {
     x11_server_context* context = (x11_server_context*)opaque;
     unsigned int dispatched = 0;
+    uint64_t now_ns = 0u;
 
     if (!context || max_events == 0u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -530,7 +543,19 @@ static librdp_status x11_server_events_dispatch(void* opaque,
         x11_server_clipboard_handle_event(context, &event);
         dispatched++;
     }
-    x11_server_clipboard_dispatch_timeout(context, x11_server_now_ns());
+    now_ns = x11_server_now_ns();
+    x11_server_clipboard_dispatch_timeout(context, now_ns);
+    if (!context->damage_available && context->capture_started &&
+        !context->capture_due &&
+        (context->next_capture_poll_ns == 0u ||
+         now_ns >= context->next_capture_poll_ns))
+    {
+        x11_server_invalidate(context,
+                              0,
+                              0,
+                              context->width,
+                              context->height);
+    }
     if (context->capture_due && context->capture_started)
         return x11_server_capture_frame(context);
     return LIBRDP_STATUS_OK;
@@ -541,12 +566,38 @@ static librdp_status x11_server_events_get_next_timeout(void* opaque,
 {
     x11_server_context* context = (x11_server_context*)opaque;
     int clipboard_timeout = -1;
+    int capture_timeout = -1;
+    uint64_t now_ns = 0u;
 
     if (!context || !timeout_ms)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    now_ns = x11_server_now_ns();
     clipboard_timeout =
-        x11_server_clipboard_next_timeout_ms(context, x11_server_now_ns());
-    *timeout_ms = context->capture_due ? 0 : clipboard_timeout;
+        x11_server_clipboard_next_timeout_ms(context, now_ns);
+    if (context->capture_due)
+        capture_timeout = 0;
+    else if (!context->damage_available && context->capture_started)
+    {
+        uint64_t remaining_ns =
+            context->next_capture_poll_ns > now_ns
+                ? context->next_capture_poll_ns - now_ns
+                : 0u;
+        uint64_t remaining_ms =
+            remaining_ns / 1000000u +
+            (remaining_ns % 1000000u != 0u ? 1u : 0u);
+
+        capture_timeout = remaining_ms > (uint64_t)INT_MAX
+                              ? INT_MAX
+                              : (int)remaining_ms;
+    }
+    if (clipboard_timeout < 0)
+        *timeout_ms = capture_timeout;
+    else if (capture_timeout < 0)
+        *timeout_ms = clipboard_timeout;
+    else
+        *timeout_ms = capture_timeout < clipboard_timeout
+                          ? capture_timeout
+                          : clipboard_timeout;
     return LIBRDP_STATUS_OK;
 }
 

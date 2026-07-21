@@ -485,6 +485,15 @@ librdp_status x11_server_capture_frame(x11_server_context* context)
     context->dirty_count = 0u;
     context->capture_due = 0;
     context->full_capture_due = 0;
+    if (!context->damage_available)
+    {
+        uint64_t now_ns = x11_server_now_ns();
+
+        context->next_capture_poll_ns =
+            now_ns <= UINT64_MAX - X11_SERVER_CAPTURE_POLL_INTERVAL_NS
+                ? now_ns + X11_SERVER_CAPTURE_POLL_INTERVAL_NS
+                : UINT64_MAX;
+    }
     return LIBRDP_STATUS_OK;
 }
 
@@ -493,7 +502,8 @@ void x11_server_capture_handle_event(x11_server_context* context,
 {
     if (!context || !event)
         return;
-    if (event->type == context->damage_event_base + XDamageNotify)
+    if (context->damage_available &&
+        event->type == context->damage_event_base + XDamageNotify)
     {
         const XDamageNotifyEvent* damage =
             (const XDamageNotifyEvent*)event;
@@ -545,6 +555,7 @@ static librdp_status x11_server_capture_start(
     context->capture_started = 1;
     context->capture_due = 1;
     context->full_capture_due = 1;
+    context->next_capture_poll_ns = x11_server_now_ns();
     return LIBRDP_STATUS_OK;
 }
 
@@ -557,6 +568,7 @@ static void x11_server_capture_stop(void* opaque)
     memset(&context->capture_sink, 0, sizeof(context->capture_sink));
     context->capture_started = 0;
     context->capture_due = 0;
+    context->next_capture_poll_ns = 0u;
 }
 
 static librdp_status x11_server_capture_request_frame(void* opaque)
