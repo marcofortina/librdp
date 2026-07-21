@@ -194,11 +194,18 @@ static int test_server_complete_drive_request(
                 (uint32_t)request_id,
                 RDP_DEVICE_REDIRECTION_STATUS_SUCCESS);
             break;
-        case LIBRDP_SERVER_DRIVE_WRITE:
         case LIBRDP_SERVER_DRIVE_SET_INFORMATION:
         case LIBRDP_SERVER_DRIVE_SET_VOLUME:
         case LIBRDP_SERVER_DRIVE_SET_SECURITY:
             status = rdp_filesystem_redirection_write_length_response(
+                packet,
+                device_id,
+                (uint32_t)request_id,
+                RDP_DEVICE_REDIRECTION_STATUS_SUCCESS,
+                (uint32_t)sizeof(response_data));
+            break;
+        case LIBRDP_SERVER_DRIVE_WRITE:
+            status = rdp_filesystem_redirection_write_write_response(
                 packet,
                 device_id,
                 (uint32_t)request_id,
@@ -372,6 +379,41 @@ complete:
     return valid;
 }
 
+/*
+ * A client-requested MCS disconnect is a clean terminal control PDU, not a
+ * zero-length slow-path update. This fixture guards the distinction observed
+ * with independent clients during orderly window closure.
+ */
+static int test_server_disconnect_ultimatum(void)
+{
+    static const uint8_t disconnect[] = {0x21u, 0x80u};
+    test_server_peer_fixture fixture;
+    rdp_buffer mcs;
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int valid = 0;
+
+    rdp_buffer_init(&mcs);
+    rdp_buffer_init(&packet);
+    if (!test_server_peer_fixture_open(&fixture))
+        return 0;
+    fixture.peer->state = LIBRDP_SERVER_PEER_ACTIVE;
+    status = rdp_buffer_append(&mcs, disconnect, sizeof(disconnect));
+    if (status == LIBRDP_STATUS_OK &&
+        test_server_wrap_mcs_packet(&mcs, &packet) &&
+        test_server_send_all(fixture.client_fd, packet.data, packet.length))
+        status = librdp_server_peer_run_once(fixture.peer, 1000);
+    else if (status == LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_IO_ERROR;
+    valid = status == LIBRDP_STATUS_OK &&
+            librdp_server_peer_get_state(fixture.peer) ==
+                LIBRDP_SERVER_PEER_CLOSED;
+    test_server_peer_fixture_close(&fixture);
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&mcs);
+    return valid;
+}
+
 int test_server_lifecycle_focused(void)
 {
     test_server_peer_fixture fixture;
@@ -408,6 +450,8 @@ int test_server_protocol_order_focused(void)
     rdp_buffer_init(&packet);
     rdp_buffer_init(&mcs);
     rdp_buffer_init(&slowpath);
+
+    SCHECK(test_server_disconnect_ultimatum());
 
     SCHECK(rdp_mcs_write_erect_domain_request(&mcs) ==
            LIBRDP_STATUS_OK);
@@ -1313,7 +1357,7 @@ int test_server_channels_focused(void)
         drive_request.initial_query = 1u;
         drive_request.path = "\\*";
         drive_request.completion_filter =
-            RDP_FILESYSTEM_REDIRECTION_NOTIFY_FILE_NAME;
+            LIBRDP_SERVER_DRIVE_NOTIFY_FILE_NAME;
         drive_request.lock_operation =
             LIBRDP_SERVER_DRIVE_LOCK_SHARED;
         drive_request.locks = &lock_range;

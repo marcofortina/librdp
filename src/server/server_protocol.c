@@ -696,6 +696,27 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
     librdp_status status = rdp_server_parse_x224_data_packet(packet, &data, &data_len);
 
     rdp_buffer_init(&security_payload);
+    if (status == LIBRDP_STATUS_OK && data_len > 0u &&
+        (data[0] >> 2u) ==
+            RDP_MCS_DOMAIN_PDU_DISCONNECT_PROVIDER_ULTIMATUM)
+    {
+        uint8_t reason = 0u;
+
+        status = rdp_mcs_parse_disconnect_provider_ultimatum(
+            data, data_len, &reason);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "server.mcs.disconnect_provider_ultimatum",
+                            "reason=%u",
+                            (unsigned int)reason);
+            rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_CLOSED);
+        }
+        else
+            rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+        rdp_buffer_free(&security_payload);
+        return status;
+    }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_mcs_parse_send_data_request(data, data_len, &request);
     if (status == LIBRDP_STATUS_OK && request.initiator != peer->user_id)

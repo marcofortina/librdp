@@ -398,6 +398,10 @@ librdp_status rdp_filesystem_redirection_write_write_response(rdp_buffer* buffer
                                                               uint32_t completion_id,
                                                               uint32_t io_status,
                                                               uint32_t written);
+librdp_status rdp_filesystem_redirection_parse_write_response(
+    const void* data,
+    size_t length,
+    rdp_filesystem_redirection_length_response* response);
 librdp_status rdp_filesystem_redirection_write_buffer_response(rdp_buffer* buffer,
                                                                uint32_t device_id,
                                                                uint32_t completion_id,

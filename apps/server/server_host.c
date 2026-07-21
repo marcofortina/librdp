@@ -304,6 +304,7 @@ void server_host_release_peer_slot(server_host_peer_slot* slot)
     if (slot->protocol)
     {
         server_host_cancel_peer_protocol(slot->protocol);
+        (void)librdp_server_peer_close(slot->protocol);
         if (host && host->clipboard)
         {
             server_clipboard_runtime_remove_peer(host->clipboard,
@@ -330,7 +331,6 @@ void server_host_release_peer_slot(server_host_peer_slot* slot)
                                    slot->generation,
                                    1u);
         }
-        (void)librdp_server_peer_close(slot->protocol);
         librdp_server_peer_free(slot->protocol);
     }
     server_dirty_scheduler_free(slot->dirty);

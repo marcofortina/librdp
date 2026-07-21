@@ -591,6 +591,8 @@ static int test_mcs_gcc_capabilities(void)
     const uint8_t mcs_resp[] = {0x0a, 0x01, 0x00};
     const uint8_t mcs_wrapped_resp[] = {0x7f, 0x66, 0x03, 0x0a, 0x01, 0x00};
     const uint8_t mcs_resp_user_data[] = {0x7f, 0x66, 0x08, 0x0a, 0x01, 0x00, 0x04, 0x03, 7, 8, 9};
+    const uint8_t disconnect_ultimatum[] = {0x21u, 0x80u};
+    const uint8_t disconnect_bad_padding[] = {0x21u, 0x81u};
     const uint8_t gcc_block[] = {0xc1, 0x00, 0x08, 0x00, 1, 2, 3, 4};
     const uint8_t gcc_server_blocks[] = {
         0x01, 0x0c, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
@@ -635,6 +637,7 @@ static int test_mcs_gcc_capabilities(void)
     rdp_gcc_server_data server_data;
     rdp_mcs_attach_user_confirm attach;
     rdp_mcs_channel_join_confirm join;
+    uint8_t disconnect_reason = 0u;
     const uint8_t attach_confirm[] = {0x2e, 0x00, 0x00, 0x03};
     const uint8_t join_confirm[] = {0x3e, 0x00, 0x00, 0x03, 0x03, 0xec, 0x03, 0xec};
 
@@ -660,6 +663,23 @@ static int test_mcs_gcc_capabilities(void)
            LIBRDP_STATUS_OK);
     PCHECK(response.has_result && response.result == 0);
     PCHECK(response.user_data_len == 3 && response.user_data[0] == 7 && response.user_data[2] == 9);
+    PCHECK(rdp_mcs_parse_disconnect_provider_ultimatum(
+               disconnect_ultimatum,
+               sizeof(disconnect_ultimatum),
+               &disconnect_reason) == LIBRDP_STATUS_OK);
+    PCHECK(disconnect_reason == 3u);
+    PCHECK(rdp_mcs_parse_disconnect_provider_ultimatum(
+               disconnect_ultimatum,
+               sizeof(disconnect_ultimatum) - 1u,
+               &disconnect_reason) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_mcs_parse_disconnect_provider_ultimatum(
+               disconnect_bad_padding,
+               sizeof(disconnect_bad_padding),
+               &disconnect_reason) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_mcs_parse_disconnect_provider_ultimatum(
+               NULL,
+               0u,
+               &disconnect_reason) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     PCHECK(rdp_mcs_write_ber_length(&ber, 0x7f) == LIBRDP_STATUS_OK);
     PCHECK(rdp_mcs_write_ber_length(&ber, 0x123) == LIBRDP_STATUS_OK);

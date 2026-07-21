@@ -1247,6 +1247,18 @@ static librdp_status rdp_server_drive_parse_success(
                 data_len,
                 &response);
         }
+        case LIBRDP_SERVER_DRIVE_WRITE:
+        {
+            rdp_filesystem_redirection_length_response response;
+            librdp_status status =
+                rdp_filesystem_redirection_parse_write_response(
+                    data, data_len, &response);
+
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            event->transferred = response.length;
+            return LIBRDP_STATUS_OK;
+        }
         case LIBRDP_SERVER_DRIVE_FLUSH:
         case LIBRDP_SERVER_DRIVE_CLEANUP:
         case LIBRDP_SERVER_DRIVE_SHUTDOWN:

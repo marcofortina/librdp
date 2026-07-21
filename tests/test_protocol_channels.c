@@ -2950,10 +2950,19 @@ static int test_filesystem_redirection_channel(void)
     rdp_buffer_free(&response);
     rdp_buffer_init(&response);
     PCHECK(rdp_filesystem_redirection_write_write_response(&response, 1, 3, 0, 99u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_filesystem_redirection_parse_length_response(response.data,
-                                                            response.length,
-                                                            &length_response) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 21u);
+    PCHECK(rdp_filesystem_redirection_parse_write_response(response.data,
+                                                           response.length,
+                                                           &length_response) == LIBRDP_STATUS_OK);
     PCHECK(length_response.length == 99u && length_response.buffer_len == 0u);
+    PCHECK(rdp_filesystem_redirection_parse_write_response(response.data,
+                                                           response.length - 1u,
+                                                           &length_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    response.data[20] = 1u;
+    PCHECK(rdp_filesystem_redirection_parse_write_response(response.data,
+                                                           response.length,
+                                                           &length_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    response.data[20] = 0u;
     rdp_buffer_free(&response);
     rdp_buffer_init(&response);
     PCHECK(rdp_filesystem_redirection_write_buffer_response(&response, 1, 3, 0, data, (uint32_t)sizeof(data)) ==
@@ -2962,10 +2971,20 @@ static int test_filesystem_redirection_channel(void)
     rdp_buffer_free(&response);
     rdp_buffer_init(&response);
     PCHECK(rdp_filesystem_redirection_write_lock_response(&response, 1, 3, 0) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 20u);
     PCHECK(rdp_filesystem_redirection_parse_lock_response(response.data,
                                                           response.length,
                                                           &completion_response) == LIBRDP_STATUS_OK);
-    PCHECK(completion_response.io_status == 0 && completion_response.payload_len == 5u);
+    PCHECK(completion_response.io_status == 0 && completion_response.payload_len == 4u);
+    PCHECK(rdp_filesystem_redirection_parse_lock_response(
+               response.data,
+               response.length - 1u,
+               &completion_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    response.data[19] = 1u;
+    PCHECK(rdp_filesystem_redirection_parse_lock_response(
+               response.data,
+               response.length,
+               &completion_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
 
     rdp_buffer_free(&response);
     rdp_buffer_free(&request);

@@ -790,6 +790,30 @@ librdp_status rdp_mcs_parse_send_data_request(const void* data,
     return rdp_mcs_parse_send_data_common(data, length, 25u, request);
 }
 
+/*
+ * Decode the compact aligned-PER disconnect ultimatum. The reason occupies
+ * one bit in each wire octet; every remaining low-order bit is padding and
+ * must be zero so malformed control PDUs cannot masquerade as clean closure.
+ */
+librdp_status rdp_mcs_parse_disconnect_provider_ultimatum(
+    const void* data,
+    size_t length,
+    uint8_t* reason)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+
+    if (!data || !reason)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 2u ||
+        (bytes[0] >> 2u) !=
+            RDP_MCS_DOMAIN_PDU_DISCONNECT_PROVIDER_ULTIMATUM ||
+        (bytes[0] & 0x02u) != 0u || (bytes[1] & 0x7fu) != 0u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *reason = (uint8_t)(((bytes[0] & 0x01u) << 1u) |
+                       (bytes[1] >> 7u));
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_mcs_write_send_data_indication(rdp_buffer* buffer,
                                                  uint16_t user_id,
                                                  uint16_t channel_id,

@@ -71,6 +71,7 @@ typedef struct rdp_mcs_send_data_indication
 
 #define RDP_MCS_GLOBAL_CHANNEL_ID 1003u
 #define RDP_MCS_BASE_CHANNEL_ID 1001u
+#define RDP_MCS_DOMAIN_PDU_DISCONNECT_PROVIDER_ULTIMATUM 8u
 
 librdp_status rdp_mcs_write_ber_length(rdp_buffer* buffer, size_t length);
 librdp_status rdp_mcs_write_ber_integer(rdp_buffer* buffer, uint32_t value);
@@ -96,6 +97,10 @@ librdp_status rdp_mcs_parse_connect_response(const void* data, size_t length, rd
 librdp_status rdp_mcs_parse_send_data_request(const void* data,
                                               size_t length,
                                               rdp_mcs_send_data_indication* request);
+librdp_status rdp_mcs_parse_disconnect_provider_ultimatum(
+    const void* data,
+    size_t length,
+    uint8_t* reason);
 librdp_status rdp_mcs_write_send_data_indication(rdp_buffer* buffer,
                                                  uint16_t user_id,
                                                  uint16_t channel_id,

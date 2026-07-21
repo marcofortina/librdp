@@ -466,6 +466,28 @@ typedef enum librdp_server_drive_lock_operation
 } librdp_server_drive_lock_operation;
 
 /**
+ * @brief Directory changes that can complete a client-drive notification.
+ *
+ * Values may be combined in librdp_server_drive_request::completion_filter.
+ * At least one value is required for
+ * LIBRDP_SERVER_DRIVE_NOTIFY_DIRECTORY. The server borrows no storage from
+ * this bitmask.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_drive_notify_filter
+{
+    LIBRDP_SERVER_DRIVE_NOTIFY_FILE_NAME = 0x00000001u, /**< A file name was added, removed, or renamed. */
+    LIBRDP_SERVER_DRIVE_NOTIFY_DIRECTORY_NAME = 0x00000002u, /**< A directory name was added, removed, or renamed. */
+    LIBRDP_SERVER_DRIVE_NOTIFY_ATTRIBUTES = 0x00000004u, /**< File or directory attributes changed. */
+    LIBRDP_SERVER_DRIVE_NOTIFY_SIZE = 0x00000008u, /**< A file size changed. */
+    LIBRDP_SERVER_DRIVE_NOTIFY_LAST_WRITE = 0x00000010u, /**< Last-write time changed. */
+    LIBRDP_SERVER_DRIVE_NOTIFY_LAST_ACCESS = 0x00000020u, /**< Last-access time changed. */
+    LIBRDP_SERVER_DRIVE_NOTIFY_CREATION = 0x00000040u, /**< Creation time changed. */
+    LIBRDP_SERVER_DRIVE_NOTIFY_SECURITY = 0x00000100u /**< Security metadata changed. */
+} librdp_server_drive_notify_filter;
+
+/**
  * @brief Normalized client-drive operation.
  *
  * Every operation maps to a validated filesystem-redirection request. Values

@@ -448,12 +448,16 @@ static int port_smoke_length_response(
     port_smoke_fixture* fixture,
     rdp_filesystem_redirection_length_response* response)
 {
-    if (!event || !fixture || !response ||
-        rdp_filesystem_redirection_parse_length_response(
-            event->payload,
-            event->payload_len,
-            response) != LIBRDP_STATUS_OK ||
-        response->io.device_id != fixture->device_id ||
+    if (!event || !fixture || !response)
+        return 0;
+    if (rdp_filesystem_redirection_parse_length_response(
+            event->payload, event->payload_len, response) !=
+            LIBRDP_STATUS_OK &&
+        rdp_filesystem_redirection_parse_write_response(
+            event->payload, event->payload_len, response) !=
+            LIBRDP_STATUS_OK)
+        return 0;
+    if (response->io.device_id != fixture->device_id ||
         response->io.completion_id !=
             fixture->expected_completion_id)
         return 0;
