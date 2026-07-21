@@ -32,6 +32,58 @@ static int server_runtime_graphics_command(
     return 1;
 }
 
+typedef struct server_runtime_cr2_path
+{
+    int client_fd;
+    librdp_server_peer* peer;
+    uint8_t* response;
+    size_t response_len;
+    rdp_standard_security_context* security;
+    rdp_buffer* plaintext;
+    uint16_t static_channel_id;
+    uint32_t dynamic_channel_id;
+} server_runtime_cr2_path;
+
+/*
+ * Send one typed CR2 order through the public extension path and consume the
+ * exact encrypted DVC payload into the client-side render tree. This keeps the
+ * lifecycle assertions tied to the bytes emitted by the server runtime.
+ */
+static int server_runtime_cr2_apply(const server_runtime_cr2_path* path,
+                                    const rdp_buffer* order,
+                                    rdp_composited_render_tree* tree)
+{
+    rdp_dynamic_channel_data_pdu response;
+    rdp_composited_channel_message message;
+
+    if (!path || !path->peer || !path->response || !path->security ||
+        !path->plaintext || !order || !tree)
+        return 0;
+    if (librdp_server_peer_send_dynamic_extension_data(path->peer,
+                                                       LIBRDP_SERVER_EXTENSION_CR2,
+                                                       path->dynamic_channel_id,
+                                                       order->data,
+                                                       order->length) != LIBRDP_STATUS_OK)
+        return 0;
+    if (!test_server_read_encrypted_dynamic_channel_payload(path->client_fd,
+                                                            path->response,
+                                                            path->response_len,
+                                                            path->security,
+                                                            path->plaintext,
+                                                            path->static_channel_id,
+                                                            path->dynamic_channel_id,
+                                                            &response))
+        return 0;
+    if (response.data_len != order->length ||
+        (order->length > 0 && memcmp(response.data, order->data, order->length) != 0))
+        return 0;
+    if (rdp_composited_parse_channel_message(response.data,
+                                             response.data_len,
+                                             &message) != LIBRDP_STATUS_OK)
+        return 0;
+    return rdp_composited_render_tree_apply_message(tree, &message) == LIBRDP_STATUS_OK;
+}
+
 /*
  * Drives one in-process client/server pair through the server activation path.
  * The sequence catches truncated or misordered X.224/MCS/GCC wrapping,
@@ -124,8 +176,15 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_remote_programs_exec_result rail_exec_result;
     rdp_remote_programs_windowmove rail_windowmove;
     rdp_composited_control cr2_control;
+    rdp_composited_channel_message cr2_message;
     rdp_composited_version_reply cr2_version_reply;
     rdp_composited_window_node_create cr2_window_node;
+    rdp_composited_render_tree cr2_tree;
+    const rdp_composited_render_resource* cr2_resource = NULL;
+    rdp_composited_rect_i cr2_window_bounds = {10, 20, 650, 500};
+    rdp_composited_rect_i cr2_client_bounds = {18, 48, 642, 492};
+    rdp_composited_rect_i cr2_content_bounds = {0, 0, 624, 444};
+    rdp_composited_rect_i cr2_invalid_rect = {40, 50, 140, 120};
     rdp_auth_redirection_response auth_response;
     rdp_pointer_update pointer_update;
     librdp_server_pointer_update normalized_pointer;
@@ -170,6 +229,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer udp2_wire;
     rdp_buffer udp2_unwrapped;
     rdp_buffer pointer_pixels;
+    rdp_buffer cr2_payload;
     rdp_slowpath_demand_active demand;
     rdp_slowpath_deactivate_all deactivate;
     rdp_slowpath_data_pdu data_pdu;
@@ -200,6 +260,7 @@ int test_server_loopback_standard_activation_sequence(void)
     librdp_server_config config;
     librdp_server* server = NULL;
     librdp_server_peer* peer = NULL;
+    server_runtime_cr2_path cr2_path;
     librdp_status status = LIBRDP_STATUS_OK;
     uint16_t port = 0;
     uint16_t dynamic_static_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u);
@@ -247,12 +308,19 @@ int test_server_loopback_standard_activation_sequence(void)
     static const uint8_t usb_container_utf16[] = {'{', 0, '1', 0, '}', 0, 0, 0};
     static const uint8_t rail_app_utf16[] = {'a', 0, 'p', 0, 'p', 0, 0, 0};
     static const uint8_t camera_name_utf16[] = {'C', 0, 'a', 0, 'm', 0, 0, 0};
+    static const uint8_t cr2_clear_color[16] = {
+        0x10, 0x20, 0x30, 0x40, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
     static const uint8_t device_client_name_utf16[] = {
         'T', 0, 'E', 0, 'S', 0, 'T', 0, 0, 0
     };
     librdp_audio_format public_pcm;
     uint32_t audio_input_version = 0;
     uint32_t cr2_versions[1] = {RDP_COMPOSITED_PROTOCOL_VERSION};
+    const uint32_t cr2_window_resource = 0x12u;
+    const uint32_t cr2_content_resource = 0x13u;
+    const uint32_t cr2_target_resource = 0x14u;
     uint32_t clipboard_clip_data_id = 0x8899aabbu;
     uint8_t presentation_id[16] = {
         0x10, 0x11, 0x12, 0x13,
@@ -294,6 +362,9 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_init(&udp2_wire);
     rdp_buffer_init(&udp2_unwrapped);
     rdp_buffer_init(&pointer_pixels);
+    rdp_buffer_init(&cr2_payload);
+    rdp_composited_render_tree_init(&cr2_tree);
+    memset(&cr2_path, 0, sizeof(cr2_path));
     memset(&runtime_context, 0, sizeof(runtime_context));
     memset(&device_family_context, 0, sizeof(device_family_context));
     memset(clipboard_formats, 0, sizeof(clipboard_formats));
@@ -2966,9 +3037,47 @@ int test_server_loopback_standard_activation_sequence(void)
                                               cr2_control.payload_len,
                                               &cr2_version_reply) == LIBRDP_STATUS_OK);
     SCHECK(rdp_composited_version_reply_has(&cr2_version_reply, RDP_COMPOSITED_PROTOCOL_VERSION));
+
+    cr2_path.client_fd = client_fd;
+    cr2_path.peer = peer;
+    cr2_path.response = response;
+    cr2_path.response_len = sizeof(response);
+    cr2_path.security = &client_security;
+    cr2_path.plaintext = &channel_plaintext;
+    cr2_path.static_channel_id = dynamic_static_channel_id;
+    cr2_path.dynamic_channel_id = 20;
+
+    SCHECK(rdp_composited_write_resource_order(&cr2_payload,
+                                               RDP_COMPOSITED_CMD_CREATE_RESOURCE,
+                                               cr2_window_resource,
+                                               RDP_COMPOSITED_RESOURCE_WINDOW_NODE) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    cr2_resource = rdp_composited_render_tree_find(&cr2_tree, cr2_window_resource);
+    SCHECK(cr2_resource && cr2_resource->resource_type == RDP_COMPOSITED_RESOURCE_WINDOW_NODE);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_resource_order(&cr2_payload,
+                                               RDP_COMPOSITED_CMD_CREATE_RESOURCE,
+                                               cr2_content_resource,
+                                               RDP_COMPOSITED_RESOURCE_BITMAP_SOURCE) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    cr2_resource = rdp_composited_render_tree_find(&cr2_tree, cr2_content_resource);
+    SCHECK(cr2_resource && cr2_resource->resource_type == RDP_COMPOSITED_RESOURCE_BITMAP_SOURCE);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_target_create(&cr2_payload,
+                                              cr2_target_resource,
+                                              800,
+                                              600,
+                                              cr2_clear_color) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    cr2_resource = rdp_composited_render_tree_find(&cr2_tree, cr2_target_resource);
+    SCHECK(cr2_resource && cr2_resource->resource_type == RDP_COMPOSITED_RESOURCE_HWND_TARGET &&
+           cr2_resource->width == 800 && cr2_resource->height == 600);
+
     SCHECK(librdp_server_peer_send_cr2_window_node_create(peer,
                                                           20,
-                                                          0x12u,
+                                                          cr2_window_resource,
                                                           0x1111222233334444u,
                                                           0x5555666677778888u,
                                                           1) == LIBRDP_STATUS_OK);
@@ -2983,8 +3092,90 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(rdp_composited_parse_window_node_create(dvc_data_response.data,
                                                    dvc_data_response.data_len,
                                                    &cr2_window_node) == LIBRDP_STATUS_OK);
-    SCHECK(cr2_window_node.target_resource == 0x12u &&
+    SCHECK(cr2_window_node.target_resource == cr2_window_resource &&
            cr2_window_node.caching_mode == 1);
+    SCHECK(rdp_composited_parse_channel_message(dvc_data_response.data,
+                                                dvc_data_response.data_len,
+                                                &cr2_message) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_composited_render_tree_apply_message(&cr2_tree, &cr2_message) == LIBRDP_STATUS_OK);
+    cr2_resource = rdp_composited_render_tree_find(&cr2_tree, cr2_window_resource);
+    SCHECK(cr2_resource && cr2_resource->sprite_id == 0x1111222233334444u &&
+           cr2_resource->window_id == 0x5555666677778888u);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_window_node_bounds(&cr2_payload,
+                                                   cr2_window_resource,
+                                                   &cr2_window_bounds,
+                                                   &cr2_client_bounds,
+                                                   &cr2_content_bounds) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    cr2_resource = rdp_composited_render_tree_find(&cr2_tree, cr2_window_resource);
+    SCHECK(cr2_resource && cr2_resource->bounds_valid &&
+           cr2_resource->window_rect.left == cr2_window_bounds.left &&
+           cr2_resource->content_rect.bottom == cr2_content_bounds.bottom);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_u32_target_order(
+               &cr2_payload,
+               RDP_COMPOSITED_CMD_WINDOW_NODE_SET_LOGICAL_SURFACE_IMAGE,
+               cr2_window_resource,
+               cr2_content_resource) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    cr2_resource = rdp_composited_render_tree_find(&cr2_tree, cr2_window_resource);
+    SCHECK(cr2_resource && cr2_resource->logical_surface_image_resource == cr2_content_resource);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_u32_target_order(&cr2_payload,
+                                                 RDP_COMPOSITED_CMD_TARGET_SET_ROOT,
+                                                 cr2_target_resource,
+                                                 cr2_window_resource) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    cr2_resource = rdp_composited_render_tree_find(&cr2_tree, cr2_target_resource);
+    SCHECK(cr2_resource && cr2_resource->root_resource == cr2_window_resource);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_rect_order(&cr2_payload,
+                                           RDP_COMPOSITED_CMD_TARGET_INVALIDATE,
+                                           cr2_target_resource,
+                                           &cr2_invalid_rect) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    cr2_resource = rdp_composited_render_tree_find(&cr2_tree, cr2_target_resource);
+    SCHECK(cr2_resource && cr2_resource->invalid_rect_valid &&
+           cr2_resource->invalid_rect.right == cr2_invalid_rect.right);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_target_order(&cr2_payload,
+                                             RDP_COMPOSITED_CMD_WINDOW_NODE_DETACH,
+                                             cr2_window_resource) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    cr2_resource = rdp_composited_render_tree_find(&cr2_tree, cr2_window_resource);
+    SCHECK(cr2_resource && cr2_resource->detached &&
+           cr2_resource->logical_surface_image_resource == 0);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_resource_order(&cr2_payload,
+                                               RDP_COMPOSITED_CMD_DELETE_RESOURCE,
+                                               cr2_content_resource,
+                                               RDP_COMPOSITED_RESOURCE_BITMAP_SOURCE) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    SCHECK(rdp_composited_render_tree_find(&cr2_tree, cr2_content_resource) == NULL);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_resource_order(&cr2_payload,
+                                               RDP_COMPOSITED_CMD_DELETE_RESOURCE,
+                                               cr2_window_resource,
+                                               RDP_COMPOSITED_RESOURCE_WINDOW_NODE) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    SCHECK(rdp_composited_render_tree_find(&cr2_tree, cr2_window_resource) == NULL);
+
+    cr2_payload.length = 0;
+    SCHECK(rdp_composited_write_resource_order(&cr2_payload,
+                                               RDP_COMPOSITED_CMD_DELETE_RESOURCE,
+                                               cr2_target_resource,
+                                               RDP_COMPOSITED_RESOURCE_HWND_TARGET) == LIBRDP_STATUS_OK);
+    SCHECK(server_runtime_cr2_apply(&cr2_path, &cr2_payload, &cr2_tree));
+    SCHECK(rdp_composited_render_tree_find(&cr2_tree, cr2_target_resource) == NULL);
+    SCHECK(cr2_tree.resource_count == 0 && cr2_tree.command_count == 12);
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_CR2,
                                                  &feature_status) == LIBRDP_STATUS_OK);
@@ -3970,7 +4161,7 @@ int test_server_loopback_standard_activation_sequence(void)
            server_metrics.static_channel_out >= 6);
     SCHECK(server_metrics.static_channel_bytes_in > 4 && server_metrics.static_channel_bytes_out >= 4);
     SCHECK(server_metrics.dynamic_channel_in == 4);
-    SCHECK(server_metrics.dynamic_channel_out == 35);
+    SCHECK(server_metrics.dynamic_channel_out == 46);
     SCHECK(server_metrics.dynamic_channel_bytes_in == 38 && server_metrics.dynamic_channel_bytes_out > 64);
     SCHECK(server_metrics.udp_datagrams_in == 2);
     SCHECK(server_metrics.udp_datagrams_out == 2);
@@ -4019,6 +4210,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_free(&slowpath_plaintext);
     rdp_buffer_free(&channel_plaintext);
     rdp_buffer_free(&pointer_pixels);
+    rdp_buffer_free(&cr2_payload);
     rdp_buffer_free(&geometry_rect_payload);
     rdp_buffer_free(&geometry_payload);
     rdp_buffer_free(&graphics_payload);
