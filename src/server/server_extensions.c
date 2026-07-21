@@ -240,8 +240,14 @@ librdp_status librdp_server_peer_cancel_extension(librdp_server_peer* peer,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
         return LIBRDP_STATUS_STATE;
+    rdp_server_dynamic_channels_cancel_pending_family(peer, family);
     if (family == LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION)
         rdp_server_auth_redirection_retire_pending(peer);
+    if (state->pending_open)
+    {
+        state->dynamic_channel_id = 0u;
+        state->dynamic_priority = 0u;
+    }
     state->pending_open = 0;
     state->closing = 0;
     state->pending_requests = 0;

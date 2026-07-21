@@ -30,6 +30,10 @@ void rdp_server_extension_state_mark_open(librdp_server_peer* peer,
 
 void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_events);
 
+void rdp_server_dynamic_channels_cancel_pending_family(
+    librdp_server_peer* peer,
+    librdp_server_extension_family family);
+
 librdp_status rdp_server_dynamic_channels_start(librdp_server_peer* peer);
 
 void rdp_server_static_channels_reset(librdp_server_peer* peer);

@@ -41,6 +41,7 @@ typedef struct rdp_server_dynamic_channel
     uint8_t open;
     uint8_t pending_open;
     uint8_t closing;
+    uint8_t cancelled_open;
     char name[RDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY];
     rdp_buffer fragment;
     uint32_t fragment_expected;

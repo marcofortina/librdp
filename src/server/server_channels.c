@@ -336,6 +336,35 @@ void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_
     rdp_server_graphics_frame_state_reset(peer);
 }
 
+/*
+ * Retain cancelled open records until their peer response arrives. This keeps
+ * the channel identifier reserved and lets the dispatcher consume one late
+ * CREATE response without exposing an open channel after cancellation.
+ */
+void rdp_server_dynamic_channels_cancel_pending_family(
+    librdp_server_peer* peer,
+    librdp_server_extension_family family)
+{
+    if (!peer || !rdp_server_extension_family_valid(family))
+        return;
+    for (uint32_t i = 0u; i < RDP_SERVER_MAX_DYNAMIC_CHANNELS; i++)
+    {
+        rdp_server_dynamic_channel* channel = &peer->dynamic_channels[i];
+        librdp_server_extension_family channel_family =
+            LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
+        if (!channel->pending_open || channel->cancelled_open)
+            continue;
+        rdp_server_extension_classify_name(channel->name,
+                                           strlen(channel->name),
+                                           &channel_family,
+                                           &feature);
+        if (channel_family == family)
+            channel->cancelled_open = 1u;
+    }
+}
+
 void rdp_server_static_channels_reset(librdp_server_peer* peer)
 {
     uint16_t index = 0;
@@ -3576,6 +3605,17 @@ static librdp_status rdp_server_dynamic_handle_create_response(librdp_server_pee
     channel = rdp_server_find_pending_dynamic_channel(peer, response->channel_id);
     if (!channel)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (channel->cancelled_open)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.dvc.open.late",
+                        "channel_id=%u status=0x%08x",
+                        response->channel_id,
+                        response->status_code);
+        rdp_buffer_free(&channel->fragment);
+        memset(channel, 0, sizeof(*channel));
+        return LIBRDP_STATUS_OK;
+    }
     if (response->status_code != RDP_DYNAMIC_CHANNEL_STATUS_OK)
     {
         librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
@@ -3689,13 +3729,6 @@ static librdp_status rdp_server_dynamic_handle_close(librdp_server_peer* peer,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (channel->closing)
     {
-        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
-        librdp_feature feature = (librdp_feature)0;
-
-        if (strcmp(channel->name, RDP_GRAPHICS_PIPELINE_CHANNEL_NAME) == 0)
-            rdp_server_graphics_frame_state_reset(peer);
-        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
-        rdp_server_extension_state_mark_close(peer, family);
         rdp_buffer_free(&channel->fragment);
         memset(channel, 0, sizeof(*channel));
         return LIBRDP_STATUS_OK;
