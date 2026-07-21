@@ -614,7 +614,19 @@ static int test_http_proxy_relay(test_http_proxy* proxy,
                         destination_fd,
                         buffer,
                         (size_t)received))
-                    return 0;
+                {
+                    int destination_closed =
+                        index == 0u ? !target_open : !client_open;
+
+                    if (!destination_closed &&
+                        atomic_load_explicit(&proxy->stop,
+                                             memory_order_acquire) == 0u)
+                        return 0;
+                    if (index == 0u)
+                        client_open = 0;
+                    else
+                        target_open = 0;
+                }
                 continue;
             }
             if (received < 0 &&

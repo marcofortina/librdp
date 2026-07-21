@@ -16,17 +16,20 @@ file(REMOVE_RECURSE "${archive_dir}")
 file(MAKE_DIRECTORY "${archive_dir}")
 
 find_program(GIT_EXECUTABLE NAMES git)
+set(use_git_files false)
 if(GIT_EXECUTABLE)
     execute_process(
         COMMAND "${GIT_EXECUTABLE}" -C "${LIBRDP_SOURCE_DIR}" ls-files
         RESULT_VARIABLE git_result
         OUTPUT_VARIABLE git_output
+        ERROR_QUIET
     )
-    if(NOT git_result EQUAL 0)
-        message(FATAL_ERROR "git ls-files failed while preparing source-archive fixture")
+    if(git_result EQUAL 0)
+        set(use_git_files true)
+        string(REPLACE "\n" ";" tracked_files "${git_output}")
     endif()
-    string(REPLACE "\n" ";" tracked_files "${git_output}")
-else()
+endif()
+if(NOT use_git_files)
     file(GLOB_RECURSE tracked_files
         LIST_DIRECTORIES false
         RELATIVE "${LIBRDP_SOURCE_DIR}"

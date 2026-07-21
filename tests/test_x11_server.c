@@ -176,77 +176,127 @@ static int test_start_xvfb(char display_name[32], pid_t* child)
     return test_start_xvfb_with_fallback(display_name, child, 0);
 }
 
+/*
+ * Ask Xvfb to allocate an unused display atomically and return both its
+ * display name and process ID. A partially started child is always reaped;
+ * callers that receive success own the child and must call test_stop_xvfb().
+ */
 static int test_start_xvfb_with_fallback(char display_name[32],
                                          pid_t* child,
                                          int disable_capture_extensions)
 {
-    unsigned int attempt = 0u;
+    char descriptor_text[24];
+    char display_number[24];
+    char* end = NULL;
+    struct pollfd descriptor;
+    unsigned long number = 0ul;
+    size_t used = 0u;
+    int display_pipe[2] = {-1, -1};
+    pid_t pid = -1;
+    pid_t waited = -1;
+    int parse_error = 0;
+    int status = 0;
 
-    if (!display_name || !child)
+    if (!display_name || !child || pipe(display_pipe) != 0)
         return 0;
-    for (attempt = 0u; attempt < 20u; attempt++)
+    pid = fork();
+    if (pid < 0)
     {
-        unsigned int number =
-            180u + ((unsigned int)getpid() + attempt) % 60u;
-        pid_t pid = 0;
-        unsigned int wait_index = 0u;
-
-        if (snprintf(display_name, 32u, ":%u", number) <= 0)
-            return 0;
-        pid = fork();
-        if (pid < 0)
-            return 0;
-        if (pid == 0)
-        {
-            if (disable_capture_extensions)
-            {
-                execl(LIBRDP_TEST_XVFB_PATH,
-                      LIBRDP_TEST_XVFB_PATH,
-                      display_name,
-                      "-screen",
-                      "0",
-                      "320x240x24",
-                      "-nolisten",
-                      "tcp",
-                      "-extension",
-                      "DAMAGE",
-                      "-extension",
-                      "Composite",
-                      (char*)NULL);
-            }
-            else
-            {
-                execl(LIBRDP_TEST_XVFB_PATH,
-                      LIBRDP_TEST_XVFB_PATH,
-                      display_name,
-                      "-screen",
-                      "0",
-                      "320x240x24",
-                      "-nolisten",
-                      "tcp",
-                      (char*)NULL);
-            }
-            _exit(127);
-        }
-        for (wait_index = 0u; wait_index < 100u; wait_index++)
-        {
-            Display* probe = XOpenDisplay(display_name);
-            int status = 0;
-
-            if (probe)
-            {
-                XCloseDisplay(probe);
-                *child = pid;
-                return 1;
-            }
-            if (waitpid(pid, &status, WNOHANG) == pid)
-                break;
-            test_sleep_ms(10u);
-        }
-        kill(pid, SIGTERM);
-        (void)waitpid(pid, NULL, 0);
+        close(display_pipe[0]);
+        close(display_pipe[1]);
+        return 0;
     }
-    return 0;
+    if (pid == 0)
+    {
+        close(display_pipe[0]);
+        if (snprintf(descriptor_text,
+                     sizeof(descriptor_text),
+                     "%d",
+                     display_pipe[1]) <= 0)
+            _exit(126);
+        if (disable_capture_extensions)
+        {
+            execl(LIBRDP_TEST_XVFB_PATH,
+                  LIBRDP_TEST_XVFB_PATH,
+                  "-displayfd",
+                  descriptor_text,
+                  "-screen",
+                  "0",
+                  "320x240x24",
+                  "-nolisten",
+                  "tcp",
+                  "-extension",
+                  "DAMAGE",
+                  "-extension",
+                  "Composite",
+                  (char*)NULL);
+        }
+        else
+        {
+            execl(LIBRDP_TEST_XVFB_PATH,
+                  LIBRDP_TEST_XVFB_PATH,
+                  "-displayfd",
+                  descriptor_text,
+                  "-screen",
+                  "0",
+                  "320x240x24",
+                  "-nolisten",
+                  "tcp",
+                  (char*)NULL);
+        }
+        _exit(127);
+    }
+    close(display_pipe[1]);
+    display_pipe[1] = -1;
+    descriptor.fd = display_pipe[0];
+    descriptor.events = POLLIN;
+    descriptor.revents = 0;
+    while (used + 1u < sizeof(display_number))
+    {
+        ssize_t count = 0;
+        int ready = poll(&descriptor, 1u, 1000);
+
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (ready <= 0 || (descriptor.revents & (POLLERR | POLLNVAL)) != 0)
+            break;
+        count = read(display_pipe[0],
+                     display_number + used,
+                     sizeof(display_number) - used - 1u);
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+            break;
+        used += (size_t)count;
+        if (memchr(display_number, '\n', used) != NULL)
+            break;
+    }
+    close(display_pipe[0]);
+    display_pipe[0] = -1;
+    display_number[used] = '\0';
+    errno = 0;
+    number = strtoul(display_number, &end, 10);
+    parse_error = errno;
+    do
+    {
+        waited = waitpid(pid, &status, WNOHANG);
+    } while (waited < 0 && errno == EINTR);
+    if (used == 0u || parse_error != 0 || end == display_number ||
+        (*end != '\0' && *end != '\n') ||
+        snprintf(display_name, 32u, ":%lu", number) <= 0 ||
+        waited != 0)
+    {
+        if (waited == 0)
+        {
+            kill(pid, SIGTERM);
+            while (waitpid(pid, NULL, 0) < 0 && errno == EINTR)
+            {
+            }
+        }
+        return 0;
+    }
+    *child = pid;
+    return 1;
 }
 
 static void test_stop_xvfb(pid_t child)
@@ -254,7 +304,9 @@ static void test_stop_xvfb(pid_t child)
     if (child <= 0)
         return;
     kill(child, SIGTERM);
-    (void)waitpid(child, NULL, 0);
+    while (waitpid(child, NULL, 0) < 0 && errno == EINTR)
+    {
+    }
 }
 
 static void test_fuse_write_u32(uint8_t* output, uint32_t value)
@@ -1572,6 +1624,7 @@ static int test_fuse_directory_notify_event_source(void)
     int child_finished = 0;
     int first_listing = 0;
     int result = 1;
+    const char* failure_stage = "temporary-directory";
     unsigned int attempt = 0u;
 
     if (!server_fuse_available())
@@ -1582,6 +1635,7 @@ static int test_fuse_directory_notify_event_source(void)
     memset(&completion, 0, sizeof(completion));
     if (!mkdtemp(path) || chmod(path, 0700) != 0)
         return 1;
+    failure_stage = "provider-create";
     server_fuse_config_init(&config);
     config.mount_path = path;
     provider = server_fuse_new(&config);
@@ -1597,6 +1651,7 @@ static int test_fuse_directory_notify_event_source(void)
     sink.request = test_fuse_drive_request;
     sink.cancel = test_fuse_drive_cancel;
     sink.user_data = &state;
+    failure_stage = "provider-start";
     if (drive->start(provider, &sink) != LIBRDP_STATUS_OK)
         goto cleanup;
     volume.volume_id = 17u;
@@ -1606,11 +1661,13 @@ static int test_fuse_directory_notify_event_source(void)
     volume.device.device_id = 9u;
     volume.name = "documents";
     volume.read_only = 1;
+    failure_stage = "volume-present";
     if (drive->present(provider, &volume) != LIBRDP_STATUS_OK ||
         snprintf(remote_path, sizeof(remote_path), "%s/peer-3-5/documents",
                  path) <= 0 ||
         pipe(ready_pipe) != 0 || pipe(continue_pipe) != 0)
         goto cleanup;
+    failure_stage = "reader-create";
     child = fork();
     if (child < 0)
         goto cleanup;
@@ -1653,6 +1710,7 @@ static int test_fuse_directory_notify_event_source(void)
     ready_pipe[1] = -1;
     close(continue_pipe[0]);
     continue_pipe[0] = -1;
+    failure_stage = "initial-directory-list";
     for (attempt = 0u; attempt < 400u && !first_listing; attempt++)
     {
         struct pollfd descriptors[2];
@@ -1698,6 +1756,7 @@ static int test_fuse_directory_notify_event_source(void)
     completion.status = LIBRDP_STATUS_OK;
     completion.operation = LIBRDP_SERVER_DRIVE_NOTIFY_DIRECTORY;
     completion.file = state.notify_file;
+    failure_stage = "notify-completion";
     if (drive->complete(provider, &completion) != LIBRDP_STATUS_OK ||
         state.notify_count != 2u)
         goto cleanup;
@@ -1707,20 +1766,26 @@ static int test_fuse_directory_notify_event_source(void)
         if (write(continue_pipe[1], &signal, 1u) != 1)
             goto cleanup;
     }
-    for (attempt = 0u; attempt < 400u && !child_finished; attempt++)
+    failure_stage = "updated-directory-list";
+    for (attempt = 0u;
+         attempt < 400u && (!child_finished || state.cancel_count == 0u);
+         attempt++)
     {
         struct pollfd descriptor;
         size_t count = 0u;
         int ready = 0;
-        pid_t waited = waitpid(child, &child_status, WNOHANG);
+        pid_t waited = 0;
 
-        if (waited == child)
+        if (!child_finished)
         {
-            child_finished = 1;
-            break;
+            waited = waitpid(child, &child_status, WNOHANG);
+            if (waited == child)
+                child_finished = 1;
+            else if (waited < 0)
+                goto cleanup;
         }
-        if (waited < 0)
-            goto cleanup;
+        if (child_finished && state.cancel_count > 0u)
+            break;
         if (events->get_pollfds(provider, &descriptor, 1u, &count) !=
                 LIBRDP_STATUS_OK ||
             count != 1u)
@@ -1760,7 +1825,22 @@ cleanup:
         close(continue_pipe[1]);
     server_fuse_free(provider);
     if (rmdir(path) != 0)
+    {
+        failure_stage = "mount-directory-remove";
         result = 1;
+    }
+    if (result != 0)
+        fprintf(stderr,
+                "fuse directory notify failed: stage=%s errno=%d "
+                "child_finished=%d child_exit=%d cancel_count=%llu "
+                "notify_count=%llu attempts=%u\n",
+                failure_stage,
+                errno,
+                child_finished,
+                WIFEXITED(child_status) ? WEXITSTATUS(child_status) : -1,
+                (unsigned long long)state.cancel_count,
+                (unsigned long long)state.notify_count,
+                attempt);
     return result;
 }
 
@@ -2165,6 +2245,21 @@ static int test_x11_providers(const char* display_name)
     CHECK(librdp_server_input_event_init(&input_event) ==
           LIBRDP_STATUS_OK);
     input_event.type = LIBRDP_SERVER_INPUT_SCANCODE_KEY;
+    input_event.param1 = 0x0fu;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, KeyPress, &event, 1000u));
+    }
+    input_event.flags = 0x8000u;
+    CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, KeyRelease, &event, 1000u));
+    }
+    input_event.flags = 0u;
     input_event.param1 = 0x2au;
     CHECK(input->inject(context, &input_event) == LIBRDP_STATUS_OK);
     {
@@ -2737,23 +2832,33 @@ static int test_x11_providers(const char* display_name)
     return 0;
 }
 
+static int test_run_named(const char* name, int (*test_case)(void))
+{
+    int status = test_case ? test_case() : 1;
+
+    if (status != 0)
+        fprintf(stderr, "x11 server subtest failed: %s\n", name);
+    return status;
+}
+
 int main(void)
 {
     char display_name[32];
     pid_t child = -1;
     int result = 1;
 
-    if (test_cli_policy() != 0)
+    if (test_run_named("cli-policy", test_cli_policy) != 0)
         return 1;
-    if (test_clipboard_files() != 0)
+    if (test_run_named("clipboard-files", test_clipboard_files) != 0)
         return 1;
-    if (test_fuse_drive_model() != 0)
+    if (test_run_named("fuse-drive-model", test_fuse_drive_model) != 0)
         return 1;
-    if (test_fuse_drive_event_source() != 0)
+    if (test_run_named("fuse-drive-events", test_fuse_drive_event_source) != 0)
         return 1;
-    if (test_fuse_directory_notify_event_source() != 0)
+    if (test_run_named("fuse-directory-notify",
+                       test_fuse_directory_notify_event_source) != 0)
         return 1;
-    if (test_fuse_clipboard_model() != 0)
+    if (test_run_named("fuse-clipboard", test_fuse_clipboard_model) != 0)
         return 1;
     if (!test_start_xvfb(display_name, &child))
     {

@@ -13,6 +13,7 @@
  */
 
 #include "x11_keyboard.h"
+#include "x11_keymap.h"
 
 #include <X11/X.h>
 
@@ -46,6 +47,7 @@ static int check_int(int condition, const char* expression, int line)
  */
 static int test_xkb_key_name_mapping(void)
 {
+    char name[4];
     uint32_t scancode = 0;
     uint32_t flags = 0;
 
@@ -58,6 +60,8 @@ static int test_xkb_key_name_mapping(void)
     CHECK(x11_keyboard_map_xkb_name("PAUS", &scancode, &flags) == 1);
     CHECK(scancode == 0x45u && flags == LIBRDP_KEY_FLAG_EXTENDED1);
     CHECK(x11_keyboard_map_xkb_name("NOPE", &scancode, &flags) == 0);
+    CHECK(x11_keymap_rdp_to_xkb_name(0x0fu, 0u, name) == 1);
+    CHECK(memcmp(name, "TAB", sizeof(name)) == 0);
     return 0;
 }
 

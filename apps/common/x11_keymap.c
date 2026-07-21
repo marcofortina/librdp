@@ -194,7 +194,7 @@ int x11_keymap_rdp_to_xkb_name(uint32_t scancode,
         if (x11_keymap_entries[index].scancode != scancode ||
             x11_keymap_entries[index].flags != identity_flags)
             continue;
-        memset(name, ' ', 4u);
+        memset(name, 0, 4u);
         length = strlen(x11_keymap_entries[index].name);
         memcpy(name, x11_keymap_entries[index].name, length);
         return 1;

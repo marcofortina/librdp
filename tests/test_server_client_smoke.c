@@ -10065,6 +10065,7 @@ static int smoke_run_profile_ex(
     {
         const librdp_surface* surface = NULL;
         int desktop_ready = 0;
+        int frame_complete = 0;
         librdp_status status = smoke_client_pump(&runtime);
 
         if (status != LIBRDP_STATUS_OK)
@@ -10460,7 +10461,21 @@ static int smoke_run_profile_ex(
                 }
             }
         }
-        if (desktop_ready && events.surface_events > 0u &&
+        if (desktop_ready)
+        {
+            const uint8_t* pixels = librdp_surface_pixels(surface);
+
+            frame_complete = pixels &&
+                smoke_frame_matches_sha256(
+                    pixels,
+                    (size_t)librdp_surface_stride(surface) *
+                        librdp_surface_height(surface),
+                    exercise_output_control ?
+                        smoke_alternate_frame_sha256 :
+                        smoke_frame_sha256);
+        }
+        if (desktop_ready && frame_complete && events.surface_events > 0u &&
+            trace_capture.slowpath_bitmap_updates > 0u &&
             clipboard_sent &&
             server_client_clipboard_provider_has_offer(
                 clipboard_provider) &&
@@ -11566,6 +11581,32 @@ static int smoke_take_resource_snapshot(smoke_resource_snapshot* snapshot)
 }
 
 /*
+ * A joined Linux task can remain visible through procfs for a short interval
+ * after its child TID has been cleared. Require the exact baseline within a
+ * bounded interval so persistent worker leaks still fail deterministically.
+ */
+static int smoke_wait_for_thread_quiescence(
+    size_t expected_thread_count,
+    smoke_resource_snapshot* snapshot)
+{
+    const struct timespec delay = {0, 2000000l};
+    unsigned int attempt = 0u;
+
+    if (!snapshot)
+        return 0;
+    for (attempt = 0u; attempt < 50u; attempt++)
+    {
+        if (!smoke_take_resource_snapshot(snapshot))
+            return 0;
+        if (!snapshot->thread_count_available ||
+            snapshot->thread_count == expected_thread_count)
+            return 1;
+        (void)nanosleep(&delay, NULL);
+    }
+    return 1;
+}
+
+/*
  * Alternate all client security paths, tear every fixture down completely,
  * and periodically include a protocol-driven reconnect. Exact descriptor and
  * thread baselines catch leaked transports or workers; bounded resident growth
@@ -11605,7 +11646,9 @@ static int smoke_run_lifecycle_stress(void)
         if (cycle % 6u == 5u)
             CHECK(smoke_run_redirection((cycle / 6u) % 2u, 0) == 0);
 
-        CHECK(smoke_take_resource_snapshot(&current));
+        CHECK(smoke_wait_for_thread_quiescence(
+            baseline.thread_count,
+            &current));
         if (current.descriptor_count != baseline.descriptor_count)
         {
             fprintf(stderr,
