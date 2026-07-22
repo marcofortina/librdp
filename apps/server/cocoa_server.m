@@ -17,6 +17,7 @@
 
 #include "cocoa_server_internal.h"
 
+#import <AvailabilityMacros.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreVideo/CoreVideo.h>
 
@@ -350,6 +351,7 @@ static int cocoa_server_filter_geometry(
 {
     if (!context || !content || !filter)
         return 0;
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
     if (@available(macOS 14.0, *))
     {
         return cocoa_server_geometry_from_rect(
@@ -360,6 +362,7 @@ static int cocoa_server_filter_geometry(
             source_rect,
             source_scale);
     }
+#endif
     return cocoa_server_legacy_filter_geometry(
         context,
         content,

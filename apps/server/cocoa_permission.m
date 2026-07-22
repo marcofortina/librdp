@@ -16,6 +16,7 @@
 #include "cocoa_permission.h"
 
 #import <ApplicationServices/ApplicationServices.h>
+#import <AvailabilityMacros.h>
 #import <Cocoa/Cocoa.h>
 #import <CoreGraphics/CoreGraphics.h>
 
@@ -49,10 +50,14 @@ static void cocoa_permission_activate_application(void)
 {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
     if (@available(macOS 14.0, *))
         [NSApp activate];
     else
         [NSApp activateIgnoringOtherApps:YES];
+#else
+    [NSApp activateIgnoringOtherApps:YES];
+#endif
 }
 
 static NSString* cocoa_permission_name(server_platform_permission_kind kind)
