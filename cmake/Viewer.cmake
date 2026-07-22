@@ -359,13 +359,16 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
     find_library(LIBRDP_VIEWER_COCOA_FRAMEWORK Cocoa REQUIRED)
     find_library(LIBRDP_VIEWER_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
     find_library(LIBRDP_VIEWER_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
+    find_library(LIBRDP_VIEWER_CARBON_FRAMEWORK Carbon REQUIRED)
     find_library(LIBRDP_VIEWER_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
     find_library(LIBRDP_VIEWER_COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
     find_library(LIBRDP_VIEWER_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
     find_library(LIBRDP_VIEWER_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
     find_library(LIBRDP_VIEWER_IMAGEIO_FRAMEWORK ImageIO REQUIRED)
     add_executable(librdp-viewer
+        apps/common/cocoa_keymap.c
         apps/viewer/cocoa_cli.c
+        apps/viewer/cocoa_input.m
         apps/viewer/cocoa_session_loop.c
         apps/viewer/cocoa_main.m
         apps/viewer/cocoa_media.m
@@ -374,6 +377,7 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
     librdp_set_application_backend(librdp-viewer cocoa)
     target_include_directories(librdp-viewer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
     )
     target_link_libraries(librdp-viewer PRIVATE
@@ -381,6 +385,7 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
         ${LIBRDP_VIEWER_COCOA_FRAMEWORK}
         ${LIBRDP_VIEWER_AUDIOTOOLBOX_FRAMEWORK}
         ${LIBRDP_VIEWER_AVFOUNDATION_FRAMEWORK}
+        ${LIBRDP_VIEWER_CARBON_FRAMEWORK}
         ${LIBRDP_VIEWER_COREFOUNDATION_FRAMEWORK}
         ${LIBRDP_VIEWER_COREGRAPHICS_FRAMEWORK}
         ${LIBRDP_VIEWER_COREMEDIA_FRAMEWORK}
@@ -446,6 +451,28 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
         add_test(NAME cocoa_viewer_render
             COMMAND test_cocoa_viewer_render)
         set_tests_properties(cocoa_viewer_render PROPERTIES TIMEOUT 30)
+        add_executable(test_cocoa_viewer_input
+            tests/test_cocoa_viewer_input.m
+            apps/common/cocoa_keymap.c
+            apps/viewer/cocoa_input.m
+        )
+        target_include_directories(test_cocoa_viewer_input PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+        )
+        target_link_libraries(test_cocoa_viewer_input PRIVATE
+            librdp
+            ${LIBRDP_VIEWER_COCOA_FRAMEWORK}
+            ${LIBRDP_VIEWER_CARBON_FRAMEWORK}
+        )
+        librdp_apply_system_definitions(test_cocoa_viewer_input)
+        librdp_apply_warning_options(test_cocoa_viewer_input)
+        librdp_apply_sanitizer_compile_options(test_cocoa_viewer_input)
+        librdp_apply_sanitizer_link_options(test_cocoa_viewer_input)
+        add_test(NAME cocoa_viewer_input
+            COMMAND test_cocoa_viewer_input)
+        set_tests_properties(cocoa_viewer_input PROPERTIES TIMEOUT 30)
         add_test(NAME viewer_cli COMMAND librdp-viewer --help)
         set_tests_properties(viewer_cli PROPERTIES TIMEOUT 30)
     endif()

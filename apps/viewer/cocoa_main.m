@@ -20,6 +20,7 @@
 
 #include "client_callbacks.h"
 #include "cocoa_cli.h"
+#include "cocoa_input.h"
 #include "cocoa_media.h"
 #include "cocoa_render.h"
 #include "cocoa_session_loop.h"
@@ -35,8 +36,10 @@
 
 @class CocoaViewerController;
 
-@interface CocoaViewerView : NSView
+@interface CocoaViewerView : NSView<NSTextInputClient>
 @property(nonatomic, assign) CocoaViewerController* controller;
+@property(nonatomic, strong) NSMutableAttributedString* markedText;
+@property(nonatomic, assign) NSRange markedSelection;
 @end
 
 @interface CocoaViewerController : NSObject<NSWindowDelegate>
@@ -48,6 +51,7 @@
 @property(nonatomic, assign) cocoa_session_loop* sessionLoop;
 @property(nonatomic, strong) NSWindow* window;
 @property(nonatomic, strong) CocoaViewerView* view;
+@property(nonatomic, strong) CocoaViewerInputBridge* inputBridge;
 @property(nonatomic, strong) NSCursor* currentCursor;
 @property(nonatomic, assign) cocoa_audio_backend* audio;
 @property(nonatomic, assign) cocoa_camera_source* camera;
@@ -79,12 +83,23 @@
 - (void)sendResizeForView;
 - (void)sendMouseEvent:(NSEvent*)event button:(librdp_mouse_button)button state:(librdp_mouse_state)state;
 - (void)sendWheelEvent:(NSEvent*)event;
-- (void)sendKeyEvent:(NSEvent*)event pressed:(BOOL)pressed;
 - (void)applyPointerEvent:(const librdp_pointer_event*)pointer;
 - (void)handleClipboardEnvelope:(const librdp_event_envelope*)envelope;
 - (void)publishLocalPasteboardIfChanged;
 - (void)setOutputSuppressed:(BOOL)suppressed;
 @end
+
+static librdp_status cocoa_viewer_key_sink_callback(
+    const librdp_key_event* event,
+    void* user_data)
+{
+    CocoaViewerController* controller =
+        (__bridge CocoaViewerController*)user_data;
+
+    if (!controller || !controller.session || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return librdp_session_send_key(controller.session, event);
+}
 
 static void cocoa_viewer_graphics_callback(librdp_session* session,
                                            const librdp_graphics_update* update,
@@ -349,17 +364,117 @@ static void cocoa_viewer_session_status(librdp_status status,
 
 - (void)keyDown:(NSEvent*)event
 {
-    [self.controller sendKeyEvent:event pressed:YES];
+    if (!self.controller.inputBridge ||
+        ![self.controller.inputBridge handleKeyDown:event])
+        [self interpretKeyEvents:@[ event ]];
 }
 
 - (void)keyUp:(NSEvent*)event
 {
-    [self.controller sendKeyEvent:event pressed:NO];
+    (void)[self.controller.inputBridge handleKeyUp:event];
 }
 
 - (void)flagsChanged:(NSEvent*)event
 {
-    (void)event;
+    (void)[self.controller.inputBridge handleFlagsChanged:event];
+}
+
+- (void)insertText:(id)text
+   replacementRange:(NSRange)replacementRange
+{
+    (void)replacementRange;
+    self.markedText = nil;
+    self.markedSelection = NSMakeRange(NSNotFound, 0u);
+    (void)[self.controller.inputBridge sendCommittedText:text];
+}
+
+- (void)setMarkedText:(id)text
+         selectedRange:(NSRange)selectedRange
+      replacementRange:(NSRange)replacementRange
+{
+    NSAttributedString* marked = nil;
+
+    (void)replacementRange;
+    if ([text isKindOfClass:[NSAttributedString class]])
+        marked = (NSAttributedString*)text;
+    else if ([text isKindOfClass:[NSString class]])
+        marked = [[NSAttributedString alloc]
+                     initWithString:(NSString*)text];
+    self.markedText = marked
+                          ? [marked mutableCopy]
+                          : nil;
+    self.markedSelection = selectedRange;
+}
+
+- (void)unmarkText
+{
+    self.markedText = nil;
+    self.markedSelection = NSMakeRange(NSNotFound, 0u);
+}
+
+- (BOOL)hasMarkedText
+{
+    return [self.markedText length] != 0u;
+}
+
+- (NSRange)markedRange
+{
+    return [self hasMarkedText]
+               ? NSMakeRange(0u, [self.markedText length])
+               : NSMakeRange(NSNotFound, 0u);
+}
+
+- (NSRange)selectedRange
+{
+    return [self hasMarkedText]
+               ? self.markedSelection
+               : NSMakeRange(NSNotFound, 0u);
+}
+
+- (NSArray*)validAttributesForMarkedText
+{
+    return @[];
+}
+
+- (NSAttributedString*)attributedSubstringForProposedRange:(NSRange)range
+                                                actualRange:(NSRangePointer)actualRange
+{
+    if (![self hasMarkedText] ||
+        range.location == NSNotFound ||
+        NSMaxRange(range) > [self.markedText length])
+    {
+        if (actualRange)
+            *actualRange = NSMakeRange(NSNotFound, 0u);
+        return nil;
+    }
+    if (actualRange)
+        *actualRange = range;
+    return [self.markedText attributedSubstringFromRange:range];
+}
+
+- (NSRect)firstRectForCharacterRange:(NSRange)range
+                          actualRange:(NSRangePointer)actualRange
+{
+    NSRect local = NSMakeRect(0.0, 0.0, 1.0, 1.0);
+    NSRect windowRect;
+
+    if (actualRange)
+        *actualRange = range;
+    if (!self.window)
+        return NSZeroRect;
+    windowRect = [self convertRect:local toView:nil];
+    return [self.window convertRectToScreen:windowRect];
+}
+
+- (NSUInteger)characterIndexForPoint:(NSPoint)point
+{
+    (void)point;
+    return NSNotFound;
+}
+
+- (void)doCommandBySelector:(SEL)selector
+{
+    (void)[self.controller.inputBridge sendCommand:selector];
 }
 
 @end
@@ -375,6 +490,11 @@ static void cocoa_viewer_session_status(librdp_status status,
     if (!self)
         return nil;
     self.session = session;
+    self.inputBridge = [[CocoaViewerInputBridge alloc]
+        initWithSink:cocoa_viewer_key_sink_callback
+           userData:(__bridge void*)self];
+    if (!self.inputBridge)
+        return nil;
     self.view = [[CocoaViewerView alloc] initWithFrame:frame];
     self.view.controller = self;
     self.window = [[NSWindow alloc] initWithContentRect:frame
@@ -458,11 +578,20 @@ static void cocoa_viewer_session_status(librdp_status status,
 
 - (void)shutdownSession
 {
+    [self.inputBridge releaseAll];
     if (!self.sessionLoop)
         return;
     (void)cocoa_session_loop_disconnect(self.sessionLoop);
     cocoa_session_loop_free(self.sessionLoop);
     self.sessionLoop = NULL;
+}
+
+- (void)windowDidResignKey:(NSNotification*)notification
+{
+    (void)notification;
+    [[self.view inputContext] discardMarkedText];
+    [self.view unmarkText];
+    [self.inputBridge releaseAll];
 }
 
 - (BOOL)start
@@ -750,28 +879,6 @@ static void cocoa_viewer_session_status(librdp_status status,
         [self sendMouseEvent:event button:LIBRDP_MOUSE_BUTTON_WHEEL_LEFT state:LIBRDP_MOUSE_PRESSED];
     else if (delta_x < 0.0)
         [self sendMouseEvent:event button:LIBRDP_MOUSE_BUTTON_WHEEL_RIGHT state:LIBRDP_MOUSE_PRESSED];
-}
-
-- (void)sendKeyEvent:(NSEvent*)event pressed:(BOOL)pressed
-{
-    NSString* characters = nil;
-    NSUInteger length = 0;
-    NSUInteger i = 0;
-
-    if (!self.session || !event)
-        return;
-    characters = [event characters];
-    length = [characters length];
-    for (i = 0; i < length; i++)
-    {
-        librdp_key_event key;
-
-        memset(&key, 0, sizeof(key));
-        key.state = pressed ? LIBRDP_KEY_PRESSED : LIBRDP_KEY_RELEASED;
-        key.flags = LIBRDP_KEY_FLAG_UNICODE;
-        key.unicode = (uint32_t)[characters characterAtIndex:i];
-        (void)librdp_session_send_key(self.session, &key);
-    }
 }
 
 - (NSCursor*)hiddenCursor
