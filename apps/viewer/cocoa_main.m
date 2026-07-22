@@ -43,7 +43,7 @@
 @property(nonatomic, assign) NSRange markedSelection;
 @end
 
-@interface CocoaViewerController : NSObject<NSWindowDelegate>
+@interface CocoaViewerController : NSObject<NSApplicationDelegate, NSWindowDelegate>
 {
     librdp_audio_format _audioOutputFormats[COCOA_AUDIO_OUTPUT_FORMATS_MAX];
     uint8_t _audioInputBuffer[COCOA_AUDIO_INPUT_BUFFER_BYTES];
@@ -598,11 +598,27 @@ static void cocoa_viewer_session_status(librdp_status status,
     [self.inputBridge releaseAll];
 }
 
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender
+{
+    (void)sender;
+    self.closed = YES;
+    [self shutdownMedia];
+    [self shutdownSession];
+    return NSTerminateNow;
+}
+
+- (void)windowWillClose:(NSNotification*)notification
+{
+    (void)notification;
+    [NSApp terminate:nil];
+}
+
 - (BOOL)start
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [NSApp setDelegate:self];
     [self.window makeKeyAndOrderFront:nil];
     [self.window makeFirstResponder:self.view];
     [NSApp activateIgnoringOtherApps:YES];
