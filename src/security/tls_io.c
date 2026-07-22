@@ -27,6 +27,7 @@ static int rdp_tls_io_guard_begin(SSL* tls,
                                   rdp_sigpipe_guard* guard)
 {
     int fd = -1;
+    int saved_errno = errno;
 
     if (!tls || !guard)
     {
@@ -34,8 +35,13 @@ static int rdp_tls_io_guard_begin(SSL* tls,
         return 0;
     }
     fd = SSL_get_fd(tls);
-    if (fd >= 0 && rdp_socket_set_nosigpipe(fd) != 0)
-        return 0;
+    if (fd >= 0)
+    {
+        /* The thread-scoped guard remains authoritative if the socket option
+         * is unavailable for a descriptor or its current state. */
+        (void)rdp_socket_set_nosigpipe(fd);
+        errno = saved_errno;
+    }
     return rdp_sigpipe_guard_begin(guard);
 }
 
