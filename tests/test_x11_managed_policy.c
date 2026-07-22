@@ -94,6 +94,10 @@ static int test_defaults_and_authorization(void)
     CHECK(strcmp(policy.agent_path,
                  LIBRDP_X11_SESSION_AGENT_PATH) == 0);
     CHECK(strcmp(policy.authentication_service, "librdp") == 0);
+    CHECK(policy.idle_timeout_ns ==
+          X11_MANAGED_DEFAULT_IDLE_TIMEOUT_NS);
+    CHECK(policy.max_duration_ns ==
+          X11_MANAGED_DEFAULT_MAX_DURATION_NS);
     CHECK(!x11_managed_policy_valid(&policy));
     CHECK(test_configure_policy(&policy));
     CHECK(x11_managed_policy_valid(&policy));

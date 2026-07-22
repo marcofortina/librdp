@@ -149,8 +149,8 @@ void x11_managed_policy_init(x11_managed_policy* policy)
     policy->max_sessions_per_user = 2u;
     policy->first_display = X11_MANAGED_REGISTRY_MIN_DISPLAY;
     policy->last_display = 199u;
-    policy->idle_timeout_ns = 30u * 60u * 1000000000u;
-    policy->max_duration_ns = 24u * 60u * 60u * 1000000000u;
+    policy->idle_timeout_ns = X11_MANAGED_DEFAULT_IDLE_TIMEOUT_NS;
+    policy->max_duration_ns = X11_MANAGED_DEFAULT_MAX_DURATION_NS;
     policy->socket_mode = 0600;
     policy->allow_capture = 1;
     policy->drive_read_only = 1;

@@ -33,6 +33,10 @@
 #define X11_MANAGED_IPC_PATH_BYTES 4096u
 #define X11_MANAGED_IPC_COMMAND_BYTES 4096u
 #define X11_MANAGED_IPC_ENVIRONMENT_BYTES 2048u
+#define X11_MANAGED_DEFAULT_IDLE_TIMEOUT_NS                               \
+    (UINT64_C(30) * UINT64_C(60) * UINT64_C(1000000000))
+#define X11_MANAGED_DEFAULT_MAX_DURATION_NS                               \
+    (UINT64_C(24) * UINT64_C(60) * UINT64_C(60) * UINT64_C(1000000000))
 
 typedef enum x11_managed_ipc_type
 {

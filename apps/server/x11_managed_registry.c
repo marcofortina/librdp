@@ -284,8 +284,8 @@ void x11_managed_registry_config_init(
     config->max_sessions_per_user = 2u;
     config->first_display = X11_MANAGED_REGISTRY_MIN_DISPLAY;
     config->last_display = 199u;
-    config->idle_timeout_ns = 30u * 60u * 1000000000u;
-    config->max_duration_ns = 24u * 60u * 60u * 1000000000u;
+    config->idle_timeout_ns = X11_MANAGED_DEFAULT_IDLE_TIMEOUT_NS;
+    config->max_duration_ns = X11_MANAGED_DEFAULT_MAX_DURATION_NS;
     config->allow_reconnect = 1;
 }
 

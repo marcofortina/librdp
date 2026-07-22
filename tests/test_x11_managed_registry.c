@@ -74,6 +74,10 @@ static int test_registry_lifecycle(void)
 
     CHECK(mkdtemp(root) != NULL);
     x11_managed_registry_config_init(&config);
+    CHECK(config.idle_timeout_ns ==
+          X11_MANAGED_DEFAULT_IDLE_TIMEOUT_NS);
+    CHECK(config.max_duration_ns ==
+          X11_MANAGED_DEFAULT_MAX_DURATION_NS);
     config.runtime_root = root;
     config.max_sessions = 3u;
     config.max_sessions_per_user = 2u;
