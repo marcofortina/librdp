@@ -28,14 +28,9 @@ jobs:
           prepare: |
             export PKG_PATH="https://ftp.hostserver.de/pub/OpenBSD/$(uname -r)/packages/$(machine -a)/"
             pkg_add cmake ninja libiconv libxkbcommon
-            pkgconf_package="$(pkg_info -Q pkgconf | LC_ALL=C sort | tail -n 1 || true)"
-            if [ -z "${pkgconf_package}" ]; then
-              pkgconf_package="$(pkg_info -Q pkg-config | LC_ALL=C sort | tail -n 1 || true)"
-            fi
-            test -n "${pkgconf_package}"
-            pkg_add "${pkgconf_package}"
-            openssl_package="$(pkg_info -Q openssl | grep '^openssl-3\.' | LC_ALL=C sort | tail -n 1)"
-            python_package="$(pkg_info -Q python | grep '^python-3\.' | LC_ALL=C sort | tail -n 1)"
+            command -v pkg-config >/dev/null
+            openssl_package="$(pkg_info -Q openssl | sed 's/ (installed)$//' | grep '^openssl-3\.' | LC_ALL=C sort | tail -n 1)"
+            python_package="$(pkg_info -Q python | sed 's/ (installed)$//' | grep '^python-3\.' | LC_ALL=C sort | tail -n 1)"
             test -n "${openssl_package}"
             test -n "${python_package}"
             pkg_add "${openssl_package}" "${python_package}"
@@ -100,15 +95,9 @@ jobs:
           prepare: |
             export PKG_PATH="https://ftp.hostserver.de/pub/OpenBSD/$(uname -r)/packages/$(machine -a)/"
             pkg_add cmake ninja libiconv
-            pkgconf_package="$(pkg_info -Q pkgconf | LC_ALL=C sort | tail -n 1 || true)"
-            if [ -z "${pkgconf_package}" ]; then
-              pkgconf_package="$(pkg_info -Q pkg-config | LC_ALL=C sort | tail -n 1 || true)"
-            fi
-            if [ -n "${pkgconf_package}" ]; then
-              pkg_add "${pkgconf_package}"
-            fi
-            openssl_package="$(pkg_info -Q openssl | grep '^openssl-3\.' | LC_ALL=C sort | tail -n 1)"
-            python_package="$(pkg_info -Q python | grep '^python-3\.' | LC_ALL=C sort | tail -n 1)"
+            command -v pkg-config >/dev/null
+            openssl_package="$(pkg_info -Q openssl | sed 's/ (installed)$//' | grep '^openssl-3\.' | LC_ALL=C sort | tail -n 1)"
+            python_package="$(pkg_info -Q python | sed 's/ (installed)$//' | grep '^python-3\.' | LC_ALL=C sort | tail -n 1)"
             test -n "${openssl_package}"
             test -n "${python_package}"
             pkg_add "${openssl_package}" "${python_package}"
@@ -120,7 +109,7 @@ jobs:
                 fi
               done
             fi
-            libusb_package="$(pkg_info -Q libusb1 | grep '^libusb1-[0-9]' | grep -v -- '-debug$' | LC_ALL=C sort | tail -n 1)"
+            libusb_package="$(pkg_info -Q libusb1 | sed 's/ (installed)$//' | grep '^libusb1-[0-9]' | grep -v -- '-debug$' | LC_ALL=C sort | tail -n 1)"
             test -n "${libusb_package}"
             pkg_add "${libusb_package}"
             for package in ffmpeg openh264 pcsc-lite libarchive; do
@@ -174,15 +163,9 @@ jobs:
           prepare: |
             export PKG_PATH="https://ftp.hostserver.de/pub/OpenBSD/$(uname -r)/packages/$(machine -a)/"
             pkg_add cmake ninja libiconv
-            pkgconf_package="$(pkg_info -Q pkgconf | LC_ALL=C sort | tail -n 1 || true)"
-            if [ -z "${pkgconf_package}" ]; then
-              pkgconf_package="$(pkg_info -Q pkg-config | LC_ALL=C sort | tail -n 1 || true)"
-            fi
-            if [ -n "${pkgconf_package}" ]; then
-              pkg_add "${pkgconf_package}"
-            fi
-            openssl_package="$(pkg_info -Q openssl | grep '^openssl-3\.' | LC_ALL=C sort | tail -n 1)"
-            python_package="$(pkg_info -Q python | grep '^python-3\.' | LC_ALL=C sort | tail -n 1)"
+            command -v pkg-config >/dev/null
+            openssl_package="$(pkg_info -Q openssl | sed 's/ (installed)$//' | grep '^openssl-3\.' | LC_ALL=C sort | tail -n 1)"
+            python_package="$(pkg_info -Q python | sed 's/ (installed)$//' | grep '^python-3\.' | LC_ALL=C sort | tail -n 1)"
             test -n "${openssl_package}"
             test -n "${python_package}"
             pkg_add "${openssl_package}" "${python_package}"
