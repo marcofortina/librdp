@@ -162,9 +162,13 @@ set(LIBRDP_SOURCES
 
 set(LIBRDP_BACKEND_SOURCES
     src/client/printer_backend.c
-    src/client/usb_backend.c
     src/client/webauthn_backend.c
 )
+if(LIBRDP_LIBUSB_FOUND)
+    list(APPEND LIBRDP_BACKEND_SOURCES
+        src/client/usb_backend.c
+    )
+endif()
 
 add_library(librdp_objects OBJECT ${LIBRDP_SOURCES})
 add_library(librdp_backend_objects OBJECT ${LIBRDP_BACKEND_SOURCES})
