@@ -335,6 +335,34 @@ static uint32_t rdp_printer_backend_cups_submit_provider(
     if (!destination_info || rdp_printer_backend_cups_cancelled(&context))
         goto cleanup;
     format = rdp_printer_backend_document_format(path);
+    if (!cupsCheckDestSupported(http,
+                                context.destination,
+                                destination_info,
+                                "document-format",
+                                format))
+    {
+        if (strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_XPS) == 0 &&
+            cupsCheckDestSupported(http,
+                                   context.destination,
+                                   destination_info,
+                                   "document-format",
+                                   RDP_PRINTER_REDIRECTION_FORMAT_RAW))
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.rdpdr.printer.cups.format_fallback",
+                            "printer_index=%u destination=%s requested=%s selected=%s",
+                            printer_index,
+                            context.destination->name,
+                            format,
+                            RDP_PRINTER_REDIRECTION_FORMAT_RAW);
+            format = RDP_PRINTER_REDIRECTION_FORMAT_RAW;
+        }
+        else
+        {
+            status = RDP_PRINTER_BACKEND_DEVICE_NOT_SUPPORTED;
+            goto cleanup;
+        }
+    }
     option_count = cupsAddOption("document-format", format, option_count, &options);
     if (option_count <= 0)
         goto cleanup;
