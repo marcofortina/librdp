@@ -368,6 +368,7 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
     add_executable(librdp-viewer
         apps/common/cocoa_keymap.c
         apps/viewer/cocoa_cli.c
+        apps/viewer/cocoa_clipboard.m
         apps/viewer/cocoa_input.m
         apps/viewer/cocoa_session_loop.c
         apps/viewer/cocoa_main.m
@@ -473,6 +474,25 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
         add_test(NAME cocoa_viewer_input
             COMMAND test_cocoa_viewer_input)
         set_tests_properties(cocoa_viewer_input PROPERTIES TIMEOUT 30)
+        add_executable(test_cocoa_viewer_clipboard
+            tests/test_cocoa_viewer_clipboard.m
+            apps/viewer/cocoa_clipboard.m
+        )
+        target_include_directories(test_cocoa_viewer_clipboard PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
+        )
+        target_link_libraries(test_cocoa_viewer_clipboard PRIVATE
+            librdp
+            ${LIBRDP_VIEWER_COCOA_FRAMEWORK}
+        )
+        librdp_apply_system_definitions(test_cocoa_viewer_clipboard)
+        librdp_apply_warning_options(test_cocoa_viewer_clipboard)
+        librdp_apply_sanitizer_compile_options(test_cocoa_viewer_clipboard)
+        librdp_apply_sanitizer_link_options(test_cocoa_viewer_clipboard)
+        add_test(NAME cocoa_viewer_clipboard
+            COMMAND test_cocoa_viewer_clipboard)
+        set_tests_properties(cocoa_viewer_clipboard PROPERTIES TIMEOUT 30)
         add_test(NAME viewer_cli COMMAND librdp-viewer --help)
         set_tests_properties(viewer_cli PROPERTIES TIMEOUT 30)
     endif()

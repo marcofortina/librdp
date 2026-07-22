@@ -20,6 +20,7 @@
 
 #include "client_callbacks.h"
 #include "cocoa_cli.h"
+#include "cocoa_clipboard.h"
 #include "cocoa_input.h"
 #include "cocoa_media.h"
 #include "cocoa_render.h"
@@ -52,6 +53,7 @@
 @property(nonatomic, strong) NSWindow* window;
 @property(nonatomic, strong) CocoaViewerView* view;
 @property(nonatomic, strong) CocoaViewerInputBridge* inputBridge;
+@property(nonatomic, strong) CocoaViewerClipboard* clipboard;
 @property(nonatomic, strong) NSCursor* currentCursor;
 @property(nonatomic, assign) cocoa_audio_backend* audio;
 @property(nonatomic, assign) cocoa_camera_source* camera;
@@ -62,7 +64,6 @@
 @property(nonatomic, assign) uint32_t audioOutputFormatCount;
 @property(nonatomic, assign) uint32_t audioOutputCurrentFormat;
 @property(nonatomic, assign) size_t audioInputChunk;
-@property(nonatomic, assign) NSInteger pasteboardChangeCount;
 @property(nonatomic, assign) BOOL dirty;
 @property(nonatomic, assign) BOOL closed;
 @property(nonatomic, assign) BOOL audioOutputRequested;
@@ -85,7 +86,6 @@
 - (void)sendWheelEvent:(NSEvent*)event;
 - (void)applyPointerEvent:(const librdp_pointer_event*)pointer;
 - (void)handleClipboardEnvelope:(const librdp_event_envelope*)envelope;
-- (void)publishLocalPasteboardIfChanged;
 - (void)setOutputSuppressed:(BOOL)suppressed;
 @end
 
@@ -203,7 +203,7 @@ static void cocoa_viewer_session_prepare(void* user_data)
 
     if (!controller || controller.closed)
         return;
-    [controller publishLocalPasteboardIfChanged];
+    (void)[controller.clipboard poll];
     [controller pumpAudioInput];
     if (controller.dirty)
     {
@@ -495,6 +495,10 @@ static void cocoa_viewer_session_status(librdp_status status,
            userData:(__bridge void*)self];
     if (!self.inputBridge)
         return nil;
+    self.clipboard = [[CocoaViewerClipboard alloc]
+        initWithSession:session];
+    if (!self.clipboard)
+        return nil;
     self.view = [[CocoaViewerView alloc] initWithFrame:frame];
     self.view.controller = self;
     self.window = [[NSWindow alloc] initWithContentRect:frame
@@ -508,7 +512,6 @@ static void cocoa_viewer_session_status(librdp_status status,
     [self.window setAcceptsMouseMovedEvents:YES];
     [self.window center];
     self.currentCursor = [NSCursor arrowCursor];
-    self.pasteboardChangeCount = [[NSPasteboard generalPasteboard] changeCount];
     self.audioOutputCurrentFormat = UINT32_MAX;
     memset(&callbacks, 0, sizeof(callbacks));
     callbacks.prepare = cocoa_viewer_session_prepare;
@@ -579,6 +582,7 @@ static void cocoa_viewer_session_status(librdp_status status,
 - (void)shutdownSession
 {
     [self.inputBridge releaseAll];
+    [self.clipboard shutdown];
     if (!self.sessionLoop)
         return;
     (void)cocoa_session_loop_disconnect(self.sessionLoop);
@@ -968,124 +972,10 @@ static void cocoa_viewer_session_status(librdp_status status,
     }
 }
 
-- (void)publishLocalPasteboardIfChanged
-{
-    NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
-    NSString* string = nil;
-    NSData* utf16 = nil;
-
-    if (!self.session || !pasteboard || [pasteboard changeCount] == self.pasteboardChangeCount)
-        return;
-    self.pasteboardChangeCount = [pasteboard changeCount];
-    string = [pasteboard stringForType:NSPasteboardTypeString];
-    if (!string)
-    {
-        (void)librdp_session_clipboard_clear(self.session);
-        return;
-    }
-    utf16 = [string dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
-    if (!utf16)
-        return;
-    (void)librdp_session_clipboard_set_data(self.session,
-                                            LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
-                                            [utf16 bytes],
-                                            [utf16 length]);
-}
-
-- (void)writeStringToPasteboard:(NSString*)string type:(NSPasteboardType)type
-{
-    NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
-
-    if (!pasteboard || !string)
-        return;
-    [pasteboard clearContents];
-    [pasteboard setString:string forType:type];
-    self.pasteboardChangeCount = [pasteboard changeCount];
-}
-
-- (void)writeDataToPasteboard:(NSData*)data type:(NSPasteboardType)type
-{
-    NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
-
-    if (!pasteboard || !data)
-        return;
-    [pasteboard clearContents];
-    [pasteboard setData:data forType:type];
-    self.pasteboardChangeCount = [pasteboard changeCount];
-}
-
-- (void)handleRemoteFormats:(const librdp_clipboard_formats_event*)formats
-{
-    uint32_t i = 0;
-
-    if (!self.session || !formats || !formats->formats)
-        return;
-    for (i = 0; i < formats->count; i++)
-    {
-        uint32_t format_id = formats->formats[i].format_id;
-
-        if (format_id == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT || format_id == LIBRDP_CLIPBOARD_FORMAT_TEXT ||
-            format_id == LIBRDP_CLIPBOARD_FORMAT_PNG || format_id == LIBRDP_CLIPBOARD_FORMAT_HTML)
-        {
-            (void)librdp_session_clipboard_request_data(self.session, format_id);
-            return;
-        }
-    }
-}
-
-- (void)handleRemoteClipboardData:(const librdp_clipboard_data_event*)data
-{
-    NSData* ns_data = nil;
-    NSString* string = nil;
-
-    if (!data || !data->ok || !data->data || data->data_len == 0)
-        return;
-    ns_data = [NSData dataWithBytes:data->data length:data->data_len];
-    if (!ns_data)
-        return;
-    if (data->format_id == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT)
-    {
-        string = [[NSString alloc] initWithBytes:data->data
-                                          length:data->data_len
-                                        encoding:NSUTF16LittleEndianStringEncoding];
-        [self writeStringToPasteboard:string type:NSPasteboardTypeString];
-    }
-    else if (data->format_id == LIBRDP_CLIPBOARD_FORMAT_TEXT)
-    {
-        string = [[NSString alloc] initWithData:ns_data encoding:NSUTF8StringEncoding];
-        if (!string)
-            string = [[NSString alloc] initWithData:ns_data encoding:NSISOLatin1StringEncoding];
-        [self writeStringToPasteboard:string type:NSPasteboardTypeString];
-    }
-    else if (data->format_id == LIBRDP_CLIPBOARD_FORMAT_HTML)
-    {
-        string = [[NSString alloc] initWithData:ns_data encoding:NSUTF8StringEncoding];
-        [self writeStringToPasteboard:string type:NSPasteboardTypeHTML];
-    }
-    else if (data->format_id == LIBRDP_CLIPBOARD_FORMAT_PNG)
-        [self writeDataToPasteboard:ns_data type:NSPasteboardTypePNG];
-}
-
 - (void)handleClipboardEnvelope:(const librdp_event_envelope*)envelope
 {
-    if (!envelope || !envelope->payload)
-        return;
-    switch (envelope->type)
-    {
-        case LIBRDP_EVENT_CLIPBOARD_FORMATS:
-            if (envelope->payload_size >= sizeof(librdp_clipboard_formats_event))
-                [self handleRemoteFormats:(const librdp_clipboard_formats_event*)envelope->payload];
-            break;
-        case LIBRDP_EVENT_CLIPBOARD_DATA:
-            if (envelope->payload_size >= sizeof(librdp_clipboard_data_event))
-                [self handleRemoteClipboardData:(const librdp_clipboard_data_event*)envelope->payload];
-            break;
-        case LIBRDP_EVENT_CLIPBOARD_REQUEST:
-            [self publishLocalPasteboardIfChanged];
-            break;
-        default:
-            break;
-    }
+    if (envelope)
+        (void)[self.clipboard handleEnvelope:envelope];
 }
 
 @end

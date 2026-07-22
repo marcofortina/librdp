@@ -482,6 +482,7 @@ if(LIBRDP_BUILD_TESTS)
         test_x11_viewer_backends
         test_x11_viewer_cli
         test_cocoa_media
+        test_cocoa_viewer_clipboard
         test_cocoa_viewer_input
         test_cocoa_viewer_render
         test_cocoa_server_cli
