@@ -49,4 +49,12 @@ int cocoa_camera_source_start(cocoa_camera_source* camera,
 void cocoa_camera_source_stop(cocoa_camera_source* camera);
 int cocoa_camera_source_read_sample(cocoa_camera_source* camera, uint8_t** data, size_t* data_len);
 
+#ifdef LIBRDP_COCOA_MEDIA_TESTING
+int cocoa_camera_test_convert_pixel_buffer(
+    const librdp_video_capture_media* media,
+    void* pixel_buffer,
+    uint8_t** data,
+    size_t* data_len);
+#endif
+
 #endif

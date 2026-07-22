@@ -486,7 +486,12 @@ int cocoa_camera_media_supported(const librdp_video_capture_media* media, size_t
 static int cocoa_camera_live_media_supported(const librdp_video_capture_media* media,
                                              size_t* max_sample_bytes)
 {
+    size_t pixels = 0;
+
     if (!cocoa_camera_media_supported(media, max_sample_bytes))
+        return 0;
+    pixels = (size_t)media->width * media->height;
+    if (pixels > COCOA_CAMERA_MAX_SAMPLE_BYTES / 4u)
         return 0;
     return media->format == LIBRDP_VIDEO_CAPTURE_MEDIA_MJPG ||
            media->format == LIBRDP_VIDEO_CAPTURE_MEDIA_RGB32 ||
@@ -520,109 +525,205 @@ static int cocoa_camera_copy_frame(cocoa_camera_source* camera, const uint8_t* d
     return 1;
 }
 
+/*
+ * Scale the native AVFoundation BGRA frame to the media dimensions promised
+ * to the remote peer. CoreGraphics performs the platform conversion while the
+ * pixel-buffer lock protects the borrowed capture storage.
+ * Invariant: successful output is tightly packed BGRA at camera width/height
+ * and remains caller-owned. Failure policy: invalid geometry, excessive
+ * allocation, unsupported pixel layout, and native conversion failure return
+ * NULL without publishing a partial frame.
+ */
+static uint8_t* cocoa_camera_scaled_bgra(cocoa_camera_source* camera,
+                                         CVPixelBufferRef pixel_buffer,
+                                         size_t* output_len)
+{
+    CGColorSpaceRef color_space = NULL;
+    CGContextRef source_context = NULL;
+    CGContextRef target_context = NULL;
+    CGImageRef source_image = NULL;
+    const uint8_t* source = NULL;
+    uint8_t* target = NULL;
+    size_t source_width = 0;
+    size_t source_height = 0;
+    size_t source_stride = 0;
+    size_t source_row_bytes = 0;
+    size_t target_width = 0;
+    size_t target_height = 0;
+    size_t target_stride = 0;
+    size_t target_len = 0;
+    int ok = 0;
+
+    if (output_len)
+        *output_len = 0;
+    if (!camera || !pixel_buffer || !output_len ||
+        CVPixelBufferGetPixelFormatType(pixel_buffer) != kCVPixelFormatType_32BGRA)
+        return NULL;
+    source_width = CVPixelBufferGetWidth(pixel_buffer);
+    source_height = CVPixelBufferGetHeight(pixel_buffer);
+    source_stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
+    target_width = camera->width;
+    target_height = camera->height;
+    if (source_width == 0 || source_height == 0 ||
+        source_width > SIZE_MAX / 4u ||
+        source_stride < source_width * 4u ||
+        target_width == 0 || target_height == 0 ||
+        target_width > SIZE_MAX / 4u ||
+        target_height > SIZE_MAX / (target_width * 4u))
+        return NULL;
+    source_row_bytes = source_width * 4u;
+    target_stride = target_width * 4u;
+    target_len = target_stride * target_height;
+    if (target_len > COCOA_CAMERA_MAX_SAMPLE_BYTES)
+        return NULL;
+    if (CVPixelBufferLockBaseAddress(pixel_buffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess)
+        return NULL;
+    source = (const uint8_t*)CVPixelBufferGetBaseAddress(pixel_buffer);
+    if (source)
+    {
+        target = (uint8_t*)malloc(target_len);
+        if (target && source_width == target_width &&
+            source_height == target_height)
+        {
+            for (size_t row = 0; row < target_height; row++)
+            {
+                memcpy(target + row * target_stride,
+                       source + row * source_stride,
+                       source_row_bytes);
+            }
+            ok = 1;
+        }
+        else if (target)
+        {
+            color_space = CGColorSpaceCreateDeviceRGB();
+            if (color_space)
+            {
+                source_context = CGBitmapContextCreate(
+                    (void*)source,
+                    source_width,
+                    source_height,
+                    8u,
+                    source_stride,
+                    color_space,
+                    (CGBitmapInfo)((uint32_t)kCGBitmapByteOrder32Little |
+                                   (uint32_t)kCGImageAlphaNoneSkipFirst));
+            }
+            if (source_context)
+                source_image = CGBitmapContextCreateImage(source_context);
+            if (source_image)
+            {
+                target_context = CGBitmapContextCreate(
+                    target,
+                    target_width,
+                    target_height,
+                    8u,
+                    target_stride,
+                    color_space,
+                    (CGBitmapInfo)((uint32_t)kCGBitmapByteOrder32Little |
+                                   (uint32_t)kCGImageAlphaNoneSkipFirst));
+            }
+            if (target_context)
+            {
+                CGContextSetBlendMode(target_context, kCGBlendModeCopy);
+                CGContextSetInterpolationQuality(target_context,
+                                                 kCGInterpolationHigh);
+                CGContextDrawImage(
+                    target_context,
+                    CGRectMake(0.0,
+                               0.0,
+                               (double)target_width,
+                               (double)target_height),
+                    source_image);
+                ok = 1;
+            }
+        }
+    }
+    if (target_context)
+        CGContextRelease(target_context);
+    if (source_image)
+        CGImageRelease(source_image);
+    if (source_context)
+        CGContextRelease(source_context);
+    if (color_space)
+        CGColorSpaceRelease(color_space);
+    CVPixelBufferUnlockBaseAddress(pixel_buffer, kCVPixelBufferLock_ReadOnly);
+    if (!ok)
+    {
+        free(target);
+        return NULL;
+    }
+    *output_len = target_len;
+    return target;
+}
+
 static int cocoa_camera_copy_bgra_sample(cocoa_camera_source* camera,
                                          CVPixelBufferRef pixel_buffer)
 {
     uint8_t* sample = NULL;
-    const uint8_t* source = NULL;
-    size_t width = 0;
-    size_t height = 0;
-    size_t stride = 0;
-    size_t row_bytes = 0;
     size_t sample_len = 0;
     int ok = 0;
 
-    if (!camera || !pixel_buffer ||
-        CVPixelBufferGetPixelFormatType(pixel_buffer) != kCVPixelFormatType_32BGRA)
+    sample = cocoa_camera_scaled_bgra(camera, pixel_buffer, &sample_len);
+    if (!sample)
         return 0;
-    width = CVPixelBufferGetWidth(pixel_buffer);
-    height = CVPixelBufferGetHeight(pixel_buffer);
-    stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
-    if (width == 0 || height == 0 || width > SIZE_MAX / 4u ||
-        height > SIZE_MAX / (width * 4u))
-        return 0;
-    row_bytes = width * 4u;
-    sample_len = row_bytes * height;
-    if (sample_len > camera->max_sample_bytes)
-    {
+    if (sample_len <= camera->max_sample_bytes)
+        ok = cocoa_camera_copy_frame(camera, sample, sample_len);
+    else
         camera->oversize_frames++;
-        return 0;
-    }
-    if (CVPixelBufferLockBaseAddress(pixel_buffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess)
-        return 0;
-    source = (const uint8_t*)CVPixelBufferGetBaseAddress(pixel_buffer);
-    if (source)
-    {
-        sample = (uint8_t*)malloc(sample_len);
-        if (sample)
-        {
-            for (size_t row = 0; row < height; row++)
-                memcpy(sample + row * row_bytes, source + row * stride, row_bytes);
-            ok = cocoa_camera_copy_frame(camera, sample, sample_len);
-            free(sample);
-        }
-    }
-    CVPixelBufferUnlockBaseAddress(pixel_buffer, kCVPixelBufferLock_ReadOnly);
+    free(sample);
     return ok;
 }
 
 static int cocoa_camera_copy_rgb24_sample(cocoa_camera_source* camera,
                                           CVPixelBufferRef pixel_buffer)
 {
+    uint8_t* bgra = NULL;
     uint8_t* sample = NULL;
-    const uint8_t* source = NULL;
-    size_t width = 0;
-    size_t height = 0;
-    size_t stride = 0;
+    size_t bgra_len = 0;
+    size_t pixels = 0;
     size_t sample_len = 0;
     int ok = 0;
 
-    if (!camera || !pixel_buffer ||
-        CVPixelBufferGetPixelFormatType(pixel_buffer) != kCVPixelFormatType_32BGRA)
+    if (!camera || !pixel_buffer || camera->width == 0 ||
+        camera->height == 0 ||
+        (size_t)camera->width > SIZE_MAX / camera->height)
         return 0;
-    width = CVPixelBufferGetWidth(pixel_buffer);
-    height = CVPixelBufferGetHeight(pixel_buffer);
-    stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
-    if (width == 0 || height == 0 || width > SIZE_MAX / 3u ||
-        height > SIZE_MAX / (width * 3u))
+    pixels = (size_t)camera->width * camera->height;
+    if (pixels > SIZE_MAX / 3u)
         return 0;
-    sample_len = width * height * 3u;
+    sample_len = pixels * 3u;
     if (sample_len > camera->max_sample_bytes)
     {
         camera->oversize_frames++;
         return 0;
     }
-    if (CVPixelBufferLockBaseAddress(pixel_buffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess)
-        return 0;
-    source = (const uint8_t*)CVPixelBufferGetBaseAddress(pixel_buffer);
-    if (source)
+    bgra = cocoa_camera_scaled_bgra(camera, pixel_buffer, &bgra_len);
+    if (!bgra || bgra_len != pixels * 4u)
     {
-        sample = (uint8_t*)malloc(sample_len);
-        if (sample)
-        {
-            for (size_t y = 0; y < height; y++)
-            {
-                const uint8_t* input = source + y * stride;
-                uint8_t* output = sample + y * width * 3u;
-
-                for (size_t x = 0; x < width; x++)
-                {
-                    output[x * 3u + 0u] = input[x * 4u + 2u];
-                    output[x * 3u + 1u] = input[x * 4u + 1u];
-                    output[x * 3u + 2u] = input[x * 4u + 0u];
-                }
-            }
-            ok = cocoa_camera_copy_frame(camera, sample, sample_len);
-            free(sample);
-        }
+        free(bgra);
+        return 0;
     }
-    CVPixelBufferUnlockBaseAddress(pixel_buffer, kCVPixelBufferLock_ReadOnly);
+    sample = (uint8_t*)malloc(sample_len);
+    if (sample)
+    {
+        for (size_t pixel = 0; pixel < pixels; pixel++)
+        {
+            sample[pixel * 3u + 0u] = bgra[pixel * 4u + 2u];
+            sample[pixel * 3u + 1u] = bgra[pixel * 4u + 1u];
+            sample[pixel * 3u + 2u] = bgra[pixel * 4u + 0u];
+        }
+        ok = cocoa_camera_copy_frame(camera, sample, sample_len);
+    }
+    free(sample);
+    free(bgra);
     return ok;
 }
 
 static int cocoa_camera_copy_jpeg_sample(cocoa_camera_source* camera,
                                          CVPixelBufferRef pixel_buffer)
 {
+    uint8_t* bgra = NULL;
+    size_t bgra_len = 0;
     CGColorSpaceRef color_space = NULL;
     CGContextRef context = NULL;
     CGImageRef image = NULL;
@@ -630,32 +731,25 @@ static int cocoa_camera_copy_jpeg_sample(cocoa_camera_source* camera,
     CFMutableDataRef encoded = NULL;
     const uint8_t* data = NULL;
     size_t length = 0;
-    size_t width = 0;
-    size_t height = 0;
-    size_t stride = 0;
-    void* base = NULL;
     int ok = 0;
 
-    if (!camera || !pixel_buffer ||
-        CVPixelBufferGetPixelFormatType(pixel_buffer) != kCVPixelFormatType_32BGRA)
+    if (!camera || !pixel_buffer)
         return 0;
-    width = CVPixelBufferGetWidth(pixel_buffer);
-    height = CVPixelBufferGetHeight(pixel_buffer);
-    stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
-    if (width == 0 || height == 0)
+    bgra = cocoa_camera_scaled_bgra(camera, pixel_buffer, &bgra_len);
+    if (!bgra || bgra_len == 0)
+    {
+        free(bgra);
         return 0;
-    if (CVPixelBufferLockBaseAddress(pixel_buffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess)
-        return 0;
-    base = CVPixelBufferGetBaseAddress(pixel_buffer);
+    }
     color_space = CGColorSpaceCreateDeviceRGB();
-    if (base && color_space)
+    if (color_space)
     {
         context = CGBitmapContextCreate(
-            base,
-            width,
-            height,
+            bgra,
+            camera->width,
+            camera->height,
             8u,
-            stride,
+            (size_t)camera->width * 4u,
             color_space,
             (CGBitmapInfo)((uint32_t)kCGBitmapByteOrder32Little | (uint32_t)kCGImageAlphaNoneSkipFirst));
         if (context)
@@ -695,7 +789,7 @@ static int cocoa_camera_copy_jpeg_sample(cocoa_camera_source* camera,
         CGContextRelease(context);
     if (color_space)
         CGColorSpaceRelease(color_space);
-    CVPixelBufferUnlockBaseAddress(pixel_buffer, kCVPixelBufferLock_ReadOnly);
+    free(bgra);
     return ok;
 }
 
@@ -722,6 +816,58 @@ static int cocoa_camera_store_sample(cocoa_camera_source* camera,
             return 0;
     }
 }
+
+#ifdef LIBRDP_COCOA_MEDIA_TESTING
+/*
+ * Exercise the live conversion boundary with a synthetic CoreVideo buffer so
+ * CI can verify native-size normalization without camera hardware or TCC.
+ */
+int cocoa_camera_test_convert_pixel_buffer(
+    const librdp_video_capture_media* media,
+    void* pixel_buffer,
+    uint8_t** data,
+    size_t* data_len)
+{
+    cocoa_camera_source* camera = NULL;
+    size_t max_sample_bytes = 0;
+    int converted = 0;
+
+    if (!media || !pixel_buffer || !data || !data_len ||
+        !cocoa_camera_live_media_supported(media, &max_sample_bytes))
+        return 0;
+    *data = NULL;
+    *data_len = 0;
+    camera = cocoa_camera_source_new();
+    if (!camera)
+        return 0;
+    camera->width = media->width;
+    camera->height = media->height;
+    camera->format = media->format;
+    camera->max_sample_bytes = max_sample_bytes;
+    if (media->format == LIBRDP_VIDEO_CAPTURE_MEDIA_MJPG)
+        converted = cocoa_camera_copy_jpeg_sample(camera,
+                                                  (CVPixelBufferRef)pixel_buffer);
+    else if (media->format == LIBRDP_VIDEO_CAPTURE_MEDIA_RGB32)
+        converted = cocoa_camera_copy_bgra_sample(camera,
+                                                  (CVPixelBufferRef)pixel_buffer);
+    else if (media->format == LIBRDP_VIDEO_CAPTURE_MEDIA_RGB24)
+        converted = cocoa_camera_copy_rgb24_sample(camera,
+                                                   (CVPixelBufferRef)pixel_buffer);
+    if (converted)
+    {
+        *data = (uint8_t*)malloc(camera->frame_len);
+        if (*data)
+        {
+            memcpy(*data, camera->frame, camera->frame_len);
+            *data_len = camera->frame_len;
+        }
+        else
+            converted = 0;
+    }
+    cocoa_camera_source_free(camera);
+    return converted;
+}
+#endif
 
 @implementation CocoaCameraFrameSink
 - (id)initWithCamera:(cocoa_camera_source*)camera

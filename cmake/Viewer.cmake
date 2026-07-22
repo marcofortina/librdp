@@ -437,6 +437,9 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
         target_compile_options(test_cocoa_media PRIVATE
             $<$<COMPILE_LANGUAGE:OBJC>:-fblocks>
         )
+        target_compile_definitions(test_cocoa_media PRIVATE
+            LIBRDP_COCOA_MEDIA_TESTING=1
+        )
         librdp_apply_system_definitions(test_cocoa_media)
         librdp_apply_warning_options(test_cocoa_media)
         librdp_apply_sanitizer_compile_options(test_cocoa_media)
