@@ -170,6 +170,26 @@ static int interop_open_log(const char* path)
     return open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 }
 
+/* Restrict generated TLS material without following a replaced pathname. */
+static int interop_restrict_regular_file(const char* path)
+{
+    struct stat metadata;
+    int descriptor = -1;
+    int valid = 0;
+
+    if (!path)
+        return 0;
+    descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0)
+        return 0;
+    valid = fstat(descriptor, &metadata) == 0 &&
+            S_ISREG(metadata.st_mode) && metadata.st_nlink == 1 &&
+            fchmod(descriptor, 0600) == 0;
+    if (close(descriptor) != 0)
+        valid = 0;
+    return valid;
+}
+
 static pid_t interop_start_xvfb(const char* display, const char* log_path)
 {
     pid_t child = fork();
@@ -624,8 +644,8 @@ static int interop_generate_tls_material(const char* certificate_path,
     if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
         WEXITSTATUS(status) != 0)
         return 0;
-    return chmod(private_key_path, 0600) == 0 &&
-           chmod(certificate_path, 0600) == 0;
+    return interop_restrict_regular_file(private_key_path) &&
+           interop_restrict_regular_file(certificate_path);
 }
 
 static pid_t interop_start_server(const char* display,
