@@ -55,6 +55,7 @@ static const server_host_trace_name_entry server_host_trace_names[] = {
     {SERVER_HOST_TRACE_PROVIDER_DISPATCH, "server.host.provider.dispatch"},
     {SERVER_HOST_TRACE_REFRESH_REQUEST, "server.host.refresh.request"},
     {SERVER_HOST_TRACE_OUTPUT_SUPPRESSION, "server.host.output.suppression"},
+    {SERVER_HOST_TRACE_SURFACE_RESIZE, "server.host.surface.resize"},
 };
 
 uint64_t server_host_now_ns(void)

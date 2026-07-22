@@ -102,7 +102,8 @@ typedef enum server_host_trace_type
     SERVER_HOST_TRACE_PROVIDER_DISPATCH = 27,
     SERVER_HOST_TRACE_REFRESH_REQUEST = 28,
     SERVER_HOST_TRACE_OUTPUT_SUPPRESSION = 29,
-    SERVER_HOST_TRACE_PEER_ERROR = 30
+    SERVER_HOST_TRACE_PEER_ERROR = 30,
+    SERVER_HOST_TRACE_SURFACE_RESIZE = 31
 } server_host_trace_type;
 
 typedef struct server_host_trace_event
@@ -142,6 +143,7 @@ typedef struct server_host_metrics
     uint64_t dirty_regions;
     uint64_t frames_presented;
     uint64_t frames_deferred;
+    uint64_t surface_resizes;
     uint64_t queue_pressure;
     uint64_t input_events;
     uint64_t input_rejections;

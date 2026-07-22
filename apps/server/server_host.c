@@ -224,6 +224,8 @@ server_host* server_host_new(const server_host_config* config)
     host->extension_user_data = config->extension_user_data;
     host->state = SERVER_HOST_NEW;
     host->next_peer_id = 1u;
+    host->capture_width = listener_config.width;
+    host->capture_height = listener_config.height;
     atomic_init(&host->cancellation_requested, 0);
     server_host_metrics_init(&host->metrics);
     for (index = 0; index < SERVER_PLATFORM_PROVIDER_COUNT; index++)
@@ -424,6 +426,103 @@ static librdp_status server_host_sync_peer_surface(
     return status;
 }
 
+static int server_host_capture_size_valid(uint32_t width,
+                                          uint32_t height)
+{
+    return width >= LIBRDP_DESKTOP_MIN_DIMENSION &&
+           height >= LIBRDP_DESKTOP_MIN_DIMENSION &&
+           width <= LIBRDP_DESKTOP_MAX_DIMENSION &&
+           height <= LIBRDP_DESKTOP_MAX_DIMENSION;
+}
+
+/*
+ * Resize one peer to the native capture topology. The public server operation
+ * owns protocol reactivation; the host updates its dirty scheduler only after
+ * the peer surface transaction succeeds.
+ */
+static librdp_status server_host_resize_peer_surface(
+    server_host_peer_slot* slot,
+    uint32_t width,
+    uint32_t height,
+    uint64_t timestamp_ns)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!slot || !slot->host || !slot->protocol || !slot->dirty ||
+        !server_host_capture_size_valid(width, height))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (slot->surface_width == width && slot->surface_height == height &&
+        librdp_server_peer_desktop_width(slot->protocol) == width &&
+        librdp_server_peer_desktop_height(slot->protocol) == height)
+        return LIBRDP_STATUS_OK;
+    status = librdp_server_peer_surface_resize(slot->protocol,
+                                               width,
+                                               height);
+    if (status == LIBRDP_STATUS_OK)
+        status = server_host_sync_peer_surface(slot,
+                                               timestamp_ns,
+                                               1);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        server_host_metric_add(&slot->host->metrics.surface_resizes, 1u);
+        server_host_trace_emit(slot->host,
+                               SERVER_HOST_TRACE_SURFACE_RESIZE,
+                               slot,
+                               LIBRDP_STATUS_OK,
+                               ((uint64_t)width << 32u) | (uint64_t)height,
+                               1u);
+    }
+    return status;
+}
+
+/*
+ * Apply resize requests only after protocol dispatch has unwound. Activation
+ * callbacks may discover a newer capture topology, but initiating
+ * reactivation from inside that callback would change peer state while the
+ * core is still completing activation providers.
+ */
+librdp_status server_host_dispatch_pending_resizes(server_host* host,
+                                                   unsigned int* work)
+{
+    size_t index = 0u;
+
+    if (!host || !work)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (index = 0u;
+         index < host->peer_capacity &&
+         *work < host->max_work_per_iteration;
+         index++)
+    {
+        server_host_peer_slot* slot = &host->peers[index];
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (!slot->occupied || !slot->protocol || !slot->resize_pending)
+            continue;
+        slot->resize_pending = 0u;
+        if (!server_host_capture_size_valid(host->capture_width,
+                                            host->capture_height))
+            continue;
+        status = server_host_resize_peer_surface(slot,
+                                                 host->capture_width,
+                                                 host->capture_height,
+                                                 server_host_now_ns());
+        (*work)++;
+        if (status != LIBRDP_STATUS_OK)
+        {
+            slot->state = SERVER_HOST_PEER_FAILED;
+            (void)librdp_server_peer_close(slot->protocol);
+            server_host_trace_emit(host,
+                                   SERVER_HOST_TRACE_PEER_ERROR,
+                                   slot,
+                                   status,
+                                   ((uint64_t)host->capture_width << 32u) |
+                                       (uint64_t)host->capture_height,
+                                   1u);
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 /*
  * Validate one borrowed full-frame mapping and copy only its bounded dirty
  * rectangles into each peer-owned surface. Malformed provider geometry is
@@ -436,6 +535,7 @@ static void server_host_capture_frame(const server_platform_frame* frame,
     size_t frame_bytes = 0;
     size_t row_bytes = 0;
     size_t index = 0;
+    int capture_size_valid = 0;
 
     if (!host || host->state != SERVER_HOST_LISTENING || !frame)
         return;
@@ -482,6 +582,13 @@ static void server_host_capture_frame(const server_platform_frame* frame,
                                1u);
         return;
     }
+    capture_size_valid = server_host_capture_size_valid(frame->width,
+                                                        frame->height);
+    if (capture_size_valid)
+    {
+        host->capture_width = frame->width;
+        host->capture_height = frame->height;
+    }
     server_host_metric_add(&host->metrics.capture_frames, 1u);
     server_host_metric_add(&host->metrics.dirty_regions,
                            frame->dirty_count ? (uint64_t)frame->dirty_count
@@ -499,20 +606,54 @@ static void server_host_capture_frame(const server_platform_frame* frame,
         server_host_peer_slot* slot = &host->peers[index];
         size_t dirty_index = 0;
         server_platform_rect full;
+        int resized = 0;
 
         if (!slot->occupied || !slot->protocol ||
             slot->state != SERVER_HOST_PEER_ACTIVE)
             continue;
+        if (capture_size_valid &&
+            (slot->surface_width != frame->width ||
+             slot->surface_height != frame->height ||
+             librdp_server_peer_desktop_width(slot->protocol) !=
+                 frame->width ||
+             librdp_server_peer_desktop_height(slot->protocol) !=
+                 frame->height))
+        {
+            librdp_status resize_status = server_host_resize_peer_surface(
+                slot,
+                frame->width,
+                frame->height,
+                frame->timestamp_ns);
+
+            if (resize_status != LIBRDP_STATUS_OK)
+            {
+                slot->state = SERVER_HOST_PEER_FAILED;
+                (void)librdp_server_peer_close(slot->protocol);
+                server_host_trace_emit(host,
+                                       SERVER_HOST_TRACE_PEER_ERROR,
+                                       slot,
+                                       resize_status,
+                                       frame->sequence,
+                                       1u);
+                continue;
+            }
+            resized = 1;
+        }
         full.x = 0u;
         full.y = 0u;
         full.width = frame->width;
         full.height = frame->height;
         for (dirty_index = 0;
-             dirty_index < (frame->dirty_count ? frame->dirty_count : 1u);
+             dirty_index <
+                 (resized || frame->dirty_count == 0u
+                      ? 1u
+                      : frame->dirty_count);
              dirty_index++)
         {
             const server_platform_rect* rect =
-                frame->dirty_count ? &frame->dirty_rects[dirty_index] : &full;
+                resized || frame->dirty_count == 0u
+                    ? &full
+                    : &frame->dirty_rects[dirty_index];
             server_platform_rect clipped;
             size_t offset = 0;
 
@@ -594,6 +735,13 @@ static void server_host_capture_lost(librdp_status status, void* user_data)
                            status,
                            0u,
                            1u);
+    if (status == LIBRDP_STATUS_CLOSED ||
+        status == LIBRDP_STATUS_CANCELLED)
+    {
+        host->capture_pending = 0u;
+        (void)server_host_cancel(host);
+        return;
+    }
     host->state = SERVER_HOST_FAILED;
 }
 
@@ -1951,10 +2099,26 @@ static void server_host_peer_event(librdp_server_peer* peer,
     {
         if (event->new_state == LIBRDP_SERVER_PEER_ACTIVE)
         {
-            librdp_status status = server_host_sync_peer_surface(
-                slot,
-                server_host_now_ns(),
-                0);
+            librdp_status status = LIBRDP_STATUS_OK;
+
+            if (server_host_capture_size_valid(
+                    slot->host->capture_width,
+                    slot->host->capture_height) &&
+                (librdp_server_peer_desktop_width(peer) !=
+                     slot->host->capture_width ||
+                 librdp_server_peer_desktop_height(peer) !=
+                     slot->host->capture_height))
+            {
+                slot->resize_pending = 1u;
+                return;
+            }
+            else
+            {
+                status = server_host_sync_peer_surface(
+                    slot,
+                    server_host_now_ns(),
+                    0);
+            }
 
             if (status != LIBRDP_STATUS_OK)
             {
@@ -1983,7 +2147,32 @@ static void server_host_peer_event(librdp_server_peer* peer,
                 server_host_release_input_owner(slot->host);
         }
         else
+        {
+            librdp_status status = LIBRDP_STATUS_OK;
+
+            if (event->new_state == LIBRDP_SERVER_PEER_MCS_CONNECTED &&
+                server_host_capture_size_valid(
+                    slot->host->capture_width,
+                    slot->host->capture_height) &&
+                (librdp_server_peer_desktop_width(peer) !=
+                     slot->host->capture_width ||
+                 librdp_server_peer_desktop_height(peer) !=
+                     slot->host->capture_height))
+            {
+                status = server_host_resize_peer_surface(
+                    slot,
+                    slot->host->capture_width,
+                    slot->host->capture_height,
+                    server_host_now_ns());
+            }
+            if (status != LIBRDP_STATUS_OK)
+            {
+                slot->state = SERVER_HOST_PEER_FAILED;
+                (void)librdp_server_peer_close(peer);
+                return;
+            }
             slot->state = SERVER_HOST_PEER_NEGOTIATING;
+        }
         server_host_trace_emit(slot->host,
                                SERVER_HOST_TRACE_PEER_STATE,
                                slot,
@@ -2051,6 +2240,17 @@ static librdp_status server_host_prepare_peer_slot(
     memset(slot, 0, sizeof(*slot));
     slot->host = host;
     slot->protocol = peer;
+    if (server_host_capture_size_valid(host->capture_width,
+                                       host->capture_height) &&
+        (librdp_server_peer_desktop_width(peer) != host->capture_width ||
+         librdp_server_peer_desktop_height(peer) != host->capture_height))
+    {
+        status = librdp_server_peer_surface_resize(peer,
+                                                   host->capture_width,
+                                                   host->capture_height);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
     slot->dirty = server_dirty_scheduler_new(&host->dirty_config);
     if (!slot->dirty)
         return LIBRDP_STATUS_NO_MEMORY;

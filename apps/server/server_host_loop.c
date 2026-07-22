@@ -701,6 +701,12 @@ librdp_status server_host_run_once(server_host* host, int timeout_ms)
         (void)server_host_stop(host);
         return LIBRDP_STATUS_CANCELLED;
     }
+    status = server_host_dispatch_pending_resizes(host, &work);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        host->state = SERVER_HOST_FAILED;
+        return status;
+    }
     status = server_host_dispatch_capture_request(host, &work);
     if (status != LIBRDP_STATUS_OK)
     {

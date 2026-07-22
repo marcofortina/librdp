@@ -34,6 +34,7 @@ typedef struct server_host_peer_slot
     server_host_peer_state state;
     int occupied;
     int input_owner;
+    uint8_t resize_pending;
 } server_host_peer_slot;
 
 struct server_host
@@ -62,6 +63,8 @@ struct server_host
     uint64_t trace_sequence;
     server_host_metrics metrics;
     uint16_t next_pointer_cache_index;
+    uint32_t capture_width;
+    uint32_t capture_height;
     uint8_t pointer_visible;
     uint8_t drive_configured;
     uint8_t capture_pending;
@@ -81,6 +84,8 @@ void server_host_release_peer_slot(server_host_peer_slot* slot);
 librdp_status server_host_dispatch_peer_input(
     server_host_peer_slot* slot,
     const librdp_server_input_event* event);
+librdp_status server_host_dispatch_pending_resizes(server_host* host,
+                                                   unsigned int* work);
 uint64_t server_host_now_ns(void);
 void server_host_metric_add(uint64_t* counter, uint64_t amount);
 void server_host_trace_emit(server_host* host,

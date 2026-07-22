@@ -19,6 +19,7 @@
 #include <librdp/librdp.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -1986,12 +1987,132 @@ static int test_host_lifecycle(void)
     CHECK(host != NULL);
     CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
     CHECK(mock.capture_sink.lost != NULL);
+    mock.capture_sink.lost(LIBRDP_STATUS_CLOSED,
+                           mock.capture_sink.user_data);
+    CHECK(server_host_get_state(host) == SERVER_HOST_LISTENING);
+    CHECK(server_host_run_once(host, 0) == LIBRDP_STATUS_CANCELLED);
+    CHECK(server_host_get_state(host) == SERVER_HOST_STOPPED);
+    CHECK(mock.stops == 5u);
+    server_host_free(host);
+
+    server_host_config_init(&config);
+    configure_mock_platform(&config, &mock);
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    CHECK(mock.capture_sink.lost != NULL);
     mock.capture_sink.lost(LIBRDP_STATUS_IO_ERROR,
                            mock.capture_sink.user_data);
     CHECK(server_host_get_state(host) == SERVER_HOST_FAILED);
     CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
     CHECK(mock.stops == 5u);
     server_host_free(host);
+    return 0;
+}
+
+/*
+ * Resize active and newly accepted peers when the native capture topology
+ * changes. The first resized frame must become a full-surface update, a peer
+ * geometry changed independently during negotiation must be reconciled, and
+ * the current capture geometry must survive peer-slot reuse.
+ */
+static int test_host_capture_resize(void)
+{
+    server_host_config config;
+    server_host_metrics metrics;
+    server_host_peer_info peer;
+    server_host_peer_slot* slot = NULL;
+    server_platform_frame frame;
+    mock_platform_context mock;
+    server_host* host = NULL;
+    uint8_t* pixels = NULL;
+    size_t pixels_len = 240u * 220u * 4u;
+    int client = -1;
+
+    server_host_config_init(&config);
+    config.max_peers = 1u;
+    config.server.width = LIBRDP_DESKTOP_MIN_DIMENSION;
+    config.server.height = LIBRDP_DESKTOP_MIN_DIMENSION;
+    configure_mock_platform(&config, &mock);
+    host = server_host_new(&config);
+    pixels = (uint8_t*)malloc(pixels_len);
+    CHECK(host != NULL && pixels != NULL);
+    memset(pixels, 0x3cu, pixels_len);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    client = connect_loopback(server_host_local_port(host));
+    CHECK(client >= 0);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
+    server_host_peer_info_init(&peer);
+    CHECK(server_host_peer_at(host, 0u, &peer) == LIBRDP_STATUS_OK);
+    slot = server_host_find_peer_slot(host, peer.id);
+    CHECK(slot != NULL);
+    slot->state = SERVER_HOST_PEER_ACTIVE;
+
+    memset(&frame, 0, sizeof(frame));
+    frame.width = 240u;
+    frame.height = 220u;
+    frame.stride = 240u * 4u;
+    frame.pixels = pixels;
+    frame.pixels_len = pixels_len;
+    frame.sequence = 1u;
+    frame.timestamp_ns = server_host_now_ns();
+    CHECK(mock.capture_sink.frame != NULL);
+    mock.capture_sink.frame(&frame, mock.capture_sink.user_data);
+    CHECK(slot->surface_width == 240u && slot->surface_height == 220u);
+    CHECK(librdp_server_peer_desktop_width(slot->protocol) == 240u);
+    CHECK(librdp_server_peer_desktop_height(slot->protocol) == 220u);
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.capture_frames == 1u);
+    CHECK(metrics.surface_resizes == 1u);
+
+    CHECK(librdp_server_peer_surface_resize(
+              slot->protocol,
+              LIBRDP_DESKTOP_MIN_DIMENSION,
+              LIBRDP_DESKTOP_MIN_DIMENSION) == LIBRDP_STATUS_OK);
+    CHECK(slot->surface_width == LIBRDP_DESKTOP_MIN_DIMENSION);
+    CHECK(slot->surface_height == LIBRDP_DESKTOP_MIN_DIMENSION);
+    CHECK(librdp_server_peer_desktop_width(slot->protocol) ==
+          LIBRDP_DESKTOP_MIN_DIMENSION);
+    slot->surface_width = 240u;
+    slot->surface_height = 220u;
+    frame.sequence = 2u;
+    frame.timestamp_ns = server_host_now_ns();
+    mock.capture_sink.frame(&frame, mock.capture_sink.user_data);
+    CHECK(librdp_server_peer_desktop_width(slot->protocol) == 240u);
+    CHECK(librdp_server_peer_desktop_height(slot->protocol) == 220u);
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.capture_frames == 2u);
+    CHECK(metrics.surface_resizes == 2u);
+
+    host->capture_width = 260u;
+    host->capture_height = 230u;
+    slot->resize_pending = 1u;
+    {
+        unsigned int work = 0u;
+
+        CHECK(server_host_dispatch_pending_resizes(host, &work) ==
+              LIBRDP_STATUS_OK);
+        CHECK(work == 1u);
+    }
+    CHECK(slot->resize_pending == 0u);
+    CHECK(librdp_server_peer_desktop_width(slot->protocol) == 260u);
+    CHECK(librdp_server_peer_desktop_height(slot->protocol) == 230u);
+
+    CHECK(server_host_close_peer(host, peer.id) == LIBRDP_STATUS_OK);
+    close(client);
+    client = connect_loopback(server_host_local_port(host));
+    CHECK(client >= 0);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
+    server_host_peer_info_init(&peer);
+    CHECK(server_host_peer_at(host, 0u, &peer) == LIBRDP_STATUS_OK);
+    CHECK(peer.desktop_width == 260u && peer.desktop_height == 230u);
+
+    CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    server_host_free(host);
+    close(client);
+    free(pixels);
     return 0;
 }
 
@@ -2323,7 +2444,7 @@ static int test_host_trace_metrics(void)
         CHECK(strstr(event->name, (const char*)canary_data) == NULL);
     }
     for (index = SERVER_HOST_TRACE_LISTENER_START;
-         index <= SERVER_HOST_TRACE_PEER_ERROR;
+         index <= SERVER_HOST_TRACE_SURFACE_RESIZE;
          index++)
     {
         CHECK(strcmp(server_host_trace_name((server_host_trace_type)index),
@@ -2470,6 +2591,8 @@ int main(void)
     if (test_host_stalled_providers() != 0)
         return 1;
     if (test_host_lifecycle() != 0)
+        return 1;
+    if (test_host_capture_resize() != 0)
         return 1;
     if (test_host_poll_loop() != 0)
         return 1;
