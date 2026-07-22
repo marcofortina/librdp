@@ -24,6 +24,7 @@ int cocoa_server_input_test_scancode(uint16_t scancode,
 int32_t cocoa_server_input_test_wheel_steps(uint16_t flags);
 int cocoa_server_input_test_pointer_flags(uint32_t type,
                                           uint16_t flags);
+uint64_t cocoa_server_input_test_modifier_flag(uint16_t keycode);
 #endif
 
 #endif

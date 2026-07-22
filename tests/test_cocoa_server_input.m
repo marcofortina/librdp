@@ -64,6 +64,20 @@ int main(void)
     CHECK(cocoa_server_input_test_scancode(0x1eu,
                                             0x0001u,
                                             &keycode) == 0);
+    CHECK(cocoa_server_input_test_modifier_flag(
+              (uint16_t)kVK_Shift) ==
+          (uint64_t)kCGEventFlagMaskShift);
+    CHECK(cocoa_server_input_test_modifier_flag(
+              (uint16_t)kVK_RightOption) ==
+          (uint64_t)kCGEventFlagMaskAlternate);
+    CHECK(cocoa_server_input_test_modifier_flag(
+              (uint16_t)kVK_Control) ==
+          (uint64_t)kCGEventFlagMaskControl);
+    CHECK(cocoa_server_input_test_modifier_flag(
+              (uint16_t)kVK_Command) ==
+          (uint64_t)kCGEventFlagMaskCommand);
+    CHECK(cocoa_server_input_test_modifier_flag(
+              (uint16_t)kVK_ANSI_A) == 0u);
 
     CHECK(cocoa_server_input_test_wheel_steps(0x0278u) == 1);
     CHECK(cocoa_server_input_test_wheel_steps(0x0388u) == -1);

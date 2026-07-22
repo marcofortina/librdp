@@ -58,7 +58,22 @@ static int cocoa_server_scancode_keycode(uint16_t scancode,
     return 1;
 }
 
-static int cocoa_server_post_key(CGKeyCode keycode, int pressed)
+static CGEventFlags cocoa_server_modifier_flag(CGKeyCode keycode)
+{
+    if (keycode == kVK_Shift || keycode == kVK_RightShift)
+        return kCGEventFlagMaskShift;
+    if (keycode == kVK_Control || keycode == kVK_RightControl)
+        return kCGEventFlagMaskControl;
+    if (keycode == kVK_Option || keycode == kVK_RightOption)
+        return kCGEventFlagMaskAlternate;
+    if (keycode == kVK_Command || keycode == kVK_RightCommand)
+        return kCGEventFlagMaskCommand;
+    return 0u;
+}
+
+static int cocoa_server_post_key(CGKeyCode keycode,
+                                 int pressed,
+                                 CGEventFlags flags)
 {
     CGEventRef event =
         CGEventCreateKeyboardEvent(NULL,
@@ -67,6 +82,7 @@ static int cocoa_server_post_key(CGKeyCode keycode, int pressed)
 
     if (!event)
         return 0;
+    CGEventSetFlags(event, flags);
     CGEventPost(kCGHIDEventTap, event);
     CFRelease(event);
     return 1;
@@ -77,6 +93,8 @@ static librdp_status cocoa_server_inject_scancode(
     const librdp_server_input_event* event)
 {
     CGKeyCode keycode = 0u;
+    CGEventFlags previous_flags = 0u;
+    CGEventFlags modifier = 0u;
     int pressed = 0;
 
     if (!cocoa_server_scancode_keycode(
@@ -85,8 +103,19 @@ static librdp_status cocoa_server_inject_scancode(
         return LIBRDP_STATUS_UNSUPPORTED;
     pressed =
         (event->flags & COCOA_RDP_KBD_RELEASE) == 0u;
-    if (!cocoa_server_post_key(keycode, pressed))
+    previous_flags = context->modifier_flags;
+    modifier = cocoa_server_modifier_flag(keycode);
+    if (pressed)
+        context->modifier_flags |= modifier;
+    else
+        context->modifier_flags &= ~modifier;
+    if (!cocoa_server_post_key(keycode,
+                               pressed,
+                               context->modifier_flags))
+    {
+        context->modifier_flags = previous_flags;
         return LIBRDP_STATUS_IO_ERROR;
+    }
     context->pressed_keys[keycode] = pressed ? 1u : 0u;
     return LIBRDP_STATUS_OK;
 }
@@ -198,28 +227,16 @@ static int cocoa_server_post_layout_key(
     CGKeyCode keycode,
     UInt32 modifiers)
 {
-    int temporary_shift =
-        (modifiers & shiftKey) != 0u &&
-        !context->pressed_keys[kVK_Shift] &&
-        !context->pressed_keys[kVK_RightShift];
-    int temporary_option =
-        (modifiers & optionKey) != 0u &&
-        !context->pressed_keys[kVK_Option] &&
-        !context->pressed_keys[kVK_RightOption];
+    CGEventFlags flags = context->modifier_flags;
     int ok = 1;
 
-    if (temporary_option)
-        ok = cocoa_server_post_key(kVK_Option, 1);
-    if (ok && temporary_shift)
-        ok = cocoa_server_post_key(kVK_Shift, 1);
+    if ((modifiers & shiftKey) != 0u)
+        flags |= kCGEventFlagMaskShift;
+    if ((modifiers & optionKey) != 0u)
+        flags |= kCGEventFlagMaskAlternate;
+    ok = cocoa_server_post_key(keycode, 1, flags);
     if (ok)
-        ok = cocoa_server_post_key(keycode, 1);
-    if (ok)
-        ok = cocoa_server_post_key(keycode, 0);
-    if (temporary_shift)
-        ok = cocoa_server_post_key(kVK_Shift, 0) && ok;
-    if (temporary_option)
-        ok = cocoa_server_post_key(kVK_Option, 0) && ok;
+        ok = cocoa_server_post_key(keycode, 0, flags);
     return ok;
 }
 
@@ -334,13 +351,15 @@ static int cocoa_server_pointer_point(
 
 static int cocoa_server_post_mouse(CGEventType type,
                                    CGPoint point,
-                                   CGMouseButton button)
+                                   CGMouseButton button,
+                                   CGEventFlags flags)
 {
     CGEventRef event =
         CGEventCreateMouseEvent(NULL, type, point, button);
 
     if (!event)
         return 0;
+    CGEventSetFlags(event, flags);
     CGEventPost(kCGHIDEventTap, event);
     CFRelease(event);
     return 1;
@@ -400,6 +419,7 @@ static int cocoa_server_pointer_flags_valid(
 }
 
 static librdp_status cocoa_server_inject_wheel(
+    const cocoa_server_context* context,
     const librdp_server_input_event* event)
 {
     CGEventRef scroll = NULL;
@@ -413,6 +433,7 @@ static librdp_status cocoa_server_inject_wheel(
             NULL, kCGScrollEventUnitLine, 1u, steps);
     if (!scroll)
         return LIBRDP_STATUS_IO_ERROR;
+    CGEventSetFlags(scroll, context->modifier_flags);
     CGEventPost(kCGHIDEventTap, scroll);
     CFRelease(scroll);
     return LIBRDP_STATUS_OK;
@@ -445,12 +466,13 @@ static librdp_status cocoa_server_inject_pointer(
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if ((flags & (COCOA_RDP_POINTER_WHEEL |
                   COCOA_RDP_POINTER_HWHEEL)) != 0u)
-        return cocoa_server_inject_wheel(event);
+        return cocoa_server_inject_wheel(context, event);
     if ((flags & COCOA_RDP_POINTER_MOVE) != 0u &&
         !cocoa_server_post_mouse(
             cocoa_server_drag_type(context->pressed_buttons),
             point,
-            kCGMouseButtonLeft))
+            kCGMouseButtonLeft,
+            context->modifier_flags))
         return LIBRDP_STATUS_IO_ERROR;
     if ((flags & COCOA_RDP_POINTER_BUTTON1) != 0u)
     {
@@ -491,7 +513,10 @@ static librdp_status cocoa_server_inject_pointer(
     }
     if (type == kCGEventNull)
         return LIBRDP_STATUS_OK;
-    if (!cocoa_server_post_mouse(type, point, button))
+    if (!cocoa_server_post_mouse(type,
+                                 point,
+                                 button,
+                                 context->modifier_flags))
         return LIBRDP_STATUS_IO_ERROR;
     if (pressed)
         context->pressed_buttons |= button_mask;
@@ -524,26 +549,46 @@ static void cocoa_server_input_release_all(void* opaque)
     {
         if (context->pressed_keys[keycode])
         {
-            (void)cocoa_server_post_key(keycode, 0);
+            context->modifier_flags &=
+                ~cocoa_server_modifier_flag(keycode);
+            (void)cocoa_server_post_key(keycode,
+                                        0,
+                                        context->modifier_flags);
             context->pressed_keys[keycode] = 0u;
         }
     }
     if ((context->pressed_buttons & 0x0001u) != 0u)
         (void)cocoa_server_post_mouse(
-            kCGEventLeftMouseUp, point, kCGMouseButtonLeft);
+            kCGEventLeftMouseUp,
+            point,
+            kCGMouseButtonLeft,
+            context->modifier_flags);
     if ((context->pressed_buttons & 0x0002u) != 0u)
         (void)cocoa_server_post_mouse(
-            kCGEventRightMouseUp, point, kCGMouseButtonRight);
+            kCGEventRightMouseUp,
+            point,
+            kCGMouseButtonRight,
+            context->modifier_flags);
     if ((context->pressed_buttons & 0x0004u) != 0u)
         (void)cocoa_server_post_mouse(
-            kCGEventOtherMouseUp, point, kCGMouseButtonCenter);
+            kCGEventOtherMouseUp,
+            point,
+            kCGMouseButtonCenter,
+            context->modifier_flags);
     if ((context->pressed_buttons & 0x0008u) != 0u)
         (void)cocoa_server_post_mouse(
-            kCGEventOtherMouseUp, point, (CGMouseButton)3u);
+            kCGEventOtherMouseUp,
+            point,
+            (CGMouseButton)3u,
+            context->modifier_flags);
     if ((context->pressed_buttons & 0x0010u) != 0u)
         (void)cocoa_server_post_mouse(
-            kCGEventOtherMouseUp, point, (CGMouseButton)4u);
+            kCGEventOtherMouseUp,
+            point,
+            (CGMouseButton)4u,
+            context->modifier_flags);
     context->pressed_buttons = 0u;
+    context->modifier_flags = 0u;
     context->pending_high_surrogate = 0u;
 }
 
@@ -617,5 +662,11 @@ int cocoa_server_input_test_pointer_flags(uint32_t type,
 {
     return cocoa_server_pointer_flags_valid(
         (librdp_server_input_type)type, flags);
+}
+
+uint64_t cocoa_server_input_test_modifier_flag(uint16_t keycode)
+{
+    return (uint64_t)cocoa_server_modifier_flag(
+        (CGKeyCode)keycode);
 }
 #endif

@@ -80,6 +80,7 @@ struct cocoa_server_context
     CGRect source_rect;
     double source_scale;
     uint64_t next_sequence;
+    CGEventFlags modifier_flags;
     uint8_t pressed_keys[COCOA_SERVER_KEY_CAPACITY];
     uint8_t permission_revoked[SERVER_PLATFORM_PERMISSION_DRIVE + 1u];
     uint16_t pressed_buttons;
