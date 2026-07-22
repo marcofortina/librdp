@@ -16,13 +16,14 @@
 
 #include <X11/Xutil.h>
 
+#include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 
 #define TEST_RENDER_WIDTH 200u
@@ -153,18 +154,6 @@ static int test_dirty_region_accumulation(void)
 }
 
 #ifdef LIBRDP_TEST_XVFB_PATH
-static void test_sleep_ms(unsigned int milliseconds)
-{
-    struct timespec delay;
-
-    delay.tv_sec = (time_t)(milliseconds / 1000u);
-    delay.tv_nsec =
-        (long)(milliseconds % 1000u) * 1000000L;
-    while (nanosleep(&delay, &delay) != 0)
-    {
-    }
-}
-
 /*
  * Start a private X server with an explicit MIT-SHM policy. No unrelated host
  * windows can appear in the captured drawable.
@@ -173,74 +162,117 @@ static int test_start_xvfb(int disable_xshm,
                            char display_name[32],
                            pid_t* child)
 {
-    unsigned int attempt = 0u;
+    char descriptor_text[24];
+    char display_number[24];
+    char* end = NULL;
+    struct pollfd descriptor;
+    unsigned long number = 0ul;
+    size_t used = 0u;
+    int display_pipe[2] = {-1, -1};
+    pid_t pid = -1;
+    pid_t waited = -1;
+    int parse_error = 0;
+    int status = 0;
 
-    if (!display_name || !child)
+    if (!display_name || !child || pipe(display_pipe) != 0)
         return 0;
-    for (attempt = 0u; attempt < 20u; attempt++)
+    pid = fork();
+    if (pid < 0)
     {
-        unsigned int number =
-            260u +
-            ((unsigned int)getpid() + attempt +
-             (disable_xshm ? 31u : 0u)) %
-                80u;
-        pid_t pid = 0;
-        unsigned int wait_index = 0u;
-
-        if (snprintf(display_name, 32u, ":%u", number) <= 0)
-            return 0;
-        pid = fork();
-        if (pid < 0)
-            return 0;
-        if (pid == 0)
-        {
-            if (disable_xshm)
-            {
-                execl(LIBRDP_TEST_XVFB_PATH,
-                      LIBRDP_TEST_XVFB_PATH,
-                      display_name,
-                      "-screen",
-                      "0",
-                      "240x240x24",
-                      "-nolisten",
-                      "tcp",
-                      "-extension",
-                      "MIT-SHM",
-                      (char*)NULL);
-            }
-            else
-            {
-                execl(LIBRDP_TEST_XVFB_PATH,
-                      LIBRDP_TEST_XVFB_PATH,
-                      display_name,
-                      "-screen",
-                      "0",
-                      "240x240x24",
-                      "-nolisten",
-                      "tcp",
-                      (char*)NULL);
-            }
-            _exit(127);
-        }
-        for (wait_index = 0u; wait_index < 100u; wait_index++)
-        {
-            Display* probe = XOpenDisplay(display_name);
-            int status = 0;
-
-            if (probe)
-            {
-                XCloseDisplay(probe);
-                *child = pid;
-                return 1;
-            }
-            if (waitpid(pid, &status, WNOHANG) == pid)
-                break;
-            test_sleep_ms(10u);
-        }
-        kill(pid, SIGTERM);
-        (void)waitpid(pid, NULL, 0);
+        close(display_pipe[0]);
+        close(display_pipe[1]);
+        return 0;
     }
-    return 0;
+    if (pid == 0)
+    {
+        close(display_pipe[0]);
+        if (snprintf(descriptor_text,
+                     sizeof(descriptor_text),
+                     "%d",
+                     display_pipe[1]) <= 0)
+            _exit(126);
+        if (disable_xshm)
+        {
+            execl(LIBRDP_TEST_XVFB_PATH,
+                  LIBRDP_TEST_XVFB_PATH,
+                  "-displayfd",
+                  descriptor_text,
+                  "-screen",
+                  "0",
+                  "240x240x24",
+                  "-nolisten",
+                  "tcp",
+                  "-extension",
+                  "MIT-SHM",
+                  (char*)NULL);
+        }
+        else
+        {
+            execl(LIBRDP_TEST_XVFB_PATH,
+                  LIBRDP_TEST_XVFB_PATH,
+                  "-displayfd",
+                  descriptor_text,
+                  "-screen",
+                  "0",
+                  "240x240x24",
+                  "-nolisten",
+                  "tcp",
+                  (char*)NULL);
+        }
+        _exit(127);
+    }
+    close(display_pipe[1]);
+    display_pipe[1] = -1;
+    descriptor.fd = display_pipe[0];
+    descriptor.events = POLLIN;
+    descriptor.revents = 0;
+    while (used + 1u < sizeof(display_number))
+    {
+        ssize_t count = 0;
+        int ready = poll(&descriptor, 1u, 1000);
+
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (ready <= 0 ||
+            (descriptor.revents & (POLLERR | POLLNVAL)) != 0)
+            break;
+        count = read(display_pipe[0],
+                     display_number + used,
+                     sizeof(display_number) - used - 1u);
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+            break;
+        used += (size_t)count;
+        if (memchr(display_number, '\n', used) != NULL)
+            break;
+    }
+    close(display_pipe[0]);
+    display_pipe[0] = -1;
+    display_number[used] = '\0';
+    errno = 0;
+    number = strtoul(display_number, &end, 10);
+    parse_error = errno;
+    do
+    {
+        waited = waitpid(pid, &status, WNOHANG);
+    } while (waited < 0 && errno == EINTR);
+    if (used == 0u || parse_error != 0 || end == display_number ||
+        (*end != '\0' && *end != '\n') ||
+        snprintf(display_name, 32u, ":%lu", number) <= 0 ||
+        waited != 0)
+    {
+        if (waited == 0)
+        {
+            kill(pid, SIGTERM);
+            while (waitpid(pid, NULL, 0) < 0 && errno == EINTR)
+            {
+            }
+        }
+        return 0;
+    }
+    *child = pid;
+    return 1;
 }
 
 static void test_stop_xvfb(pid_t child)
@@ -248,7 +280,9 @@ static void test_stop_xvfb(pid_t child)
     if (child <= 0)
         return;
     kill(child, SIGTERM);
-    (void)waitpid(child, NULL, 0);
+    while (waitpid(child, NULL, 0) < 0 && errno == EINTR)
+    {
+    }
 }
 
 static void test_fill_frame(uint8_t* pixels, int updated)

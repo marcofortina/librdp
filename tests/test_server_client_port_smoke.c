@@ -23,6 +23,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -100,6 +101,7 @@ typedef struct port_smoke_fixture
     librdp_server_extension_family extension_family;
     uint32_t device_type;
     int master_fd;
+    int slave_fd;
     char slave_path[256];
     uint8_t* write_data;
     size_t write_data_len;
@@ -185,10 +187,16 @@ static int port_smoke_prepare_pty(port_smoke_fixture* fixture)
     if (!fixture)
         return 0;
     fixture->master_fd =
-        posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
+        posix_openpt(O_RDWR | O_NOCTTY);
     if (fixture->master_fd < 0 ||
         grantpt(fixture->master_fd) != 0 ||
         unlockpt(fixture->master_fd) != 0)
+        return 0;
+    flags = fcntl(fixture->master_fd, F_GETFL, 0);
+    if (flags < 0 ||
+        fcntl(fixture->master_fd,
+              F_SETFL,
+              flags | O_NONBLOCK) != 0)
         return 0;
     name = ptsname(fixture->master_fd);
     if (!name ||
@@ -197,18 +205,32 @@ static int port_smoke_prepare_pty(port_smoke_fixture* fixture)
                  "%s",
                  name) <= 0)
         return 0;
-    if (tcgetattr(fixture->master_fd, &terminal) != 0)
+    fixture->slave_fd = open(fixture->slave_path,
+                             O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (fixture->slave_fd < 0 ||
+        tcgetattr(fixture->slave_fd, &terminal) != 0)
+    {
+        if (fixture->slave_fd >= 0)
+            close(fixture->slave_fd);
+        fixture->slave_fd = -1;
         return 0;
+    }
     terminal.c_iflag &=
-        (tcflag_t)~(tcflag_t)(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+        (tcflag_t)~(tcflag_t)(IGNBRK | BRKINT | PARMRK | ISTRIP |
+                             INLCR | IGNCR | ICRNL | IXON);
     terminal.c_oflag &= (tcflag_t)~(tcflag_t)OPOST;
-    terminal.c_cflag |= (tcflag_t)(CLOCAL | CREAD);
+    terminal.c_cflag &= (tcflag_t)~(tcflag_t)(CSIZE | PARENB);
+    terminal.c_cflag |= (tcflag_t)(CS8 | CLOCAL | CREAD);
     terminal.c_lflag &=
-        (tcflag_t)~(tcflag_t)(ECHO | ICANON | IEXTEN | ISIG);
+        (tcflag_t)~(tcflag_t)(ECHO | ECHONL | ICANON | IEXTEN | ISIG);
     terminal.c_cc[VMIN] = 0;
     terminal.c_cc[VTIME] = 0;
-    if (tcsetattr(fixture->master_fd, TCSANOW, &terminal) != 0)
+    if (tcsetattr(fixture->slave_fd, TCSANOW, &terminal) != 0)
+    {
+        close(fixture->slave_fd);
+        fixture->slave_fd = -1;
         return 0;
+    }
     flags = fcntl(fixture->master_fd, F_GETFD, 0);
     return flags >= 0 &&
            fcntl(fixture->master_fd,
@@ -243,6 +265,30 @@ static int port_smoke_prepare_parallel_file(
            fcntl(fixture->master_fd,
                  F_SETFD,
                  flags | FD_CLOEXEC) == 0;
+}
+
+/*
+ * Wait until the PTY line discipline has published master-side input to the
+ * slave queue. Polling a separate descriptor observes readiness without
+ * consuming bytes intended for the redirected port.
+ */
+static int port_smoke_wait_serial_input(
+    const port_smoke_fixture* fixture)
+{
+    struct pollfd descriptor;
+    int ready = 0;
+
+    if (!fixture || fixture->slave_fd < 0)
+        return 0;
+    descriptor.fd = fixture->slave_fd;
+    descriptor.events = POLLIN;
+    descriptor.revents = 0;
+    do
+    {
+        ready = poll(&descriptor, 1u, 1000);
+    } while (ready < 0 && errno == EINTR);
+    return ready > 0 &&
+           (descriptor.revents & POLLIN) != 0;
 }
 
 static int port_smoke_wait_for_port(const atomic_uint* source,
@@ -761,7 +807,8 @@ static void port_smoke_handle_completion(
         count = write(fixture->master_fd,
                       port_smoke_serial_input,
                       sizeof(port_smoke_serial_input));
-        if (count != (ssize_t)sizeof(port_smoke_serial_input))
+        if (count != (ssize_t)sizeof(port_smoke_serial_input) ||
+            !port_smoke_wait_serial_input(fixture))
         {
             port_smoke_fail(fixture,
                             LIBRDP_STATUS_IO_ERROR,
@@ -868,7 +915,9 @@ static void port_smoke_handle_completion(
                             length_response.io.io_status);
             return;
         }
-        if (fixture->master_fd < 0 ||
+        if ((fixture->slave_fd >= 0 &&
+             close(fixture->slave_fd) != 0) ||
+            fixture->master_fd < 0 ||
             close(fixture->master_fd) != 0)
         {
             port_smoke_fail(fixture,
@@ -876,6 +925,7 @@ static void port_smoke_handle_completion(
                             0u);
             return;
         }
+        fixture->slave_fd = -1;
         fixture->master_fd = -1;
         status = port_smoke_send_write(
             fixture,
@@ -1352,6 +1402,7 @@ static int port_smoke_run(
         serial ? RDP_DEVICE_REDIRECTION_TYPE_SERIAL
                : RDP_DEVICE_REDIRECTION_TYPE_PARALLEL;
     fixture.master_fd = -1;
+    fixture.slave_fd = -1;
     fixture.status = LIBRDP_STATUS_AGAIN;
     fixture.failure_status = LIBRDP_STATUS_OK;
     fixture.write_data_len =
@@ -1526,6 +1577,8 @@ cleanup:
     }
     if (fixture.master_fd >= 0)
         close(fixture.master_fd);
+    if (fixture.slave_fd >= 0)
+        close(fixture.slave_fd);
     if (!serial && fixture.slave_path[0] != '\0')
         (void)unlink(fixture.slave_path);
     free(fixture.write_data);
