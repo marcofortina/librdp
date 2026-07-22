@@ -25,6 +25,7 @@
 #include "transport/transport.h"
 #include "transport/udp_transport.h"
 
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
@@ -1083,10 +1084,7 @@ out:
     if (tls)
     {
         if (do_shutdown)
-        {
-            SSL_set_quiet_shutdown(tls, 1);
             (void)rdp_tls_io_shutdown(tls);
-        }
         SSL_free(tls);
     }
     if (context)
@@ -1240,6 +1238,11 @@ static int test_transport_timeout_boundaries(void)
     return 0;
 }
 
+/*
+ * Run one generated-certificate TLS policy case against a forked loopback
+ * peer. The parent owns transport teardown and the child must exit cleanly;
+ * stage diagnostics distinguish policy, key extraction and record-I/O faults.
+ */
 static int run_tls_client_case(EVP_PKEY* key,
                                X509* cert,
                                X509* trust_anchor,
@@ -1261,6 +1264,7 @@ static int run_tls_client_case(EVP_PKEY* key,
     rdp_transport_tls_config tls_config;
     char data[4];
     librdp_status status = LIBRDP_STATUS_OK;
+    const char* failure_stage = "setup";
 
     rdp_transport_init(&transport);
     memset(&tls_config, 0, sizeof(tls_config));
@@ -1274,6 +1278,7 @@ static int run_tls_client_case(EVP_PKEY* key,
 
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, tls_pair) != 0)
         goto out;
+    failure_stage = "fork";
     child = fork();
     if (child < 0)
         goto out;
@@ -1287,6 +1292,7 @@ static int run_tls_client_case(EVP_PKEY* key,
     rdp_transport_attach_fd(&transport, tls_pair[0], 1);
     tls_pair[0] = -1;
 
+    failure_stage = "handshake";
     status = rdp_transport_start_tls_with_config(&transport, &tls_config);
     if (status != expected_status)
     {
@@ -1300,19 +1306,32 @@ static int run_tls_client_case(EVP_PKEY* key,
     }
     if (status == LIBRDP_STATUS_OK)
     {
+        failure_stage = "public-key";
         if (public_key && rdp_transport_get_tls_public_key(&transport, public_key) != LIBRDP_STATUS_OK)
             goto out;
         if (exchange_data)
         {
-            if (rdp_transport_write_all(&transport, "ping", 4) != LIBRDP_STATUS_OK ||
-                rdp_transport_read_exact(&transport, data, sizeof(data)) != LIBRDP_STATUS_OK ||
-                memcmp(data, "pong", sizeof(data)) != 0)
+            failure_stage = "data-write";
+            status = rdp_transport_write_all(&transport,
+                                             "ping",
+                                             4u);
+            if (status != LIBRDP_STATUS_OK)
+                goto out;
+            failure_stage = "data-read";
+            status = rdp_transport_read_exact(&transport,
+                                              data,
+                                              sizeof(data));
+            if (status != LIBRDP_STATUS_OK)
+                goto out;
+            failure_stage = "data-compare";
+            if (memcmp(data, "pong", sizeof(data)) != 0)
                 goto out;
         }
     }
     rdp_transport_close(&transport);
     if (child > 0)
     {
+        failure_stage = "server-wait";
         if (waitpid(child, &child_status, 0) != child)
             goto out;
         child = -1;
@@ -1326,9 +1345,31 @@ static int run_tls_client_case(EVP_PKEY* key,
             goto out;
         }
     }
+    failure_stage = "complete";
     ok = 1;
 
 out:
+    if (!ok)
+    {
+        unsigned long openssl_error = ERR_peek_last_error();
+        int descriptor_nonblocking = -1;
+
+        if (transport.fd >= 0)
+            (void)rdp_socket_get_nonblocking(
+                transport.fd,
+                &descriptor_nonblocking);
+        fprintf(stderr,
+                "tls case failed stage=%s status=%s policy=%d expected=%s errno=%d nonblocking=%d openssl_reason=%s\n",
+                failure_stage,
+                librdp_status_string(status),
+                (int)policy_mode,
+                librdp_status_string(expected_status),
+                errno,
+                descriptor_nonblocking,
+                openssl_error != 0u
+                    ? ERR_reason_error_string(openssl_error)
+                    : "none");
+    }
     rdp_transport_close(&transport);
     if (tls_pair[0] >= 0)
         close(tls_pair[0]);

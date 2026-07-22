@@ -90,7 +90,8 @@ librdp_status rdp_tcp_connect(const char* host, uint16_t port, int timeout_ms, i
         if (fd < 0)
             continue;
 
-        if (rdp_socket_set_nonblocking(fd, 1) != 0)
+        if (rdp_socket_set_nosigpipe(fd) != 0 ||
+            rdp_socket_set_nonblocking(fd, 1) != 0)
         {
             rdp_socket_close(fd);
             continue;

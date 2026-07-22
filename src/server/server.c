@@ -379,7 +379,8 @@ static librdp_status rdp_server_bind_address(librdp_server* server, const struct
     if (fd < 0)
         return LIBRDP_STATUS_IO_ERROR;
     (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-    if (rdp_socket_set_nonblocking(fd, 1) != 0 ||
+    if (rdp_socket_set_nosigpipe(fd) != 0 ||
+        rdp_socket_set_nonblocking(fd, 1) != 0 ||
         bind(fd, address->ai_addr, address->ai_addrlen) != 0 ||
         listen(fd, (int)server->backlog) != 0 ||
         getsockname(fd, (struct sockaddr*)&local, &local_len) != 0)

@@ -194,7 +194,8 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     fd = accept(server->listen_fd, NULL, NULL);
     if (fd < 0)
         return errno == EAGAIN || errno == EWOULDBLOCK ? LIBRDP_STATUS_TIMEOUT : LIBRDP_STATUS_IO_ERROR;
-    if (rdp_socket_set_nonblocking(fd, 1) != 0)
+    if (rdp_socket_set_nosigpipe(fd) != 0 ||
+        rdp_socket_set_nonblocking(fd, 1) != 0)
     {
         rdp_socket_close(fd);
         return LIBRDP_STATUS_IO_ERROR;

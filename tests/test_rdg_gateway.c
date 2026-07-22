@@ -13,6 +13,9 @@
 
 #include "test_rdg_gateway.h"
 
+#include "platform/socket.h"
+#include "security/tls_io.h"
+
 #include "common/buffer.h"
 
 #include <openssl/err.h>
@@ -107,7 +110,7 @@ static int test_rdg_tls_read(SSL* tls,
     if (!tls || (!data && length > 0u) ||
         length > (size_t)INT_MAX)
         return 0;
-    result = SSL_read(tls, data, (int)length);
+    result = rdp_tls_io_read(tls, data, (int)length);
     if (result <= 0)
         return 0;
     if (read_len)
@@ -148,7 +151,7 @@ static int test_rdg_tls_write_all(SSL* tls,
     while (offset < length)
     {
         size_t remaining = length - offset;
-        int written = SSL_write(
+        int written = rdp_tls_io_write(
             tls,
             cursor + offset,
             remaining > (size_t)INT_MAX
@@ -521,6 +524,11 @@ static int test_rdg_connect_target(
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)
         return -1;
+    if (rdp_socket_set_nosigpipe(fd) != 0)
+    {
+        close(fd);
+        return -1;
+    }
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -809,14 +817,41 @@ static int test_rdg_relay(test_rdg_gateway* gateway,
     return 1;
 }
 
-static int test_rdg_accept(int listener_fd)
+static int test_rdg_accept(test_rdg_gateway* gateway)
 {
     for (;;)
     {
-        int fd = accept(listener_fd, NULL, NULL);
+        struct pollfd descriptor;
+        int ready = 0;
+        int fd = -1;
+
+        if (!gateway ||
+            atomic_load_explicit(&gateway->stop,
+                                 memory_order_acquire) != 0u)
+            return -1;
+        descriptor.fd = gateway->listener_fd;
+        descriptor.events = POLLIN;
+        descriptor.revents = 0;
+        ready = poll(&descriptor, 1, 100);
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (ready <= 0)
+        {
+            if (ready == 0)
+                continue;
+            return -1;
+        }
+        if ((descriptor.revents & POLLIN) == 0)
+            return -1;
+        fd = accept(gateway->listener_fd, NULL, NULL);
 
         if (fd < 0 && errno == EINTR)
             continue;
+        if (fd >= 0 && rdp_socket_set_nosigpipe(fd) != 0)
+        {
+            close(fd);
+            return -1;
+        }
         return fd;
     }
 }
@@ -832,7 +867,7 @@ static SSL* test_rdg_accept_tls(SSL_CTX* context,
     if (!tls)
         return NULL;
     if (SSL_set_fd(tls, fd) != 1 ||
-        SSL_accept(tls) != 1)
+        rdp_tls_io_accept(tls) != 1)
     {
         SSL_free(tls);
         return NULL;
@@ -886,7 +921,7 @@ static int test_rdg_accept_stream(test_rdg_gateway* gateway,
     if (!gateway || !context || !method || !fd_out ||
         !tls_out || !connection_id)
         return 0;
-    fd = test_rdg_accept(gateway->listener_fd);
+    fd = test_rdg_accept(gateway);
     if (fd < 0)
         return 0;
     test_rdg_set_fd(gateway, fd_out, fd);

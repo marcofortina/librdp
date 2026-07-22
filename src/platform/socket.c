@@ -55,6 +55,26 @@ int rdp_socket_set_nodelay(int fd)
     return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled));
 }
 
+/* Prevent a disconnected peer from terminating the process during send. */
+int rdp_socket_set_nosigpipe(int fd)
+{
+    if (fd < 0)
+        return -1;
+#ifdef SO_NOSIGPIPE
+    {
+        int enabled = 1;
+
+        return setsockopt(fd,
+                          SOL_SOCKET,
+                          SO_NOSIGPIPE,
+                          &enabled,
+                          (socklen_t)sizeof(enabled));
+    }
+#else
+    return 0;
+#endif
+}
+
 int rdp_socket_close(int fd)
 {
     if (fd < 0)

@@ -34,6 +34,7 @@
 #endif
 
 #include "common/trace.h"
+#include "common/curl_support.h"
 
 #define RDP_WORKSPACE_DEFAULT_TIMEOUT_MS 15000u
 #define RDP_WORKSPACE_MAX_TIMEOUT_MS 600000u
@@ -683,6 +684,12 @@ librdp_status librdp_workspace_fetch(librdp_workspace* workspace)
     {
         free(http_user);
         return LIBRDP_STATUS_NO_MEMORY;
+    }
+    if (!rdp_curl_apply_socket_policy(easy))
+    {
+        curl_easy_cleanup(easy);
+        free(http_user);
+        return LIBRDP_STATUS_IO_ERROR;
     }
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "client.workspace.fetch.start",

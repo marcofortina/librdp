@@ -68,6 +68,8 @@ void rdp_transport_attach_fd(rdp_transport* transport, int fd, int owns_fd)
     if (!transport)
         return;
     rdp_transport_close(transport);
+    if (fd >= 0)
+        (void)rdp_socket_set_nosigpipe(fd);
     transport->fd = fd;
     transport->owns_fd = owns_fd;
 }
@@ -77,6 +79,8 @@ void rdp_transport_attach_curl_easy(rdp_transport* transport, void* curl_easy, i
     if (!transport)
         return;
     rdp_transport_close(transport);
+    if (fd >= 0)
+        (void)rdp_socket_set_nosigpipe(fd);
     transport->fd = fd;
     transport->owns_fd = 0;
     transport->curl_easy = curl_easy;

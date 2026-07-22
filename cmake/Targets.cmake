@@ -74,10 +74,12 @@ set(LIBRDP_CHANNEL_SOURCES
 set(LIBRDP_COMMON_SOURCES
     src/common/buffer.c
     src/common/charset.c
+    src/common/curl_support.c
     src/common/fault_injection.c
     src/common/stream.c
     src/common/trace.c
     src/input/input.c
+    src/platform/sigpipe.c
     src/platform/socket.c
 )
 

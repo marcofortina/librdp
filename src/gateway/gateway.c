@@ -19,6 +19,7 @@
 #include "gateway/rdg_http.h"
 
 #include "common/trace.h"
+#include "common/curl_support.h"
 #include "transport/transport.h"
 
 #include <stdio.h>
@@ -191,6 +192,13 @@ librdp_status rdp_gateway_connect_transport(rdp_transport* transport,
         free(target_url);
         free(proxy_user);
         return LIBRDP_STATUS_NO_MEMORY;
+    }
+    if (!rdp_curl_apply_socket_policy(easy))
+    {
+        curl_easy_cleanup(easy);
+        free(target_url);
+        free(proxy_user);
+        return LIBRDP_STATUS_IO_ERROR;
     }
 
     rdp_trace_event(RDP_TRACE_TRANSPORT,

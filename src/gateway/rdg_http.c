@@ -22,6 +22,9 @@
 #include "common/buffer.h"
 #include "common/charset.h"
 #include "common/trace.h"
+#include "common/curl_support.h"
+#include "platform/sigpipe.h"
+#include "platform/socket.h"
 #include "transport/transport.h"
 
 #include <openssl/crypto.h>
@@ -40,6 +43,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -243,9 +247,12 @@ static int rdp_rdg_make_pipe(int fds[2])
 {
     fds[0] = -1;
     fds[1] = -1;
-    if (pipe(fds) != 0)
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
         return 0;
-    if (!rdp_rdg_set_nonblocking(fds[0]) || !rdp_rdg_set_nonblocking(fds[1]))
+    if (!rdp_rdg_set_nonblocking(fds[0]) ||
+        !rdp_rdg_set_nonblocking(fds[1]) ||
+        rdp_socket_set_nosigpipe(fds[0]) != 0 ||
+        rdp_socket_set_nosigpipe(fds[1]) != 0)
     {
         close(fds[0]);
         close(fds[1]);
@@ -264,12 +271,16 @@ static void rdp_rdg_signal_pipe(int fd)
 {
     const uint8_t byte = 1u;
     ssize_t rc = 0;
+    int flags = 0;
 
     if (fd < 0)
         return;
+#ifdef MSG_NOSIGNAL
+    flags = MSG_NOSIGNAL;
+#endif
     do
     {
-        rc = write(fd, &byte, sizeof(byte));
+        rc = send(fd, &byte, sizeof(byte), flags);
     } while (rc < 0 && errno == EINTR);
 }
 
@@ -285,7 +296,7 @@ static void rdp_rdg_drain_pipe(int fd)
         return;
     for (;;)
     {
-        ssize_t rc = read(fd, bytes, sizeof(bytes));
+        ssize_t rc = recv(fd, bytes, sizeof(bytes), 0);
 
         if (rc > 0)
             continue;
@@ -1263,18 +1274,27 @@ static void rdp_rdg_worker_update_pauses(rdp_rdg_http_context* context)
 static void* rdp_rdg_worker_main(void* user_data)
 {
     rdp_rdg_http_context* context = (rdp_rdg_http_context*)user_data;
+    rdp_sigpipe_guard sigpipe_guard;
+    int out_added = 0;
     int running = 0;
     CURLMcode multi_code = CURLM_OK;
 
+    if (!rdp_sigpipe_guard_begin(&sigpipe_guard))
+    {
+        rdp_rdg_worker_set_error(context,
+                                 LIBRDP_STATUS_IO_ERROR);
+        return NULL;
+    }
     multi_code =
         curl_multi_add_handle(context->multi, context->out_easy);
     if (multi_code != CURLM_OK)
     {
         rdp_rdg_worker_set_error(context,
                                  LIBRDP_STATUS_IO_ERROR);
-        return NULL;
     }
-    while (!context->closing)
+    else
+        out_added = 1;
+    while (multi_code == CURLM_OK && !context->closing)
     {
         int messages = 0;
         CURLMsg* message = NULL;
@@ -1340,7 +1360,10 @@ static void* rdp_rdg_worker_main(void* user_data)
     if (context->in_added)
         (void)curl_multi_remove_handle(context->multi,
                                        context->in_easy);
-    (void)curl_multi_remove_handle(context->multi, context->out_easy);
+    if (out_added)
+        (void)curl_multi_remove_handle(context->multi,
+                                       context->out_easy);
+    rdp_sigpipe_guard_end(&sigpipe_guard);
     return NULL;
 }
 
@@ -1383,6 +1406,8 @@ static librdp_status rdp_rdg_configure_easy(rdp_rdg_http_context* context,
     if (!context || !easy || !method)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     ca_bundle = getenv("CURL_CA_BUNDLE");
+    if (!rdp_curl_apply_socket_policy(easy))
+        return LIBRDP_STATUS_IO_ERROR;
     code = curl_easy_setopt(easy, CURLOPT_URL, context->url);
     if (code == CURLE_OK)
         code = curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method);

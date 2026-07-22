@@ -380,11 +380,33 @@ static int test_http_proxy_connect_target(
     return fd;
 }
 
-static int test_http_proxy_accept(int listener_fd)
+static int test_http_proxy_accept(test_http_proxy* proxy)
 {
     for (;;)
     {
-        int fd = accept(listener_fd, NULL, NULL);
+        struct pollfd descriptor;
+        int ready = 0;
+        int fd = -1;
+
+        if (!proxy ||
+            atomic_load_explicit(&proxy->stop,
+                                 memory_order_acquire) != 0u)
+            return -1;
+        descriptor.fd = proxy->listener_fd;
+        descriptor.events = POLLIN;
+        descriptor.revents = 0;
+        ready = poll(&descriptor, 1, 100);
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (ready <= 0)
+        {
+            if (ready == 0)
+                continue;
+            return -1;
+        }
+        if ((descriptor.revents & POLLIN) == 0)
+            return -1;
+        fd = accept(proxy->listener_fd, NULL, NULL);
 
         if (fd < 0 && errno == EINTR)
             continue;
@@ -670,7 +692,7 @@ static void* test_http_proxy_main(void* user_data)
     {
         int result = 0;
 
-        client_fd = test_http_proxy_accept(proxy->listener_fd);
+        client_fd = test_http_proxy_accept(proxy);
         if (client_fd < 0)
             return NULL;
         test_http_proxy_set_active_fd(proxy,

@@ -35,6 +35,7 @@
 #endif
 
 #include "common/trace.h"
+#include "common/curl_support.h"
 
 #define RDP_ADMIN_DEFAULT_TIMEOUT_MS 15000u
 #define RDP_ADMIN_MAX_TIMEOUT_MS 600000u
@@ -1078,6 +1079,8 @@ librdp_status librdp_admin_query_sessions(librdp_admin* admin)
         free(request_body);
         return LIBRDP_STATUS_NO_MEMORY;
     }
+    if (!rdp_curl_apply_socket_policy(easy))
+        status = LIBRDP_STATUS_IO_ERROR;
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "client.admin.query.start",
                     "transport=winrm endpoint_set=1 has_user=%d timeout_ms=%u insecure_tls=%d",
@@ -1213,6 +1216,8 @@ librdp_status librdp_admin_execute_action(librdp_admin* admin,
     easy = curl_easy_init();
     if (!easy)
         status = LIBRDP_STATUS_NO_MEMORY;
+    else if (!rdp_curl_apply_socket_policy(easy))
+        status = LIBRDP_STATUS_IO_ERROR;
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "client.admin.action.start",
                     "transport=winrm type=%u session_id=%u timeout_ms=%u insecure_tls=%d",
