@@ -29,6 +29,7 @@ jobs:
           prepare: |
             export PATH=/usr/bin:/usr/sbin:/usr/gnu/bin:${PATH}
             pkg install --accept \
+              developer/build/pkg-config \
               library/security/openssl-3/legacy-provider \
               x11/library/libxau \
               x11/library/libxcomposite \
@@ -41,6 +42,7 @@ jobs:
               x11/server/xvfb
             command -v cmake
             command -v gcc
+            command -v pkg-config
             command -v Xvfb
             test -f /usr/openssl/3/lib/64/ossl-modules/legacy.so
             test -f /usr/include/X11/Xlib.h

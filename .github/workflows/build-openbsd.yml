@@ -26,6 +26,7 @@ jobs:
         with:
           usesh: true
           prepare: |
+            export PKG_PATH="https://ftp.hostserver.de/pub/OpenBSD/$(uname -r)/packages/$(machine -a)/"
             pkg_add cmake ninja libiconv libxkbcommon
             pkgconf_package="$(pkg_info -Q pkgconf | LC_ALL=C sort | tail -n 1 || true)"
             if [ -z "${pkgconf_package}" ]; then
@@ -97,6 +98,7 @@ jobs:
         with:
           usesh: true
           prepare: |
+            export PKG_PATH="https://ftp.hostserver.de/pub/OpenBSD/$(uname -r)/packages/$(machine -a)/"
             pkg_add cmake ninja libiconv
             pkgconf_package="$(pkg_info -Q pkgconf | LC_ALL=C sort | tail -n 1 || true)"
             if [ -z "${pkgconf_package}" ]; then
@@ -170,6 +172,7 @@ jobs:
         with:
           usesh: true
           prepare: |
+            export PKG_PATH="https://ftp.hostserver.de/pub/OpenBSD/$(uname -r)/packages/$(machine -a)/"
             pkg_add cmake ninja libiconv
             pkgconf_package="$(pkg_info -Q pkgconf | LC_ALL=C sort | tail -n 1 || true)"
             if [ -z "${pkgconf_package}" ]; then
