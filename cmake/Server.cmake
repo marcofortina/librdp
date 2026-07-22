@@ -63,6 +63,7 @@ endif()
 
 if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
     add_executable(librdp-server
+        apps/common/cocoa_keymap.c
         apps/server/cocoa_main.m
         apps/server/cocoa_capture.m
         apps/server/cocoa_clipboard.m
@@ -76,6 +77,7 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
     librdp_set_application_backend(librdp-server cocoa)
     target_include_directories(librdp-server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(librdp-server PRIVATE
@@ -114,6 +116,7 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
     if(LIBRDP_BUILD_TESTS)
         add_executable(test_cocoa_server_input
             tests/test_cocoa_server_input.m
+            apps/common/cocoa_keymap.c
             apps/server/cocoa_input.m
             apps/server/cocoa_permission.m
         )
@@ -122,6 +125,7 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "cocoa")
         )
         target_include_directories(test_cocoa_server_input PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_cocoa_server_input PRIVATE
