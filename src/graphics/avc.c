@@ -24,6 +24,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__clang__) && \
+    (defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC))
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wimplicit-int-conversion"
+#pragma clang diagnostic ignored "-Wpedantic"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#endif
 #if defined(RDP_HAVE_FFMPEG_AVC)
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>
@@ -33,6 +40,10 @@
 #endif
 #if defined(RDP_HAVE_OPENH264_AVC)
 #include <wels/codec_api.h>
+#endif
+#if defined(__clang__) && \
+    (defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC))
+#pragma clang diagnostic pop
 #endif
 
 #if defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC)
