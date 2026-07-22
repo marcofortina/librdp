@@ -294,6 +294,9 @@ static int test_fake_supervisor(int descriptor)
     {
         const char* marker = getenv("LIBRDP_TEST_MANAGED_CLEANUP_MARKER");
         struct sigaction action;
+        sigset_t previous_mask;
+        sigset_t termination_signal;
+        sigset_t wait_mask;
         struct timespec delay = {1, 500000000L};
         FILE* stream = NULL;
 
@@ -301,6 +304,14 @@ static int test_fake_supervisor(int descriptor)
         action.sa_handler = test_supervisor_stop;
         sigemptyset(&action.sa_mask);
         CHECK(sigaction(SIGTERM, &action, NULL) == 0);
+        CHECK(sigemptyset(&termination_signal) == 0);
+        CHECK(sigaddset(&termination_signal, SIGTERM) == 0);
+        CHECK(pthread_sigmask(SIG_BLOCK,
+                              &termination_signal,
+                              &previous_mask) == 0);
+        CHECK(sigismember(&previous_mask, SIGTERM) == 0);
+        wait_mask = previous_mask;
+        CHECK(sigdelset(&wait_mask, SIGTERM) == 0);
         x11_managed_ipc_message_init(&response);
         response.type = X11_MANAGED_IPC_ERROR;
         response.request_id = initial.request_id;
@@ -309,7 +320,13 @@ static int test_fake_supervisor(int descriptor)
         CHECK(x11_managed_ipc_send(descriptor, &response, 5000) ==
               LIBRDP_STATUS_OK);
         while (!test_supervisor_stop_requested)
-            pause();
+        {
+            errno = 0;
+            CHECK(sigsuspend(&wait_mask) == -1 && errno == EINTR);
+        }
+        CHECK(pthread_sigmask(SIG_SETMASK,
+                              &previous_mask,
+                              NULL) == 0);
         while (nanosleep(&delay, &delay) != 0 && errno == EINTR)
         {
         }

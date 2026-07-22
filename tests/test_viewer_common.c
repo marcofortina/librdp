@@ -403,9 +403,25 @@ typedef struct test_runtime_server
     pthread_t thread;
     atomic_int accepted;
     atomic_int active;
+    atomic_int input_barrier;
     int release_fd;
     librdp_status status;
 } test_runtime_server;
+
+/* Mark the ordered input PDU used to prove that no client bytes remain unread. */
+static void test_runtime_server_input(librdp_server_peer* peer,
+                                      const librdp_server_input_event* event,
+                                      void* user_data)
+{
+    test_runtime_server* fixture = (test_runtime_server*)user_data;
+
+    (void)peer;
+    if (fixture && event && event->type == LIBRDP_SERVER_INPUT_MOUSE &&
+        event->x == 23u && event->y == 29u)
+        atomic_store_explicit(&fixture->input_barrier,
+                              1,
+                              memory_order_release);
+}
 
 /*
  * Run a public Standard-security server peer concurrently with the shared
@@ -422,6 +438,15 @@ static void* test_runtime_server_main(void* user_data)
     fixture->status = librdp_server_accept(fixture->server, 5000, &peer);
     if (fixture->status != LIBRDP_STATUS_OK)
         return NULL;
+    fixture->status = librdp_server_peer_set_input_callback(
+        peer,
+        test_runtime_server_input,
+        fixture);
+    if (fixture->status != LIBRDP_STATUS_OK)
+    {
+        librdp_server_peer_free(peer);
+        return NULL;
+    }
     atomic_store_explicit(&fixture->accepted, 1, memory_order_release);
     for (;;)
     {
@@ -535,6 +560,7 @@ static int test_runtime_lifecycle_and_cancel(void)
     server_fixture.status = LIBRDP_STATUS_AGAIN;
     atomic_init(&server_fixture.accepted, 0);
     atomic_init(&server_fixture.active, 0);
+    atomic_init(&server_fixture.input_barrier, 0);
     CHECK(pipe(server_release_pipe) == 0);
     server_fixture.release_fd = server_release_pipe[0];
     CHECK(librdp_server_config_init(&server_config) == LIBRDP_STATUS_OK);
@@ -653,6 +679,7 @@ static int test_runtime_clean_peer_close(void)
     int timeout_ms = -1;
     int ready = 0;
     unsigned int pump_cycle = 0;
+    librdp_mouse_event input_barrier;
     uint16_t port = 0;
     char marker = 'x';
 
@@ -660,6 +687,7 @@ static int test_runtime_clean_peer_close(void)
     server_fixture.status = LIBRDP_STATUS_AGAIN;
     atomic_init(&server_fixture.accepted, 0);
     atomic_init(&server_fixture.active, 0);
+    atomic_init(&server_fixture.input_barrier, 0);
     CHECK(pipe(server_release_pipe) == 0);
     server_fixture.release_fd = server_release_pipe[0];
     CHECK(librdp_server_config_init(&server_config) == LIBRDP_STATUS_OK);
@@ -705,6 +733,28 @@ static int test_runtime_clean_peer_close(void)
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
     CHECK(atomic_load_explicit(&server_fixture.active, memory_order_acquire) == 1);
 
+    memset(&input_barrier, 0, sizeof(input_barrier));
+    input_barrier.x = 23u;
+    input_barrier.y = 29u;
+    input_barrier.button = LIBRDP_MOUSE_BUTTON_NONE;
+    input_barrier.state = LIBRDP_MOUSE_MOVED;
+    CHECK(librdp_session_send_mouse(session, &input_barrier) ==
+          LIBRDP_STATUS_OK);
+    for (pump_cycle = 0;
+         pump_cycle < 100u &&
+         atomic_load_explicit(&server_fixture.input_barrier,
+                              memory_order_acquire) == 0;
+         pump_cycle++)
+    {
+        struct timespec delay = {0, 10000000L};
+
+        while (nanosleep(&delay, &delay) != 0 && errno == EINTR)
+        {
+        }
+    }
+    CHECK(atomic_load_explicit(&server_fixture.input_barrier,
+                               memory_order_acquire) == 1);
+
     CHECK(write(server_release_pipe[1], &marker, 1) == 1);
     CHECK(pthread_join(server_fixture.thread, NULL) == 0);
     CHECK(client_runtime_prepare_poll(&runtime,
@@ -715,7 +765,8 @@ static int test_runtime_clean_peer_close(void)
                                       &poll_count,
                                       &timeout_ms) == LIBRDP_STATUS_OK);
     CHECK(poll(pollfds, (nfds_t)poll_count, timeout_ms) > 0);
-    CHECK(client_runtime_dispatch_poll(&runtime, 8u) == LIBRDP_STATUS_OK);
+    CHECK(client_runtime_dispatch_poll(&runtime, 8u) ==
+          LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CLOSED);
     CHECK(runtime.connected == 0);
     CHECK(runtime.poll_count == 0u);
