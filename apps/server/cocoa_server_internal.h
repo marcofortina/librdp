@@ -5,7 +5,8 @@
 /*
  * Module: private Cocoa desktop-server capture state.
  * Invariants: the capture queue owns native sample access, at most one newest
- * frame is pending, and all host callbacks are emitted by the poll dispatcher.
+ * frame is pending, one last frame is retained for activation repaint, and
+ * all host callbacks are emitted by the poll dispatcher.
  * Ownership: queued pixels and dirty rectangles belong to the context; native
  * Objective-C objects use manual reference counting.
  * Threading: the capture queue and host thread synchronize through one mutex
@@ -40,6 +41,9 @@ typedef struct cocoa_server_frame_packet
     size_t dirty_count;
     uint64_t sequence;
     uint64_t timestamp_ns;
+    CGRect source_rect;
+    double source_scale;
+    int topology_valid;
     int ready;
 } cocoa_server_frame_packet;
 
@@ -59,6 +63,7 @@ struct cocoa_server_context
     SCStream* stream;
     CocoaServerCaptureDelegate* capture_delegate;
     dispatch_queue_t capture_queue;
+    dispatch_source_t window_timer;
     pthread_mutex_t lock;
     int lock_ready;
     int wakeup_read_fd;
@@ -67,6 +72,7 @@ struct cocoa_server_context
     server_platform_permission_sink permission_sink;
     cocoa_server_clipboard* clipboard;
     cocoa_server_frame_packet pending_frame;
+    cocoa_server_frame_packet latest_frame;
     librdp_status pending_lost_status;
     uint32_t width;
     uint32_t height;
@@ -85,16 +91,28 @@ struct cocoa_server_context
     int topology_refresh_required;
     int stopping;
     int force_full_frame;
+    unsigned int window_capture_failures;
 };
 
 uint64_t cocoa_server_now_ns(void);
+void cocoa_server_wakeup(cocoa_server_context* context);
 void cocoa_server_capture_enqueue(cocoa_server_context* context,
                                   CMSampleBufferRef sample);
 void cocoa_server_capture_lost(cocoa_server_context* context,
                                librdp_status status);
+librdp_status cocoa_server_window_snapshot(
+    cocoa_server_context* context,
+    cocoa_server_frame_packet* packet);
 librdp_status cocoa_server_refresh_topology(
     cocoa_server_context* context,
     int restart_stream);
+#ifdef LIBRDP_COCOA_SERVER_TESTING
+librdp_status cocoa_server_test_copy_window_image(
+    const cocoa_server_context* context,
+    CGImageRef image,
+    CGRect source_rect,
+    cocoa_server_frame_packet* packet);
+#endif
 extern const server_platform_capture_vtable cocoa_server_capture_vtable;
 extern const server_platform_input_vtable cocoa_server_input_vtable;
 extern const server_platform_permission_vtable cocoa_server_permission_vtable;

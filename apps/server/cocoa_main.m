@@ -14,6 +14,8 @@
 #include "cocoa_server_cli.h"
 #include "cocoa_server_runtime.h"
 
+#import <Cocoa/Cocoa.h>
+
 int main(int argc, char** argv)
 {
     cocoa_server_options options;
@@ -32,6 +34,8 @@ int main(int argc, char** argv)
     }
     @autoreleasepool
     {
+        [NSApplication sharedApplication];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         return cocoa_server_run(&options);
     }
 }

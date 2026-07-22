@@ -377,8 +377,31 @@ static int cocoa_server_prepare_stream(
     librdp_status* output_status)
 {
     SCShareableContent* content = nil;
+    cocoa_server_frame_packet snapshot;
     NSError* error = nil;
 
+    memset(&snapshot, 0, sizeof(snapshot));
+    if (context->config.source_kind == COCOA_SERVER_SOURCE_WINDOW)
+    {
+        context->stable_source_id = context->config.source_id;
+        context->capture_queue =
+            dispatch_queue_create("librdp.cocoa.server.window",
+                                  DISPATCH_QUEUE_SERIAL);
+        if (!context->capture_queue)
+        {
+            *output_status = LIBRDP_STATUS_NO_MEMORY;
+            return 0;
+        }
+        *output_status = cocoa_server_window_snapshot(context, &snapshot);
+        if (*output_status != LIBRDP_STATUS_OK)
+            return 0;
+        context->width = snapshot.width;
+        context->height = snapshot.height;
+        context->source_rect = snapshot.source_rect;
+        context->source_scale = snapshot.source_scale;
+        free(snapshot.pixels);
+        return 1;
+    }
     content = cocoa_server_shareable_content(output_status);
     if (!content)
         return 0;
@@ -566,12 +589,14 @@ static librdp_status cocoa_server_wait_for_restart(
 /*
  * Re-enumerate the stable source and update filter and pixel geometry as one
  * bounded operation. Existing provider objects remain active until both
- * framework updates succeed; failed refresh never publishes partial geometry.
+ * framework updates succeed; a refresh failure never publishes partial
+ * geometry or replaces the working capture objects.
  */
 librdp_status cocoa_server_refresh_topology(
     cocoa_server_context* context,
     int restart_stream)
 {
+    cocoa_server_frame_packet snapshot;
     SCShareableContent* content = nil;
     SCContentFilter* filter = nil;
     SCStreamConfiguration* configuration = nil;
@@ -582,8 +607,33 @@ librdp_status cocoa_server_refresh_topology(
     librdp_status status = LIBRDP_STATUS_OK;
     int changed = 0;
 
-    if (!context || !context->stream ||
-        !context->capture_started)
+    if (!context || !context->capture_started)
+        return LIBRDP_STATUS_STATE;
+    if (context->config.source_kind == COCOA_SERVER_SOURCE_WINDOW)
+    {
+        memset(&snapshot, 0, sizeof(snapshot));
+        status = cocoa_server_window_snapshot(context, &snapshot);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        pthread_mutex_lock(&context->lock);
+        snapshot.sequence = ++context->next_sequence;
+        free(context->pending_frame.pixels);
+        context->pending_frame = snapshot;
+        free(context->latest_frame.pixels);
+        memset(&context->latest_frame,
+               0,
+               sizeof(context->latest_frame));
+        context->width = snapshot.width;
+        context->height = snapshot.height;
+        context->source_rect = snapshot.source_rect;
+        context->source_scale = snapshot.source_scale;
+        context->window_capture_failures = 0u;
+        context->force_full_frame = 0;
+        pthread_mutex_unlock(&context->lock);
+        cocoa_server_wakeup(context);
+        return LIBRDP_STATUS_OK;
+    }
+    if (!context->stream)
         return LIBRDP_STATUS_STATE;
     content = cocoa_server_shareable_content(&status);
     if (!content)
@@ -643,6 +693,10 @@ librdp_status cocoa_server_refresh_topology(
         memset(&context->pending_frame,
                0,
                sizeof(context->pending_frame));
+        free(context->latest_frame.pixels);
+        memset(&context->latest_frame,
+               0,
+               sizeof(context->latest_frame));
         context->width = width;
         context->height = height;
         context->source_rect = source_rect;
@@ -747,6 +801,8 @@ void cocoa_server_context_free(cocoa_server_context* context)
         pthread_mutex_lock(&context->lock);
         free(context->pending_frame.pixels);
         context->pending_frame.pixels = NULL;
+        free(context->latest_frame.pixels);
+        context->latest_frame.pixels = NULL;
         pthread_mutex_unlock(&context->lock);
         pthread_mutex_destroy(&context->lock);
     }
