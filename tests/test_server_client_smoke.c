@@ -8724,10 +8724,7 @@ static librdp_status smoke_redirection_wait_for_client_close(
 
     if (!fixture || !peer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    for (attempt = 0u;
-         attempt < 500u &&
-         atomic_load_explicit(&fixture->stop, memory_order_acquire) == 0u;
-         attempt++)
+    for (attempt = 0u; attempt < 500u; attempt++)
     {
         librdp_status status =
             librdp_server_peer_run_once(peer, 20);

@@ -178,6 +178,18 @@ static int port_smoke_stage_complete(port_smoke_stage stage)
            stage == PORT_SMOKE_PARALLEL_COMPLETE;
 }
 
+static int port_smoke_pty_error(const char* operation)
+{
+    int saved_errno = errno;
+
+    fprintf(stderr,
+            "PTY fixture failed operation=%s errno=%d message=%s\n",
+            operation ? operation : "unknown",
+            saved_errno,
+            strerror(saved_errno));
+    return 0;
+}
+
 static int port_smoke_prepare_pty(port_smoke_fixture* fixture)
 {
     struct termios terminal;
@@ -188,32 +200,35 @@ static int port_smoke_prepare_pty(port_smoke_fixture* fixture)
         return 0;
     fixture->master_fd =
         posix_openpt(O_RDWR | O_NOCTTY);
-    if (fixture->master_fd < 0 ||
-        grantpt(fixture->master_fd) != 0 ||
-        unlockpt(fixture->master_fd) != 0)
-        return 0;
-    flags = fcntl(fixture->master_fd, F_GETFL, 0);
-    if (flags < 0 ||
-        fcntl(fixture->master_fd,
-              F_SETFL,
-              flags | O_NONBLOCK) != 0)
-        return 0;
+    if (fixture->master_fd < 0)
+        return port_smoke_pty_error("posix_openpt");
+    if (grantpt(fixture->master_fd) != 0)
+        return port_smoke_pty_error("grantpt");
+    if (unlockpt(fixture->master_fd) != 0)
+        return port_smoke_pty_error("unlockpt");
     name = ptsname(fixture->master_fd);
-    if (!name ||
-        snprintf(fixture->slave_path,
+    if (!name)
+        return port_smoke_pty_error("ptsname");
+    if (snprintf(fixture->slave_path,
                  sizeof(fixture->slave_path),
                  "%s",
                  name) <= 0)
-        return 0;
+    {
+        errno = EINVAL;
+        return port_smoke_pty_error("slave-path");
+    }
     fixture->slave_fd = open(fixture->slave_path,
                              O_RDWR | O_NOCTTY | O_NONBLOCK);
-    if (fixture->slave_fd < 0 ||
-        tcgetattr(fixture->slave_fd, &terminal) != 0)
+    if (fixture->slave_fd < 0)
+        return port_smoke_pty_error("open-slave");
+    if (tcgetattr(fixture->slave_fd, &terminal) != 0)
     {
-        if (fixture->slave_fd >= 0)
-            close(fixture->slave_fd);
+        int saved_errno = errno;
+
+        close(fixture->slave_fd);
         fixture->slave_fd = -1;
-        return 0;
+        errno = saved_errno;
+        return port_smoke_pty_error("tcgetattr");
     }
     terminal.c_iflag &=
         (tcflag_t)~(tcflag_t)(IGNBRK | BRKINT | PARMRK | ISTRIP |
@@ -227,15 +242,28 @@ static int port_smoke_prepare_pty(port_smoke_fixture* fixture)
     terminal.c_cc[VTIME] = 0;
     if (tcsetattr(fixture->slave_fd, TCSANOW, &terminal) != 0)
     {
+        int saved_errno = errno;
+
         close(fixture->slave_fd);
         fixture->slave_fd = -1;
-        return 0;
+        errno = saved_errno;
+        return port_smoke_pty_error("tcsetattr");
     }
+    flags = fcntl(fixture->master_fd, F_GETFL, 0);
+    if (flags < 0)
+        return port_smoke_pty_error("fcntl-getfl");
+    if (fcntl(fixture->master_fd,
+              F_SETFL,
+              flags | O_NONBLOCK) != 0)
+        return port_smoke_pty_error("fcntl-setfl");
     flags = fcntl(fixture->master_fd, F_GETFD, 0);
-    return flags >= 0 &&
-           fcntl(fixture->master_fd,
-                 F_SETFD,
-                 flags | FD_CLOEXEC) == 0;
+    if (flags < 0)
+        return port_smoke_pty_error("fcntl-getfd");
+    if (fcntl(fixture->master_fd,
+              F_SETFD,
+              flags | FD_CLOEXEC) != 0)
+        return port_smoke_pty_error("fcntl-setfd");
+    return 1;
 }
 
 static int port_smoke_prepare_parallel_file(

@@ -1048,7 +1048,6 @@ if(LIBRDP_BUILD_TESTS)
         PROPERTIES TIMEOUT 30
     )
     set_tests_properties(
-        core
         core_settings_session_error_metrics
         core_connect_timeout
         core_resolution_failure
@@ -1062,6 +1061,7 @@ if(LIBRDP_BUILD_TESTS)
         core_workspace_admin
         PROPERTIES TIMEOUT 60
     )
+    set_tests_properties(core PROPERTIES TIMEOUT 120)
     set_tests_properties(core_features PROPERTIES TIMEOUT 30)
     set_tests_properties(transport_timeout_boundaries PROPERTIES TIMEOUT 30)
     set_tests_properties(

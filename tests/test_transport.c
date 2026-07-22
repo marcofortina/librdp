@@ -995,6 +995,48 @@ static librdp_tls_certificate_decision test_tls_tofu_store_callback(
     return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
 }
 
+/* Complete one blocking TLS transfer without assuming record-sized reads. */
+static int test_tls_read_exact(SSL* tls, void* data, size_t length)
+{
+    uint8_t* output = (uint8_t*)data;
+    size_t offset = 0u;
+
+    if (!tls || (!data && length > 0u))
+        return 0;
+    while (offset < length)
+    {
+        size_t remaining = length - offset;
+        int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+        int read_length = rdp_tls_io_read(tls, output + offset, chunk);
+
+        if (read_length <= 0)
+            return 0;
+        offset += (size_t)read_length;
+    }
+    return 1;
+}
+
+/* Complete one blocking TLS write even when the backend accepts a prefix. */
+static int test_tls_write_all(SSL* tls, const void* data, size_t length)
+{
+    const uint8_t* input = (const uint8_t*)data;
+    size_t offset = 0u;
+
+    if (!tls || (!data && length > 0u))
+        return 0;
+    while (offset < length)
+    {
+        size_t remaining = length - offset;
+        int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+        int written = rdp_tls_io_write(tls, input + offset, chunk);
+
+        if (written <= 0)
+            return 0;
+        offset += (size_t)written;
+    }
+    return 1;
+}
+
 /*
  * Fixture: runs a local TLS peer for deterministic read/write coverage. It
  * validates TLS shutdown and descriptor lifetime without external network
@@ -1028,12 +1070,11 @@ static int run_tls_server(int fd, EVP_PKEY* key, X509* cert, int expect_success)
         ok = 1;
         goto out;
     }
-    if (rdp_tls_io_read(tls, input, (int)sizeof(input)) !=
-        (int)sizeof(input))
+    if (!test_tls_read_exact(tls, input, sizeof(input)))
         goto out;
     if (memcmp(input, "ping", 4) != 0)
         goto out;
-    if (rdp_tls_io_write(tls, "pong", 4) != 4)
+    if (!test_tls_write_all(tls, "pong", 4u))
         goto out;
     do_shutdown = 1;
     ok = 1;
