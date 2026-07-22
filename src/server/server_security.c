@@ -704,8 +704,10 @@ void rdp_server_close_peer(librdp_server_peer* peer, librdp_server_peer_state st
         return;
     if (peer->tls)
     {
-        SSL_set_quiet_shutdown(peer->tls, 1);
-        (void)rdp_tls_io_shutdown(peer->tls);
+        if (state == LIBRDP_SERVER_PEER_CLOSED)
+            (void)rdp_tls_io_shutdown(peer->tls);
+        else
+            SSL_set_quiet_shutdown(peer->tls, 1);
         SSL_free(peer->tls);
         peer->tls = NULL;
     }

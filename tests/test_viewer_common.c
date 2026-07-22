@@ -429,15 +429,38 @@ static void* test_runtime_server_main(void* user_data)
 
         if (state == LIBRDP_SERVER_PEER_ACTIVE)
         {
+            struct pollfd release_poll;
             char release = 0;
             ssize_t read_result = 0;
+            int release_ready = 0;
 
             atomic_store_explicit(&fixture->active, 1, memory_order_release);
+            memset(&release_poll, 0, sizeof(release_poll));
+            release_poll.fd = fixture->release_fd;
+            release_poll.events = POLLIN;
             do
             {
-                read_result = read(fixture->release_fd, &release, 1);
-            } while (read_result < 0 && errno == EINTR);
-            break;
+                release_ready = poll(&release_poll, 1u, 0);
+            } while (release_ready < 0 && errno == EINTR);
+            if (release_ready > 0 && (release_poll.revents & POLLIN) != 0)
+            {
+                unsigned int drain_cycle = 0;
+
+                do
+                {
+                    read_result = read(fixture->release_fd, &release, 1);
+                } while (read_result < 0 && errno == EINTR);
+                for (drain_cycle = 0; drain_cycle < 64u; drain_cycle++)
+                {
+                    fixture->status = librdp_server_peer_run_once(peer, 0);
+                    if (fixture->status == LIBRDP_STATUS_TIMEOUT ||
+                        fixture->status == LIBRDP_STATUS_AGAIN)
+                        break;
+                    if (fixture->status != LIBRDP_STATUS_OK)
+                        break;
+                }
+                break;
+            }
         }
         if (state == LIBRDP_SERVER_PEER_CLOSED || state == LIBRDP_SERVER_PEER_FAILED)
             break;
@@ -612,6 +635,108 @@ static int test_runtime_lifecycle_and_cancel(void)
     return 0;
 }
 
+/*
+ * Close an active peer from the server side and require the shared frontend
+ * loop to consume EOF as a clean terminal transition. This catches stale poll
+ * snapshots that would otherwise turn a successful disconnect into STATE.
+ */
+static int test_runtime_clean_peer_close(void)
+{
+    test_runtime_server server_fixture;
+    librdp_server_config server_config;
+    client_runtime runtime;
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    struct pollfd* pollfds = NULL;
+    size_t poll_count = 0;
+    int server_release_pipe[2] = { -1, -1 };
+    int timeout_ms = -1;
+    int ready = 0;
+    unsigned int pump_cycle = 0;
+    uint16_t port = 0;
+    char marker = 'x';
+
+    memset(&server_fixture, 0, sizeof(server_fixture));
+    server_fixture.status = LIBRDP_STATUS_AGAIN;
+    atomic_init(&server_fixture.accepted, 0);
+    atomic_init(&server_fixture.active, 0);
+    CHECK(pipe(server_release_pipe) == 0);
+    server_fixture.release_fd = server_release_pipe[0];
+    CHECK(librdp_server_config_init(&server_config) == LIBRDP_STATUS_OK);
+    server_config.bind_address = "127.0.0.1";
+    server_config.security_mode = LIBRDP_SECURITY_STANDARD;
+    server_fixture.server = librdp_server_new(&server_config);
+    CHECK(server_fixture.server != NULL);
+    CHECK(librdp_server_listen(server_fixture.server) == LIBRDP_STATUS_OK);
+    port = librdp_server_local_port(server_fixture.server);
+    CHECK(port != 0);
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_port(settings, port) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) ==
+          LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    client_runtime_init(&runtime, session);
+    CHECK(pthread_create(&server_fixture.thread,
+                         NULL,
+                         test_runtime_server_main,
+                         &server_fixture) == 0);
+    CHECK(client_runtime_connect(&runtime) == LIBRDP_STATUS_OK);
+    for (pump_cycle = 0;
+         pump_cycle < 100u &&
+         (librdp_session_get_state(session) != LIBRDP_SESSION_ACTIVE ||
+          atomic_load_explicit(&server_fixture.active, memory_order_acquire) == 0);
+         pump_cycle++)
+    {
+        CHECK(client_runtime_prepare_poll(&runtime,
+                                          NULL,
+                                          0,
+                                          50,
+                                          &pollfds,
+                                          &poll_count,
+                                          &timeout_ms) == LIBRDP_STATUS_OK);
+        ready = poll(pollfds, (nfds_t)poll_count, timeout_ms);
+        CHECK(ready >= 0);
+        CHECK(client_runtime_dispatch_poll(&runtime, 8u) == LIBRDP_STATUS_OK);
+    }
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
+    CHECK(atomic_load_explicit(&server_fixture.active, memory_order_acquire) == 1);
+
+    CHECK(write(server_release_pipe[1], &marker, 1) == 1);
+    CHECK(pthread_join(server_fixture.thread, NULL) == 0);
+    CHECK(client_runtime_prepare_poll(&runtime,
+                                      NULL,
+                                      0,
+                                      1000,
+                                      &pollfds,
+                                      &poll_count,
+                                      &timeout_ms) == LIBRDP_STATUS_OK);
+    CHECK(poll(pollfds, (nfds_t)poll_count, timeout_ms) > 0);
+    CHECK(client_runtime_dispatch_poll(&runtime, 8u) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CLOSED);
+    CHECK(runtime.connected == 0);
+    CHECK(runtime.poll_count == 0u);
+    CHECK(client_runtime_prepare_poll(&runtime,
+                                      NULL,
+                                      0,
+                                      0,
+                                      &pollfds,
+                                      &poll_count,
+                                      &timeout_ms) == LIBRDP_STATUS_STATE);
+
+    close(server_release_pipe[0]);
+    close(server_release_pipe[1]);
+    client_runtime_clear(&runtime);
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    librdp_server_close(server_fixture.server);
+    librdp_server_free(server_fixture.server);
+    return 0;
+}
+
 int main(void)
 {
     if (test_common_options() != 0)
@@ -627,6 +752,8 @@ int main(void)
     if (test_callbacks_and_runtime_state() != 0)
         return 1;
     if (test_runtime_lifecycle_and_cancel() != 0)
+        return 1;
+    if (test_runtime_clean_peer_close() != 0)
         return 1;
     return 0;
 }

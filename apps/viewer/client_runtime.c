@@ -124,6 +124,14 @@ static librdp_status client_runtime_refresh_session_pollfds(client_runtime* runt
     return LIBRDP_STATUS_OK;
 }
 
+static void client_runtime_mark_disconnected(client_runtime* runtime)
+{
+    runtime->connected = 0;
+    runtime->poll_count = 0;
+    runtime->native_count = 0;
+    runtime->session_count = 0;
+}
+
 /*
  * Merge frontend descriptors with the current session snapshot. The returned
  * array is mutable for poll(2), but its storage remains runtime-owned and is
@@ -216,6 +224,16 @@ librdp_status client_runtime_dispatch_poll(client_runtime* runtime,
                 return status;
         }
         status = librdp_session_dispatch_pending(runtime->session);
+        if (librdp_session_get_state(runtime->session) == LIBRDP_SESSION_CLOSED)
+        {
+            client_runtime_mark_disconnected(runtime);
+            return status == LIBRDP_STATUS_CLOSED ? LIBRDP_STATUS_OK : status;
+        }
+        if (librdp_session_get_state(runtime->session) == LIBRDP_SESSION_CANCELLED)
+        {
+            client_runtime_mark_disconnected(runtime);
+            return status == LIBRDP_STATUS_OK ? LIBRDP_STATUS_CANCELLED : status;
+        }
         if (status != LIBRDP_STATUS_OK)
             return status;
 
@@ -256,11 +274,6 @@ librdp_status client_runtime_disconnect(client_runtime* runtime)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = librdp_session_disconnect(runtime->session);
     if (status == LIBRDP_STATUS_OK)
-    {
-        runtime->connected = 0;
-        runtime->poll_count = 0;
-        runtime->native_count = 0;
-        runtime->session_count = 0;
-    }
+        client_runtime_mark_disconnected(runtime);
     return status;
 }
