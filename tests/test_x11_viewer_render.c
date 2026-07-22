@@ -154,6 +154,122 @@ static int test_dirty_region_accumulation(void)
 }
 
 #ifdef LIBRDP_TEST_XVFB_PATH
+#ifdef LIBRDP_TEST_XVFB_EXPLICIT_DISPLAY
+/*
+ * Solaris X servers may expose only the local STREAMS transport, which is not
+ * considered by Xvfb's -displayfd allocator. Select a high display while
+ * checking every local endpoint and wait until that exact server accepts a
+ * connection.
+ */
+static int test_choose_xvfb_display(char display_name[32])
+{
+    unsigned int attempt = 0u;
+
+    if (!display_name)
+        return 0;
+    for (attempt = 0u; attempt < 100u; attempt++)
+    {
+        const unsigned int number =
+            420u + ((unsigned int)getpid() + attempt) % 400u;
+        char unix_path[64];
+        char pipe_path[64];
+        char lock_path[64];
+        int unix_length = snprintf(unix_path,
+                                   sizeof(unix_path),
+                                   "/tmp/.X11-unix/X%u",
+                                   number);
+        int pipe_length = snprintf(pipe_path,
+                                   sizeof(pipe_path),
+                                   "/tmp/.X11-pipe/X%u",
+                                   number);
+        int lock_length = snprintf(lock_path,
+                                   sizeof(lock_path),
+                                   "/tmp/.X%u-lock",
+                                   number);
+
+        if (unix_length <= 0 || (size_t)unix_length >= sizeof(unix_path) ||
+            pipe_length <= 0 || (size_t)pipe_length >= sizeof(pipe_path) ||
+            lock_length <= 0 || (size_t)lock_length >= sizeof(lock_path))
+            return 0;
+        if (access(unix_path, F_OK) == 0 ||
+            access(pipe_path, F_OK) == 0 ||
+            access(lock_path, F_OK) == 0)
+            continue;
+        return snprintf(display_name, 32u, ":%u", number) > 0;
+    }
+    return 0;
+}
+
+static int test_start_xvfb_explicit(int disable_xshm,
+                                    char display_name[32],
+                                    pid_t* child)
+{
+    pid_t pid = -1;
+    unsigned int step = 0u;
+
+    if (!child || !test_choose_xvfb_display(display_name))
+        return 0;
+    pid = fork();
+    if (pid < 0)
+        return 0;
+    if (pid == 0)
+    {
+        if (disable_xshm)
+        {
+            execl(LIBRDP_TEST_XVFB_PATH,
+                  LIBRDP_TEST_XVFB_PATH,
+                  display_name,
+                  "-screen",
+                  "0",
+                  "240x240x24",
+                  "-nolisten",
+                  "tcp",
+                  "-extension",
+                  "MIT-SHM",
+                  (char*)NULL);
+        }
+        else
+        {
+            execl(LIBRDP_TEST_XVFB_PATH,
+                  LIBRDP_TEST_XVFB_PATH,
+                  display_name,
+                  "-screen",
+                  "0",
+                  "240x240x24",
+                  "-nolisten",
+                  "tcp",
+                  (char*)NULL);
+        }
+        _exit(127);
+    }
+    for (step = 0u; step < 100u; step++)
+    {
+        Display* display = XOpenDisplay(display_name);
+        int status = 0;
+        pid_t waited = -1;
+
+        if (display)
+        {
+            XCloseDisplay(display);
+            *child = pid;
+            return 1;
+        }
+        do
+        {
+            waited = waitpid(pid, &status, WNOHANG);
+        } while (waited < 0 && errno == EINTR);
+        if (waited != 0)
+            return 0;
+        (void)poll(NULL, 0u, 50);
+    }
+    kill(pid, SIGTERM);
+    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR)
+    {
+    }
+    return 0;
+}
+#endif
+
 /*
  * Start a private X server with an explicit MIT-SHM policy. No unrelated host
  * windows can appear in the captured drawable.
@@ -162,6 +278,11 @@ static int test_start_xvfb(int disable_xshm,
                            char display_name[32],
                            pid_t* child)
 {
+#ifdef LIBRDP_TEST_XVFB_EXPLICIT_DISPLAY
+    return test_start_xvfb_explicit(disable_xshm,
+                                    display_name,
+                                    child);
+#else
     char descriptor_text[24];
     char display_number[24];
     char* end = NULL;
@@ -273,6 +394,7 @@ static int test_start_xvfb(int disable_xshm,
     }
     *child = pid;
     return 1;
+#endif
 }
 
 static void test_stop_xvfb(pid_t child)

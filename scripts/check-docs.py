@@ -466,7 +466,7 @@ def validate_mkdocs(errors: list[str]) -> None:
     for rel in REQUIRED_MARKDOWN:
         if rel == "README.md":
             continue
-        nav_name = rel.removeprefix("docs/")
+        nav_name = rel[len("docs/") :] if rel.startswith("docs/") else rel
         if nav_name not in config:
             errors.append(f"mkdocs.yml nav missing document: {nav_name}")
 

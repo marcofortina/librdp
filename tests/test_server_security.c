@@ -12,6 +12,8 @@
 #include "test_server_support.h"
 #include "test_server_suites.h"
 
+#include <string.h>
+
 int test_server_loopback_negotiation_failure(void)
 {
     static const uint8_t request[] = {

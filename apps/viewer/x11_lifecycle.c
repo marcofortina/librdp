@@ -736,7 +736,9 @@ int x11_viewer_run(int argc, char** argv)
 
     XSetErrorHandler(x11_window_handle_error);
     app.screen = DefaultScreen(app.display);
-    app.xkb = XkbGetKeyboard(app.display, XkbNamesMask, XkbUseCoreKbd);
+    app.xkb = XkbGetKeyboard(app.display,
+                             XkbAllComponentsMask,
+                             XkbUseCoreKbd);
     app.window = XCreateSimpleWindow(app.display,
                                      RootWindow(app.display, app.screen),
                                      0,
@@ -1066,7 +1068,9 @@ int x11_viewer_run(int argc, char** argv)
                 XRefreshKeyboardMapping(&event.xmapping);
                 if (app.xkb)
                     XkbFreeKeyboard(app.xkb, 0, True);
-                app.xkb = XkbGetKeyboard(app.display, XkbNamesMask, XkbUseCoreKbd);
+                app.xkb = XkbGetKeyboard(app.display,
+                                         XkbAllComponentsMask,
+                                         XkbUseCoreKbd);
             }
             else if (event.type == EnterNotify)
             {

@@ -314,7 +314,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         target_link_libraries(${target} PRIVATE
             librdp_server_common
             Iconv::Iconv
-            OpenSSL::Crypto
             PkgConfig::LIBRDP_X11_SERVER
             Threads::Threads
         )
@@ -347,7 +346,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         )
         target_link_libraries(${target} PRIVATE
             librdp
-            OpenSSL::Crypto
             Threads::Threads
         )
         librdp_apply_x11_managed_paths(${target})
@@ -428,7 +426,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         )
         target_link_libraries(test_x11_managed PRIVATE
             librdp
-            OpenSSL::Crypto
         )
         librdp_apply_system_definitions(test_x11_managed)
         librdp_apply_warning_options(test_x11_managed)
@@ -449,7 +446,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         )
         target_link_libraries(test_x11_managed_registry PRIVATE
             librdp
-            OpenSSL::Crypto
         )
         librdp_apply_system_definitions(test_x11_managed_registry)
         librdp_apply_warning_options(test_x11_managed_registry)
@@ -471,7 +467,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         )
         target_link_libraries(test_x11_managed_policy PRIVATE
             librdp
-            OpenSSL::Crypto
         )
         librdp_apply_x11_managed_paths(test_x11_managed_policy)
         librdp_apply_system_definitions(test_x11_managed_policy)
@@ -498,7 +493,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         )
         target_link_libraries(test_x11_managed_config PRIVATE
             librdp
-            OpenSSL::Crypto
         )
         librdp_apply_x11_managed_paths(test_x11_managed_config)
         librdp_apply_system_definitions(test_x11_managed_config)
@@ -569,7 +563,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         target_link_libraries(
             test_x11_managed_client PRIVATE
             librdp_server_common
-            OpenSSL::Crypto
             Threads::Threads
         )
         librdp_apply_system_definitions(
@@ -597,7 +590,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         )
         target_link_libraries(test_x11_managed_auth PRIVATE
             librdp
-            OpenSSL::Crypto
         )
         librdp_apply_x11_managed_auth(test_x11_managed_auth)
         librdp_apply_system_definitions(test_x11_managed_auth)
@@ -624,7 +616,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
             )
             target_link_libraries(test_x11_managed_process PRIVATE
                 librdp
-                OpenSSL::Crypto
                 PkgConfig::LIBRDP_X11_SERVER
             )
             librdp_apply_system_definitions(test_x11_managed_process)
@@ -657,7 +648,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
             )
             target_link_libraries(test_x11_managed_supervisor PRIVATE
                 librdp
-                OpenSSL::Crypto
                 PkgConfig::LIBRDP_X11_SERVER
             )
             librdp_apply_x11_managed_paths(
@@ -706,7 +696,6 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
             target_link_libraries(test_x11_server PRIVATE
                 librdp_server_common
                 Iconv::Iconv
-                OpenSSL::Crypto
                 PkgConfig::LIBRDP_X11_SERVER
             )
             if(LIBRDP_FUSE3_FOUND)

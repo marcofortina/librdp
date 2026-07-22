@@ -666,7 +666,9 @@ static int test_mcs_gcc_capabilities(void)
     rdp_mcs_attach_user_confirm attach;
     rdp_mcs_channel_join_confirm join;
     uint8_t disconnect_reason = 0u;
+    uint8_t gcc_overflow_response[sizeof(gcc_response)];
     const uint8_t attach_confirm[] = {0x2e, 0x00, 0x00, 0x03};
+    const uint8_t attach_overflow[] = {0x2e, 0x00, 0xff, 0xff};
     const uint8_t join_confirm[] = {0x3e, 0x00, 0x00, 0x03, 0x03, 0xec, 0x03, 0xec};
 
     rdp_buffer_init(&ber);
@@ -821,6 +823,13 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(rdp_gcc_parse_server_data_blocks(conference_response.user_data,
                                             conference_response.user_data_len,
                                             &server_data) == LIBRDP_STATUS_OK);
+    memcpy(gcc_overflow_response, gcc_response, sizeof(gcc_response));
+    gcc_overflow_response[9] = 0xffu;
+    gcc_overflow_response[10] = 0xffu;
+    PCHECK(rdp_gcc_parse_conference_create_response(
+               gcc_overflow_response,
+               sizeof(gcc_overflow_response),
+               &conference_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_gcc_write_conference_create_response(
                &gcc_response_wire,
                gcc_server_blocks,
@@ -1032,6 +1041,10 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(mcs_domain.length == 1 && mcs_domain.data[0] == 0x28);
     PCHECK(rdp_mcs_parse_attach_user_confirm(attach_confirm, sizeof(attach_confirm), &attach) == LIBRDP_STATUS_OK);
     PCHECK(attach.result == 0 && attach.user_id == 1004);
+    PCHECK(rdp_mcs_parse_attach_user_confirm(
+               attach_overflow,
+               sizeof(attach_overflow),
+               &attach) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_mcs_parse_attach_user_confirm(join_confirm, sizeof(join_confirm), &attach) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&mcs_domain);

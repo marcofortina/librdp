@@ -34,7 +34,7 @@ def checked_files() -> list[Path]:
         if not path.is_file():
             continue
         rel = path.relative_to(ROOT)
-        if any(rel == root or rel.is_relative_to(root) for root in CHECKED_ROOTS):
+        if any(rel == root or root in rel.parents for root in CHECKED_ROOTS):
             files.append(path)
     return files
 

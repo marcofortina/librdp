@@ -12,6 +12,8 @@
 #include "test_server_support.h"
 #include "test_server_suites.h"
 
+#include <string.h>
+
 /*
  * Server GFX commands use one uncompressed bulk segment in these bounded API
  * checks. Validate and remove that transport wrapper before parsing the

@@ -43,6 +43,19 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
     find_package(Threads REQUIRED)
     pkg_check_modules(
         LIBRDP_XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
+    set(LIBRDP_X11_LINK_BASE X11::X11)
+    set(LIBRDP_X11_LINK_CURSOR X11::Xcursor)
+    set(LIBRDP_X11_LINK_FIXES X11::Xfixes)
+    set(LIBRDP_X11_LINK_EXT X11::Xext)
+    set(LIBRDP_X11_LINK_RANDR X11::Xrandr)
+    if(CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+        # FindX11 extension targets repeat their base libraries on Solaris.
+        set(LIBRDP_X11_LINK_BASE ${X11_X11_LIB})
+        set(LIBRDP_X11_LINK_CURSOR ${X11_Xcursor_LIB})
+        set(LIBRDP_X11_LINK_FIXES ${X11_Xfixes_LIB})
+        set(LIBRDP_X11_LINK_EXT ${X11_Xext_LIB})
+        set(LIBRDP_X11_LINK_RANDR ${X11_Xrandr_LIB})
+    endif()
     add_executable(librdp-viewer
         apps/viewer/x11_audio_pipewire.c
         apps/viewer/x11_camera_v4l2.c
@@ -69,9 +82,9 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
     target_link_libraries(librdp-viewer PRIVATE
         librdp_viewer_common
         Iconv::Iconv
-        ${X11_LIBRARIES}
-        X11::Xcursor
-        X11::Xfixes
+        ${LIBRDP_X11_LINK_BASE}
+        ${LIBRDP_X11_LINK_CURSOR}
+        ${LIBRDP_X11_LINK_FIXES}
         PkgConfig::LIBRDP_XKBCOMMON
         Threads::Threads
     )
@@ -100,19 +113,11 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
     librdp_apply_x11_camera_backends(librdp-viewer)
     if(LIBRDP_XSHM_FOUND)
         target_compile_definitions(librdp-viewer PRIVATE LIBRDP_HAVE_XSHM=1)
-        if(TARGET X11::Xext)
-            target_link_libraries(librdp-viewer PRIVATE X11::Xext)
-        else()
-            target_link_libraries(librdp-viewer PRIVATE ${X11_Xext_LIB})
-        endif()
+        target_link_libraries(librdp-viewer PRIVATE ${LIBRDP_X11_LINK_EXT})
     endif()
     if(LIBRDP_XRANDR_FOUND)
         target_compile_definitions(librdp-viewer PRIVATE LIBRDP_HAVE_XRANDR=1)
-        if(TARGET X11::Xrandr)
-            target_link_libraries(librdp-viewer PRIVATE X11::Xrandr)
-        else()
-            target_link_libraries(librdp-viewer PRIVATE ${X11_Xrandr_LIB})
-        endif()
+        target_link_libraries(librdp-viewer PRIVATE ${LIBRDP_X11_LINK_RANDR})
     endif()
     install(TARGETS librdp-viewer
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -172,20 +177,26 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
             ${X11_INCLUDE_DIR}
         )
         librdp_apply_system_definitions(test_x11_viewer_render)
-        target_link_libraries(test_x11_viewer_render PRIVATE librdp ${X11_LIBRARIES})
+        target_link_libraries(test_x11_viewer_render PRIVATE
+            librdp
+            ${LIBRDP_X11_LINK_BASE}
+        )
         if(LIBRDP_XSHM_FOUND)
             target_compile_definitions(test_x11_viewer_render PRIVATE LIBRDP_HAVE_XSHM=1)
-            if(TARGET X11::Xext)
-                target_link_libraries(test_x11_viewer_render PRIVATE X11::Xext)
-            else()
-                target_link_libraries(test_x11_viewer_render PRIVATE ${X11_Xext_LIB})
-            endif()
+            target_link_libraries(test_x11_viewer_render PRIVATE
+                ${LIBRDP_X11_LINK_EXT}
+            )
         endif()
         find_program(LIBRDP_VIEWER_XVFB_EXECUTABLE NAMES Xvfb)
         if(LIBRDP_VIEWER_XVFB_EXECUTABLE)
             target_compile_definitions(test_x11_viewer_render PRIVATE
                 LIBRDP_TEST_XVFB_PATH="${LIBRDP_VIEWER_XVFB_EXECUTABLE}"
             )
+            if(CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+                target_compile_definitions(test_x11_viewer_render PRIVATE
+                    LIBRDP_TEST_XVFB_EXPLICIT_DISPLAY=1
+                )
+            endif()
         endif()
         librdp_apply_warning_options(test_x11_viewer_render)
         librdp_apply_sanitizer_compile_options(test_x11_viewer_render)
@@ -294,7 +305,7 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         librdp_apply_system_definitions(test_x11_viewer_keyboard)
         target_link_libraries(test_x11_viewer_keyboard PRIVATE
             librdp
-            ${X11_LIBRARIES}
+            ${LIBRDP_X11_LINK_BASE}
             PkgConfig::LIBRDP_XKBCOMMON
         )
         librdp_apply_warning_options(test_x11_viewer_keyboard)
@@ -316,8 +327,8 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
         target_link_libraries(test_x11_viewer_clipboard PRIVATE
             librdp
             Iconv::Iconv
-            ${X11_LIBRARIES}
-            X11::Xfixes
+            ${LIBRDP_X11_LINK_BASE}
+            ${LIBRDP_X11_LINK_FIXES}
         )
         librdp_apply_warning_options(test_x11_viewer_clipboard)
         librdp_apply_sanitizer_compile_options(test_x11_viewer_clipboard)
@@ -339,12 +350,11 @@ if(LIBRDP_BUILD_VIEWER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
                 LIBRDP_HAVE_XRANDR=1
             )
             librdp_apply_system_definitions(test_x11_viewer_display)
-            target_link_libraries(test_x11_viewer_display PRIVATE librdp ${X11_LIBRARIES})
-            if(TARGET X11::Xrandr)
-                target_link_libraries(test_x11_viewer_display PRIVATE X11::Xrandr)
-            else()
-                target_link_libraries(test_x11_viewer_display PRIVATE ${X11_Xrandr_LIB})
-            endif()
+            target_link_libraries(test_x11_viewer_display PRIVATE
+                librdp
+                ${LIBRDP_X11_LINK_BASE}
+                ${LIBRDP_X11_LINK_RANDR}
+            )
             librdp_apply_warning_options(test_x11_viewer_display)
             librdp_apply_sanitizer_compile_options(test_x11_viewer_display)
             librdp_apply_sanitizer_link_options(test_x11_viewer_display)

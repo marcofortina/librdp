@@ -538,6 +538,11 @@ static int port_smoke_length_response(
     return 1;
 }
 
+/*
+ * Drain exactly the accepted PTY write. Some STREAMS implementations publish
+ * accepted bytes asynchronously, so transient empty reads wait once for
+ * readiness while preserving the bounded timeout and byte-pattern check.
+ */
 static int port_smoke_drain_master(port_smoke_fixture* fixture,
                                    size_t expected)
 {
@@ -558,7 +563,22 @@ static int port_smoke_drain_master(port_smoke_fixture* fixture,
             continue;
         if (count < 0 &&
             (errno == EAGAIN || errno == EWOULDBLOCK))
-            break;
+        {
+            struct pollfd descriptor;
+            int ready = 0;
+
+            descriptor.fd = fixture->master_fd;
+            descriptor.events = POLLIN;
+            descriptor.revents = 0;
+            do
+            {
+                ready = poll(&descriptor, 1u, 1000);
+            } while (ready < 0 && errno == EINTR);
+            if (ready <= 0 ||
+                (descriptor.revents & POLLIN) == 0)
+                return 0;
+            continue;
+        }
         if (count <= 0)
             return 0;
         for (ssize_t index = 0; index < count; index++)

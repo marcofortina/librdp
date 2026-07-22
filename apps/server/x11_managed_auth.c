@@ -31,6 +31,14 @@
 
 #ifdef LIBRDP_HAVE_PAM
 #include <security/pam_appl.h>
+
+#if defined(__sun)
+typedef struct pam_message* x11_managed_pam_message_ptr;
+#else
+typedef const struct pam_message* x11_managed_pam_message_ptr;
+#endif
+
+#define X11_MANAGED_PAM_SILENT ((int)PAM_SILENT)
 #endif
 
 #ifdef LIBRDP_HAVE_BSDAUTH
@@ -216,7 +224,7 @@ static void x11_managed_auth_free_responses(struct pam_response* responses,
  */
 static int x11_managed_auth_pam_converse(
     int count,
-    const struct pam_message** messages,
+    x11_managed_pam_message_ptr* messages,
     struct pam_response** output,
     void* user_data)
 {
@@ -356,10 +364,12 @@ static librdp_status x11_managed_auth_open_pam(
                        &session->pam);
     if (result == PAM_SUCCESS &&
         !x11_managed_auth_cancelled(cancelled, cancel_user_data))
-        result = pam_authenticate(session->pam, PAM_SILENT);
+        result = pam_authenticate(session->pam,
+                                  X11_MANAGED_PAM_SILENT);
     if (result == PAM_SUCCESS &&
         !x11_managed_auth_cancelled(cancelled, cancel_user_data))
-        result = pam_acct_mgmt(session->pam, PAM_SILENT);
+        result = pam_acct_mgmt(session->pam,
+                               X11_MANAGED_PAM_SILENT);
     if (x11_managed_auth_cancelled(cancelled, cancel_user_data))
     {
         *outcome = X11_MANAGED_AUTH_CANCELLED;
@@ -375,7 +385,8 @@ static librdp_status x11_managed_auth_open_pam(
         return LIBRDP_STATUS_IO_ERROR;
     }
     session->pam_credentials = 1;
-    result = pam_open_session(session->pam, PAM_SILENT);
+    result = pam_open_session(session->pam,
+                              X11_MANAGED_PAM_SILENT);
     if (result != PAM_SUCCESS)
     {
         *outcome = X11_MANAGED_AUTH_UNAVAILABLE;
@@ -565,7 +576,8 @@ void x11_managed_auth_session_close(x11_managed_auth_session* session)
     if (session->pam)
     {
         if (session->pam_opened)
-            (void)pam_close_session(session->pam, PAM_SILENT);
+            (void)pam_close_session(session->pam,
+                                    X11_MANAGED_PAM_SILENT);
         if (session->pam_credentials)
             (void)pam_setcred(session->pam, PAM_DELETE_CRED);
         (void)pam_end(session->pam, PAM_SUCCESS);

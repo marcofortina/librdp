@@ -12,6 +12,8 @@
 #include "test_server_support.h"
 #include "test_server_suites.h"
 
+#include <string.h>
+
 int test_server_config_defaults(void)
 {
     librdp_server_config config;

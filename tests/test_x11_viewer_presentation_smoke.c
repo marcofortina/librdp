@@ -259,6 +259,7 @@ static pid_t viewer_smoke_start_xvfb(const char* display_name,
           "-ac",
           (char*)NULL);
     _exit(127);
+    return -1;
 }
 
 static Display* viewer_smoke_wait_display(const char* display_name,
@@ -304,6 +305,7 @@ static pid_t viewer_smoke_start_server(const char* family,
           state_path,
           (char*)NULL);
     _exit(127);
+    return -1;
 }
 
 static pid_t viewer_smoke_start_pointer_server(
@@ -331,6 +333,7 @@ static pid_t viewer_smoke_start_pointer_server(
           ack_path,
           (char*)NULL);
     _exit(127);
+    return -1;
 }
 
 static int viewer_smoke_wait_state(const char* state_path,
@@ -419,6 +422,7 @@ static pid_t viewer_smoke_start_viewer(const char* display_name,
           height_text,
           (char*)NULL);
     _exit(127);
+    return -1;
 }
 
 static Window viewer_smoke_find_window(Display* display,

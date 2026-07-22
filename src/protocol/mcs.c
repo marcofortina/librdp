@@ -132,15 +132,17 @@ static librdp_status rdp_mcs_write_per_integer16(rdp_buffer* buffer, uint16_t va
 
 static librdp_status rdp_mcs_read_per_integer16(rdp_stream* stream, uint16_t min, uint16_t* value)
 {
+    uint32_t decoded = 0u;
     uint16_t raw = 0;
 
     if (!stream || !value)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (rdp_stream_read_u16_be(stream, &raw) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (raw > (uint16_t)(0xffffu - min))
+    decoded = (uint32_t)raw + (uint32_t)min;
+    if (decoded > UINT16_MAX)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    *value = (uint16_t)(raw + min);
+    *value = (uint16_t)decoded;
     return LIBRDP_STATUS_OK;
 }
 

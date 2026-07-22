@@ -81,6 +81,28 @@ librdp_pkg_dependency(LIBRDP_WITH_PIPEWIRE LIBRDP_PIPEWIRE libpipewire-0.3)
 librdp_pkg_dependency(LIBRDP_WITH_JPEG LIBRDP_JPEG libjpeg)
 librdp_pkg_dependency(LIBRDP_WITH_FUSE3 LIBRDP_FUSE3 fuse3)
 
+set(LIBRDP_JPEG_FOUND_REASON "")
+if(LIBRDP_JPEG_FOUND)
+    set(LIBRDP_JPEG_REQUIRED_INCLUDES "${CMAKE_REQUIRED_INCLUDES}")
+    set(LIBRDP_JPEG_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES}")
+    set(CMAKE_REQUIRED_INCLUDES ${LIBRDP_JPEG_INCLUDE_DIRS})
+    set(CMAKE_REQUIRED_LIBRARIES PkgConfig::LIBRDP_JPEG)
+    check_c_source_compiles(
+        "#include <stddef.h>\n#include <stdio.h>\n#include <jpeglib.h>\nint main(void)\n{\n    struct jpeg_decompress_struct codec;\n    const unsigned char data[1] = { 0 };\n    jpeg_mem_src(&codec, data, sizeof(data));\n    return 0;\n}"
+        LIBRDP_JPEG_HAS_MEMORY_SOURCE
+    )
+    set(CMAKE_REQUIRED_INCLUDES "${LIBRDP_JPEG_REQUIRED_INCLUDES}")
+    set(CMAKE_REQUIRED_LIBRARIES "${LIBRDP_JPEG_REQUIRED_LIBRARIES}")
+    if(NOT LIBRDP_JPEG_HAS_MEMORY_SOURCE)
+        if("${LIBRDP_WITH_JPEG}" STREQUAL "ON")
+            message(FATAL_ERROR
+                "LIBRDP_WITH_JPEG=ON requires libjpeg with jpeg_mem_src")
+        endif()
+        set(LIBRDP_JPEG_FOUND 0)
+        set(LIBRDP_JPEG_FOUND_REASON missing-memory-source)
+    endif()
+endif()
+
 set(LIBRDP_PAM_FOUND 0)
 if(NOT "${LIBRDP_WITH_PAM}" STREQUAL "OFF" AND
    (NOT CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR

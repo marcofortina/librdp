@@ -361,11 +361,20 @@ if(LIBRDP_BUILD_TESTS)
             target_link_libraries(
                 test_x11_viewer_presentation_smoke
                 PRIVATE
-                    OpenSSL::Crypto
-                    ${X11_LIBRARIES}
-                    X11::Xfixes
-                    ${X11_Xtst_LIB}
+                    ${LIBRDP_X11_LINK_BASE}
+                    ${LIBRDP_X11_LINK_FIXES}
             )
+            if(CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+                target_link_libraries(
+                    test_x11_viewer_presentation_smoke
+                    PRIVATE ${X11_Xtst_LIB}
+                )
+            else()
+                target_link_libraries(
+                    test_x11_viewer_presentation_smoke
+                    PRIVATE X11::Xtst
+                )
+            endif()
             add_dependencies(
                 test_x11_viewer_presentation_smoke
                 librdp-viewer
@@ -1115,6 +1124,17 @@ if(LIBRDP_BUILD_TESTS)
             ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/optional_backend_matrix.cmake)
     set_tests_properties(optional_backend_matrix PROPERTIES TIMEOUT 300)
+    add_test(NAME jpeg_backend_gating
+        COMMAND ${CMAKE_COMMAND}
+            "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+            "-DLIBRDP_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+            "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
+            "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+            "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+            ${LIBRDP_NESTED_CONFIGURE_ARGS}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/jpeg_backend_gating.cmake)
+    set_tests_properties(jpeg_backend_gating PROPERTIES TIMEOUT 120)
     add_test(NAME shared_symbol_visibility
         COMMAND ${CMAKE_COMMAND}
             "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
