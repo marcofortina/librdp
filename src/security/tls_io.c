@@ -20,6 +20,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/socket.h>
 
 typedef struct rdp_tls_sigpipe_guard
 {
@@ -30,10 +31,12 @@ typedef struct rdp_tls_sigpipe_guard
 } rdp_tls_sigpipe_guard;
 
 /*
- * Block SIGPIPE on the current thread and remember whether the caller already
- * had one pending. Failure is reported before OpenSSL can perform any I/O.
+ * Suppress socket-generated SIGPIPE where the platform supports it, block the
+ * signal on the current thread and remember whether the caller already had one
+ * pending. Failure is reported before OpenSSL can perform any I/O.
  */
-static int rdp_tls_sigpipe_guard_begin(rdp_tls_sigpipe_guard* guard)
+static int rdp_tls_sigpipe_guard_begin(rdp_tls_sigpipe_guard* guard,
+                                       SSL* tls)
 {
     sigset_t pending;
     int rc = 0;
@@ -64,6 +67,33 @@ static int rdp_tls_sigpipe_guard_begin(rdp_tls_sigpipe_guard* guard)
         return 0;
     }
     guard->pending_before = sigismember(&pending, SIGPIPE) == 1;
+#ifdef SO_NOSIGPIPE
+    {
+        int descriptor = SSL_get_fd(tls);
+
+        if (descriptor >= 0)
+        {
+            int enabled = 1;
+
+            if (setsockopt(descriptor,
+                           SOL_SOCKET,
+                           SO_NOSIGPIPE,
+                           &enabled,
+                           sizeof(enabled)) != 0)
+            {
+                int saved_errno = errno;
+
+                (void)pthread_sigmask(
+                    SIG_SETMASK, &guard->previous_mask, NULL);
+                guard->active = 0;
+                errno = saved_errno;
+                return 0;
+            }
+        }
+    }
+#else
+    (void)tls;
+#endif
     return 1;
 }
 
@@ -101,7 +131,7 @@ int rdp_tls_io_connect(SSL* tls)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_tls_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_sigpipe_guard_begin(&guard, tls))
         return -1;
     result = SSL_connect(tls);
     rdp_tls_sigpipe_guard_end(&guard);
@@ -118,7 +148,7 @@ int rdp_tls_io_accept(SSL* tls)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_tls_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_sigpipe_guard_begin(&guard, tls))
         return -1;
     result = SSL_accept(tls);
     rdp_tls_sigpipe_guard_end(&guard);
@@ -135,7 +165,7 @@ int rdp_tls_io_read(SSL* tls, void* data, int length)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_tls_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_sigpipe_guard_begin(&guard, tls))
         return -1;
     result = SSL_read(tls, data, length);
     rdp_tls_sigpipe_guard_end(&guard);
@@ -152,7 +182,7 @@ int rdp_tls_io_write(SSL* tls, const void* data, int length)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_tls_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_sigpipe_guard_begin(&guard, tls))
         return -1;
     result = SSL_write(tls, data, length);
     rdp_tls_sigpipe_guard_end(&guard);
@@ -169,7 +199,7 @@ int rdp_tls_io_shutdown(SSL* tls)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_tls_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_sigpipe_guard_begin(&guard, tls))
         return -1;
     result = SSL_shutdown(tls);
     rdp_tls_sigpipe_guard_end(&guard);
