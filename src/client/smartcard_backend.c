@@ -131,6 +131,44 @@ static void rdp_smartcard_sleep_ms(uint32_t timeout_ms)
         requested = remaining;
 }
 
+/*
+ * Wait for a mock-provider delay using elapsed monotonic time. Counting sleep
+ * slices would extend the fixture whenever its worker is descheduled, making
+ * cancellation tests depend on host load instead of the configured delay.
+ */
+static int rdp_smartcard_mock_wait(uint32_t delay_ms,
+                                   const atomic_uint* cancelled,
+                                   int ignore_cancel)
+{
+    struct timespec started;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &started) != 0)
+        return 0;
+    for (;;)
+    {
+        struct timespec current;
+        uint64_t elapsed_ms = 0;
+        uint32_t sleep_ms = 0;
+
+        if (!ignore_cancel && cancelled &&
+            atomic_load_explicit(cancelled, memory_order_acquire) != 0u)
+            return 1;
+        if (clock_gettime(CLOCK_MONOTONIC, &current) != 0)
+            return 0;
+        elapsed_ms = (uint64_t)(current.tv_sec - started.tv_sec) * 1000u;
+        if (current.tv_nsec >= started.tv_nsec)
+            elapsed_ms += (uint64_t)(current.tv_nsec - started.tv_nsec) / 1000000u;
+        else
+            elapsed_ms -= (uint64_t)(started.tv_nsec - current.tv_nsec) / 1000000u;
+        if (elapsed_ms >= delay_ms)
+            return 0;
+        sleep_ms = delay_ms - (uint32_t)elapsed_ms;
+        if (sleep_ms > 10u)
+            sleep_ms = 10u;
+        rdp_smartcard_sleep_ms(sleep_ms);
+    }
+}
+
 static void rdp_smartcard_timespec_after_ms(struct timespec* out, uint32_t timeout_ms)
 {
     long add_ns = 0;
@@ -1133,20 +1171,14 @@ static LONG rdp_smartcard_mock_get_status_change(void* user_data,
                                                  DWORD count)
 {
     rdp_smartcard_mock_backend* mock = rdp_smartcard_mock(user_data);
-    uint32_t waited = 0;
 
     (void)context;
     (void)timeout;
     if (!mock)
         return SCARD_E_INVALID_PARAMETER;
     atomic_fetch_add_explicit(&mock->status_change_calls, 1u, memory_order_relaxed);
-    while (mock->hang_status_change_ms > waited)
-    {
-        if (atomic_load_explicit(&mock->cancelled, memory_order_acquire))
-            return SCARD_E_CANCELLED;
-        rdp_smartcard_sleep_ms(10u);
-        waited += 10u;
-    }
+    if (rdp_smartcard_mock_wait(mock->hang_status_change_ms, &mock->cancelled, 0))
+        return SCARD_E_CANCELLED;
     if (readers && count > 0)
     {
         readers[0].dwEventState = mock->next_state;
@@ -1174,7 +1206,6 @@ static LONG rdp_smartcard_mock_connect(void* user_data,
                                        DWORD* active_protocol)
 {
     rdp_smartcard_mock_backend* mock = rdp_smartcard_mock(user_data);
-    uint32_t waited = 0;
     LONG status = SCARD_E_INVALID_PARAMETER;
 
     (void)context;
@@ -1190,18 +1221,11 @@ static LONG rdp_smartcard_mock_connect(void* user_data,
         *handle = mock->next_handle ? mock->next_handle : (SCARDHANDLE)2u;
         *active_protocol = mock->next_protocol;
     }
-    while (mock->hang_connect_ms > waited)
-    {
-        if (!mock->ignore_connect_cancel &&
-            atomic_load_explicit(&mock->cancelled, memory_order_acquire))
-        {
-            status = SCARD_E_CANCELLED;
-            break;
-        }
-        rdp_smartcard_sleep_ms(10u);
-        waited += 10u;
-    }
-    if (waited >= mock->hang_connect_ms)
+    if (rdp_smartcard_mock_wait(mock->hang_connect_ms,
+                                &mock->cancelled,
+                                mock->ignore_connect_cancel))
+        status = SCARD_E_CANCELLED;
+    else
         status = mock->connect_status;
     atomic_fetch_sub_explicit(&mock->connect_active, 1u, memory_order_acq_rel);
     return status;
@@ -1285,7 +1309,6 @@ static LONG rdp_smartcard_mock_transmit(void* user_data,
                                         DWORD* recv_len)
 {
     rdp_smartcard_mock_backend* mock = rdp_smartcard_mock(user_data);
-    uint32_t waited = 0;
     DWORD copy_len = 0;
 
     (void)handle;
@@ -1295,13 +1318,8 @@ static LONG rdp_smartcard_mock_transmit(void* user_data,
     if (!mock || !recv_len)
         return SCARD_E_INVALID_PARAMETER;
     atomic_fetch_add_explicit(&mock->transmit_calls, 1u, memory_order_relaxed);
-    while (mock->hang_transmit_ms > waited)
-    {
-        if (atomic_load_explicit(&mock->cancelled, memory_order_acquire))
-            return SCARD_E_CANCELLED;
-        rdp_smartcard_sleep_ms(10u);
-        waited += 10u;
-    }
+    if (rdp_smartcard_mock_wait(mock->hang_transmit_ms, &mock->cancelled, 0))
+        return SCARD_E_CANCELLED;
     if (mock->transmit_status == SCARD_S_SUCCESS && recv_data)
     {
         copy_len = *recv_len < mock->transmit_response_len ? *recv_len : mock->transmit_response_len;
