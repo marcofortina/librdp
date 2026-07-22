@@ -12,6 +12,7 @@
 #include "test_server_support.h"
 
 #include "channels/virtual_channel.h"
+#include "security/tls_io.h"
 
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -368,7 +369,7 @@ int test_server_tls_write_all(SSL* tls, const uint8_t* data, size_t length)
     while (offset < length)
     {
         int chunk = (length - offset) > (size_t)INT32_MAX ? INT32_MAX : (int)(length - offset);
-        int written = SSL_write(tls, data + offset, chunk);
+        int written = rdp_tls_io_write(tls, data + offset, chunk);
 
         if (written <= 0)
         {
@@ -399,7 +400,7 @@ static int test_server_tls_read_exact(SSL* tls, uint8_t* data, size_t length)
     {
         size_t remaining = length - offset;
         int chunk = remaining > (size_t)INT32_MAX ? INT32_MAX : (int)remaining;
-        int read_len = SSL_read(tls, data + offset, chunk);
+        int read_len = rdp_tls_io_read(tls, data + offset, chunk);
 
         if (read_len <= 0)
         {

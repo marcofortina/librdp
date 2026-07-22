@@ -1519,7 +1519,10 @@ void rdp_transport_close(rdp_transport* transport)
     transport->curl_active = 0;
     transport->curl_socket = -1;
     if (transport->fd >= 0 && transport->owns_fd)
+    {
+        (void)shutdown(transport->fd, SHUT_RDWR);
         rdp_socket_close(transport->fd);
+    }
     transport->fd = -1;
     transport->owns_fd = 0;
     rdp_buffer_free(&transport->read_buffer);

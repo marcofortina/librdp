@@ -33,6 +33,7 @@
 #include "protocol/session_selection.h"
 #include "server/server_internal.h"
 #include "server/server_security.h"
+#include "security/tls_io.h"
 
 #include <librdp/librdp.h>
 
@@ -5749,7 +5750,7 @@ static void* smoke_security_peer_main(void* user_data)
         tls = SSL_new(tls_context);
         if (!tls || SSL_set_fd(tls, client) != 1)
             goto cleanup;
-        tls_result = SSL_accept(tls);
+        tls_result = rdp_tls_io_accept(tls);
         if (tls_result != 1)
             ERR_clear_error();
     }

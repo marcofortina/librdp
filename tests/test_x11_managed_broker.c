@@ -561,6 +561,8 @@ static int test_broker_lifecycle(void)
     x11_managed_ipc_message response;
     uint64_t session_id = 0u;
     char token[X11_MANAGED_IPC_TOKEN_BYTES];
+    sigset_t previous_mask;
+    sigset_t termination_signal;
     pid_t orphan_group = -1;
     int length = 0;
 
@@ -613,6 +615,11 @@ static int test_broker_lifecycle(void)
     CHECK(setenv("LIBRDP_TEST_MANAGED_CLEANUP_MARKER",
                  cleanup_marker,
                  1) == 0);
+    CHECK(sigemptyset(&termination_signal) == 0);
+    CHECK(sigaddset(&termination_signal, SIGTERM) == 0);
+    CHECK(pthread_sigmask(SIG_BLOCK,
+                          &termination_signal,
+                          &previous_mask) == 0);
     CHECK(test_start_broker(
         &policy, &first, &first_thread));
     test_start_request(
@@ -620,6 +627,9 @@ static int test_broker_lifecycle(void)
     CHECK(test_request_error(
         socket_path, &request, LIBRDP_STATUS_CLOSED));
     CHECK(test_wait_path(cleanup_marker, 1, 5000));
+    CHECK(pthread_sigmask(SIG_SETMASK,
+                          &previous_mask,
+                          NULL) == 0);
     CHECK(unlink(cleanup_marker) == 0);
     x11_managed_ipc_message_clear(&request);
     test_start_request(

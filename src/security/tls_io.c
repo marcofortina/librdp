@@ -15,11 +15,29 @@
 #include "security/tls_io.h"
 
 #include "platform/sigpipe.h"
+#include "platform/socket.h"
 
 #include <openssl/ssl.h>
 
 #include <errno.h>
 #include <string.h>
+
+/* Apply the native socket policy before entering the signal-mask fallback. */
+static int rdp_tls_io_guard_begin(SSL* tls,
+                                  rdp_sigpipe_guard* guard)
+{
+    int fd = -1;
+
+    if (!tls || !guard)
+    {
+        errno = EINVAL;
+        return 0;
+    }
+    fd = SSL_get_fd(tls);
+    if (fd >= 0 && rdp_socket_set_nosigpipe(fd) != 0)
+        return 0;
+    return rdp_sigpipe_guard_begin(guard);
+}
 
 int rdp_tls_io_connect(SSL* tls)
 {
@@ -31,7 +49,7 @@ int rdp_tls_io_connect(SSL* tls)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_io_guard_begin(tls, &guard))
         return -1;
     result = SSL_connect(tls);
     rdp_sigpipe_guard_end(&guard);
@@ -48,7 +66,7 @@ int rdp_tls_io_accept(SSL* tls)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_io_guard_begin(tls, &guard))
         return -1;
     result = SSL_accept(tls);
     rdp_sigpipe_guard_end(&guard);
@@ -65,7 +83,7 @@ int rdp_tls_io_read(SSL* tls, void* data, int length)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_io_guard_begin(tls, &guard))
         return -1;
     result = SSL_read(tls, data, length);
     rdp_sigpipe_guard_end(&guard);
@@ -82,7 +100,7 @@ int rdp_tls_io_write(SSL* tls, const void* data, int length)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_io_guard_begin(tls, &guard))
         return -1;
     result = SSL_write(tls, data, length);
     rdp_sigpipe_guard_end(&guard);
@@ -99,7 +117,7 @@ int rdp_tls_io_shutdown(SSL* tls)
         errno = EINVAL;
         return -1;
     }
-    if (!rdp_sigpipe_guard_begin(&guard))
+    if (!rdp_tls_io_guard_begin(tls, &guard))
         return -1;
     result = SSL_shutdown(tls);
     rdp_sigpipe_guard_end(&guard);

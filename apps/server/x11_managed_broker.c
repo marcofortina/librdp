@@ -281,6 +281,12 @@ static void x11_managed_broker_worker_operation(
     pthread_mutex_unlock(&broker->mutex);
 }
 
+/*
+ * Spawn a supervisor with only its control descriptor inherited. The child
+ * receives an empty signal mask and default termination dispositions so the
+ * broker thread's signal state cannot prevent orderly shutdown. Setup failures
+ * close both socket endpoints without publishing a process or descriptor.
+ */
 static librdp_status x11_managed_broker_spawn_supervisor(
     x11_managed_broker_worker* worker,
     int* descriptor,
@@ -288,10 +294,14 @@ static librdp_status x11_managed_broker_spawn_supervisor(
 {
     x11_managed_broker* broker = worker->broker;
     posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attributes;
+    sigset_t default_signals;
+    sigset_t empty_mask;
     char descriptor_text[32];
     char* arguments[8];
     int sockets[2] = {-1, -1};
     int spawn_status = 0;
+    short spawn_flags = 0;
     int length = 0;
 
     if (!descriptor || !process)
@@ -319,6 +329,38 @@ static librdp_status x11_managed_broker_spawn_supervisor(
         close(sockets[1]);
         return LIBRDP_STATUS_IO_ERROR;
     }
+    if (posix_spawnattr_init(&attributes) != 0)
+    {
+        posix_spawn_file_actions_destroy(&actions);
+        close(sockets[0]);
+        close(sockets[1]);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    if (sigemptyset(&empty_mask) != 0 ||
+        sigemptyset(&default_signals) != 0 ||
+        sigaddset(&default_signals, SIGTERM) != 0 ||
+        sigaddset(&default_signals, SIGINT) != 0 ||
+        sigaddset(&default_signals, SIGHUP) != 0)
+    {
+        posix_spawnattr_destroy(&attributes);
+        posix_spawn_file_actions_destroy(&actions);
+        close(sockets[0]);
+        close(sockets[1]);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    spawn_flags = (short)(POSIX_SPAWN_SETSIGMASK |
+                          POSIX_SPAWN_SETSIGDEF);
+    if (posix_spawnattr_setsigmask(&attributes, &empty_mask) != 0 ||
+        posix_spawnattr_setsigdefault(&attributes,
+                                      &default_signals) != 0 ||
+        posix_spawnattr_setflags(&attributes, spawn_flags) != 0)
+    {
+        posix_spawnattr_destroy(&attributes);
+        posix_spawn_file_actions_destroy(&actions);
+        close(sockets[0]);
+        close(sockets[1]);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
     if ((sockets[1] != 3 &&
          posix_spawn_file_actions_adddup2(
              &actions, sockets[1], 3) != 0) ||
@@ -329,6 +371,7 @@ static librdp_status x11_managed_broker_spawn_supervisor(
          posix_spawn_file_actions_addclose(
              &actions, sockets[1]) != 0))
     {
+        posix_spawnattr_destroy(&attributes);
         posix_spawn_file_actions_destroy(&actions);
         close(sockets[0]);
         close(sockets[1]);
@@ -346,9 +389,10 @@ static librdp_status x11_managed_broker_spawn_supervisor(
         process,
         broker->policy.supervisor_path,
         &actions,
-        NULL,
+        &attributes,
         arguments,
         environ);
+    posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
     close(sockets[1]);
     if (spawn_status != 0)

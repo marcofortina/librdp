@@ -12,7 +12,30 @@
 #include "test_server_support.h"
 #include "test_server_suites.h"
 
+#include <pthread.h>
 #include <string.h>
+
+typedef struct server_runtime_dispatch
+{
+    librdp_server_peer* peer;
+    int timeout_ms;
+    librdp_status status;
+} server_runtime_dispatch;
+
+/* Run one server dispatch while the synthetic client drains its output. */
+static void* server_runtime_dispatch_once(void* user_data)
+{
+    server_runtime_dispatch* dispatch =
+        (server_runtime_dispatch*)user_data;
+
+    if (dispatch && dispatch->peer)
+    {
+        dispatch->status = librdp_server_peer_run_once(
+            dispatch->peer,
+            dispatch->timeout_ms);
+    }
+    return NULL;
+}
 
 /*
  * Server GFX commands use one uncompressed bulk segment in these bounded API
@@ -374,6 +397,8 @@ int test_server_loopback_standard_activation_sequence(void)
     int client_fd = -1;
     int response_len = 0;
     int extension_enabled = 0;
+    pthread_t reactivation_thread;
+    server_runtime_dispatch reactivation_dispatch;
     size_t poll_count = 0;
     struct pollfd pollfds[2];
     librdp_server_config config;
@@ -505,6 +530,8 @@ int test_server_loopback_standard_activation_sequence(void)
     memset(&dynamic_path, 0, sizeof(dynamic_path));
     memset(&runtime_context, 0, sizeof(runtime_context));
     memset(&device_family_context, 0, sizeof(device_family_context));
+    memset(&reactivation_dispatch, 0,
+           sizeof(reactivation_dispatch));
     memset(clipboard_formats, 0, sizeof(clipboard_formats));
     SCHECK(librdp_server_clipboard_state_init(&clipboard_state) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_extension_state_init(&extension_state) == LIBRDP_STATUS_OK);
@@ -4587,9 +4614,13 @@ int test_server_loopback_standard_activation_sequence(void)
         demand.share_id,
         attach_confirm.user_id,
         &client_security));
-    status = librdp_server_peer_run_once(peer, 1000);
-    SCHECK(status == LIBRDP_STATUS_OK);
-    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVE);
+    reactivation_dispatch.peer = peer;
+    reactivation_dispatch.timeout_ms = 1000;
+    reactivation_dispatch.status = LIBRDP_STATUS_AGAIN;
+    SCHECK(pthread_create(&reactivation_thread,
+                          NULL,
+                          server_runtime_dispatch_once,
+                          &reactivation_dispatch) == 0);
     SCHECK(test_server_read_encrypted_slowpath_data_pdu(client_fd,
                                                         response,
                                                         sizeof(response),
@@ -4625,7 +4656,6 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(repaint_area ==
            (uint64_t)LIBRDP_DESKTOP_MIN_DIMENSION *
                LIBRDP_DESKTOP_MIN_DIMENSION);
-    SCHECK(runtime_context.surface_event_count == 4);
     SCHECK(test_server_read_encrypted_autodetect_request(
         client_fd,
         response,
@@ -4636,6 +4666,12 @@ int test_server_loopback_standard_activation_sequence(void)
         &autodetect_request));
     SCHECK(autodetect_request.message_type ==
            RDP_NETWORK_AUTODETECT_RTT_REQUEST_CONTINUOUS);
+    SCHECK(pthread_join(reactivation_thread, NULL) == 0);
+    status = reactivation_dispatch.status;
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(runtime_context.surface_event_count == 4);
+    SCHECK(librdp_server_peer_get_state(peer) ==
+           LIBRDP_SERVER_PEER_ACTIVE);
     SCHECK(test_server_send_encrypted_autodetect_rtt_response(
         client_fd,
         attach_confirm.user_id,

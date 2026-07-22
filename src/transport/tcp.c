@@ -28,6 +28,23 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+/* Reject inputs that cannot be DNS names or numeric network addresses. */
+static int rdp_tcp_host_valid(const char* host)
+{
+    const unsigned char* cursor =
+        (const unsigned char*)host;
+
+    if (!cursor || *cursor == '\0')
+        return 0;
+    while (*cursor != '\0')
+    {
+        if (*cursor <= 0x20u || *cursor == 0x7fu)
+            return 0;
+        cursor++;
+    }
+    return 1;
+}
+
 /*
  * Wait for a nonblocking connect to finish and verify SO_ERROR before the
  * descriptor is handed to the transport. A writable descriptor alone does not
@@ -69,6 +86,15 @@ librdp_status rdp_tcp_connect(const char* host, uint16_t port, int timeout_ms, i
 
     if (!host || !out_fd || port == 0 || timeout_ms < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    if (!rdp_tcp_host_valid(host))
+    {
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.tcp.resolve.failed",
+                        "code=%d",
+                        EAI_NONAME);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
 
     *out_fd = -1;
     memset(&hints, 0, sizeof(hints));

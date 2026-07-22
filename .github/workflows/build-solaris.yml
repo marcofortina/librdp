@@ -30,12 +30,21 @@ jobs:
             export PATH=/usr/bin:/usr/sbin:/usr/gnu/bin:${PATH}
             pkg install --accept \
               library/security/openssl-3/legacy-provider \
+              x11/library/libxau \
+              x11/library/libxcomposite \
+              x11/library/libxcursor \
+              x11/library/libxdamage \
+              x11/library/libxfixes \
+              x11/library/libxkbcommon \
+              x11/library/libxrandr \
+              x11/library/libxtst \
               x11/server/xvfb
             command -v cmake
             command -v gcc
             command -v Xvfb
             test -f /usr/openssl/3/lib/64/ossl-modules/legacy.so
             test -f /usr/include/X11/Xlib.h
+            test -f /usr/include/X11/Xcursor/Xcursor.h
           run: |
             export PATH=/usr/bin:/usr/sbin:/usr/gnu/bin:${PATH}
             export CC=/usr/bin/gcc

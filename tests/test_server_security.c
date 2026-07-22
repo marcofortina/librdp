@@ -11,6 +11,7 @@
 
 #include "test_server_support.h"
 #include "test_server_suites.h"
+#include "security/tls_io.h"
 
 #include <string.h>
 
@@ -133,7 +134,7 @@ int test_server_loopback_tls_handshake(void)
     SCHECK(SSL_set_fd(client_tls, client_fd) == 1);
     for (int attempt = 0; attempt < 100 && !tls_ready; attempt++)
     {
-        int rc = SSL_connect(client_tls);
+        int rc = rdp_tls_io_connect(client_tls);
 
         if (rc == 1)
             tls_ready = 1;
@@ -383,7 +384,7 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
     SCHECK(SSL_set_fd(client_tls, client_fd) == 1);
     for (int attempt = 0; attempt < 100 && !tls_ready; attempt++)
     {
-        int rc = SSL_connect(client_tls);
+        int rc = rdp_tls_io_connect(client_tls);
 
         if (rc == 1)
             tls_ready = 1;
