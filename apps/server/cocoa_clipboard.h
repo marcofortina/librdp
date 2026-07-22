@@ -6,8 +6,8 @@
  * Module: private Cocoa clipboard provider contract.
  * Invariants: clipboard ownership and remote requests are generation-scoped,
  * and native payloads remain bounded before crossing the common host boundary.
- * Ownership: the provider object owns all pasteboard state and file promises.
- * Threading: vtable methods run on the host thread; promised-file writes use
+ * Ownership: the provider object owns all pasteboard state and downloaded files.
+ * Threading: vtable methods run on the host thread; remote-file downloads use
  * one cancellable worker queue and marshal requests through the event source.
  * Trust boundary: pasteboard types, payloads, URLs and remote file metadata
  * are validated before publication or filesystem access.

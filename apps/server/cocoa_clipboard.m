@@ -4,13 +4,13 @@
  */
 /*
  * Module: NSPasteboard adapter for the Cocoa desktop server.
- * Invariants: one remote format fetch and one promised-file range request are
+ * Invariants: one remote format fetch and one remote-file range request are
  * pending at a time, ownership generations suppress feedback, and every
  * retained payload stays within the common clipboard quotas.
- * Ownership: the provider owns native data, promise delegates, descriptors,
+ * Ownership: the provider owns native data, downloaded files, descriptors,
  * pipes and synchronization state; callback arguments are borrowed.
  * Threading: pasteboard and protocol methods execute on the host thread.
- * File promises run on one operation queue and exchange bounded work through
+ * File downloads run on one operation queue and exchange bounded work through
  * a mutex, condition variable and pollable wakeup pipe.
  * Trust boundary: native pasteboard content and remote clipboard bytes are
  * untrusted. Types, encodings, metadata, file names, offsets and lengths are
@@ -96,13 +96,12 @@ typedef struct cocoa_clipboard_file_wait
     int cancel_queued;
 } cocoa_clipboard_file_wait;
 
-@class CocoaServerFilePromiseDelegate;
-
 struct cocoa_server_clipboard
 {
     NSPasteboard* pasteboard;
-    NSOperationQueue* promise_queue;
-    NSMutableArray* promise_objects;
+    NSOperationQueue* file_queue;
+    NSMutableArray* remote_file_urls;
+    NSString* remote_file_directory;
     server_clipboard_files* local_files;
     server_platform_clipboard_sink sink;
     cocoa_clipboard_remote_format remote_formats[COCOA_CLIPBOARD_MAX_FORMATS];
@@ -126,25 +125,13 @@ struct cocoa_server_clipboard
     int wakeup_write_fd;
     cocoa_clipboard_file_wait file_wait;
     int prefetch_pending;
-    int promise_cancelled;
+    int file_download_started;
+    int file_download_complete;
+    librdp_status file_download_status;
+    int file_transfer_cancelled;
     int started;
     int stopping;
 };
-
-@interface CocoaServerFilePromiseDelegate
-    : NSObject <NSFilePromiseProviderDelegate>
-{
-    cocoa_server_clipboard* _clipboard;
-    NSString* _name;
-    uint32_t _index;
-    uint64_t _size;
-}
-- (id)initWithClipboard:(cocoa_server_clipboard*)clipboard
-                   name:(NSString*)name
-                  index:(uint32_t)index
-                   size:(uint64_t)size;
-- (void)invalidate;
-@end
 
 static void cocoa_clipboard_wakeup(cocoa_server_clipboard* clipboard)
 {
@@ -418,21 +405,8 @@ cocoa_clipboard_remote_files_clear(cocoa_server_clipboard* clipboard)
     clipboard->remote_file_count = 0u;
 }
 
-static void
-cocoa_clipboard_invalidate_promises(cocoa_server_clipboard* clipboard)
-{
-    if (!clipboard || !clipboard->promise_objects)
-        return;
-    for (id object in clipboard->promise_objects)
-    {
-        if ([object isKindOfClass:[CocoaServerFilePromiseDelegate class]])
-            [(CocoaServerFilePromiseDelegate*)object invalidate];
-    }
-    [clipboard->promise_objects removeAllObjects];
-}
-
 /*
- * Wake a promise worker before waiting for its operation queue. Requests
+ * Wake a file worker before waiting for its operation queue. Requests
  * already handed to the protocol runtime are marked for one cancellation;
  * work still queued locally is discarded without emitting a spurious cancel.
  */
@@ -491,28 +465,50 @@ static void cocoa_clipboard_flush_file_cancel(cocoa_server_clipboard* clipboard)
     }
 }
 
-static void cocoa_clipboard_reset_promises(cocoa_server_clipboard* clipboard)
+static void
+cocoa_clipboard_remove_downloads(cocoa_server_clipboard* clipboard)
+{
+    NSString* directory = nil;
+
+    if (!clipboard)
+        return;
+    directory = [clipboard->remote_file_directory retain];
+    [clipboard->remote_file_directory release];
+    clipboard->remote_file_directory = nil;
+    [clipboard->remote_file_urls removeAllObjects];
+    if (directory)
+    {
+        [[NSFileManager defaultManager] removeItemAtPath:directory error:nil];
+        [directory release];
+    }
+}
+
+static void
+cocoa_clipboard_reset_file_transfers(cocoa_server_clipboard* clipboard)
 {
     if (!clipboard)
         return;
     if (clipboard->lock_ready)
     {
         pthread_mutex_lock(&clipboard->lock);
-        clipboard->promise_cancelled = 1;
+        clipboard->file_transfer_cancelled = 1;
         pthread_mutex_unlock(&clipboard->lock);
     }
     cocoa_clipboard_cancel_file_wait(clipboard);
-    if (clipboard->promise_queue)
+    if (clipboard->file_queue)
     {
-        [clipboard->promise_queue cancelAllOperations];
-        [clipboard->promise_queue waitUntilAllOperationsAreFinished];
+        [clipboard->file_queue cancelAllOperations];
+        [clipboard->file_queue waitUntilAllOperationsAreFinished];
     }
-    cocoa_clipboard_invalidate_promises(clipboard);
     cocoa_clipboard_flush_file_cancel(clipboard);
+    cocoa_clipboard_remove_downloads(clipboard);
     if (clipboard->lock_ready)
     {
         pthread_mutex_lock(&clipboard->lock);
-        clipboard->promise_cancelled = 0;
+        clipboard->file_download_started = 0;
+        clipboard->file_download_complete = 0;
+        clipboard->file_download_status = LIBRDP_STATUS_OK;
+        clipboard->file_transfer_cancelled = 0;
         pthread_mutex_unlock(&clipboard->lock);
     }
 }
@@ -524,7 +520,7 @@ static void cocoa_clipboard_remote_clear(cocoa_server_clipboard* clipboard,
 
     if (!clipboard)
         return;
-    cocoa_clipboard_reset_promises(clipboard);
+    cocoa_clipboard_reset_file_transfers(clipboard);
     for (index = 0u; index < clipboard->remote_format_count; index++)
     {
         if (clipboard->remote_formats[index].state ==
@@ -679,17 +675,6 @@ cocoa_clipboard_decode_remote_data(cocoa_server_clipboard* clipboard,
     return LIBRDP_STATUS_OK;
 }
 
-static NSError* cocoa_clipboard_error(librdp_status status)
-{
-    return [NSError
-        errorWithDomain:@"org.librdp.server.clipboard"
-                   code:(NSInteger)status
-               userInfo:@{
-                   NSLocalizedDescriptionKey : [NSString
-                       stringWithUTF8String:librdp_status_description(status)]
-               }];
-}
-
 static void cocoa_clipboard_file_wait_finish(cocoa_server_clipboard* clipboard,
                                              librdp_status status,
                                              const uint8_t* data,
@@ -773,7 +758,7 @@ cocoa_clipboard_request_file_range(cocoa_server_clipboard* clipboard,
     wait = &clipboard->file_wait;
     cocoa_clipboard_deadline(&deadline);
     pthread_mutex_lock(&clipboard->lock);
-    if (clipboard->stopping || clipboard->promise_cancelled)
+    if (clipboard->stopping || clipboard->file_transfer_cancelled)
     {
         pthread_mutex_unlock(&clipboard->lock);
         return LIBRDP_STATUS_CANCELLED;
@@ -840,10 +825,10 @@ cocoa_clipboard_request_file_range(cocoa_server_clipboard* clipboard,
 }
 
 static librdp_status
-cocoa_clipboard_write_promised_file_contents(cocoa_server_clipboard* clipboard,
-                                             uint32_t index,
-                                             uint64_t file_size,
-                                             NSURL* destination)
+cocoa_clipboard_write_remote_file_contents(cocoa_server_clipboard* clipboard,
+                                           uint32_t index,
+                                           uint64_t file_size,
+                                           NSURL* destination)
 {
     const char* path = NULL;
     uint64_t position = 0u;
@@ -905,110 +890,159 @@ cocoa_clipboard_write_promised_file_contents(cocoa_server_clipboard* clipboard,
     return status;
 }
 
+static int cocoa_clipboard_file_name_valid(const char* name)
+{
+    size_t length = name ? strlen(name) : 0u;
+
+    return length > 0u && length <= NAME_MAX && strcmp(name, ".") != 0 &&
+           strcmp(name, "..") != 0 && !strchr(name, '/') &&
+           !strchr(name, '\\');
+}
+
+static NSString* cocoa_clipboard_create_download_directory(void)
+{
+    const char* temporary = [NSTemporaryDirectory() fileSystemRepresentation];
+    char path[PATH_MAX];
+    size_t temporary_len = temporary ? strlen(temporary) : 0u;
+    const char* separator =
+        temporary_len > 0u && temporary[temporary_len - 1u] == '/' ? "" : "/";
+    int written = 0;
+
+    if (!temporary || temporary_len == 0u)
+        return nil;
+    written = snprintf(path,
+                       sizeof(path),
+                       "%s%slibrdp-cocoa-clipboard-XXXXXX",
+                       temporary,
+                       separator);
+    if (written <= 0 || (size_t)written >= sizeof(path) || !mkdtemp(path))
+        return nil;
+    if (chmod(path, 0700) != 0)
+    {
+        (void)rmdir(path);
+        return nil;
+    }
+    return [[NSString alloc] initWithUTF8String:path];
+}
+
+/*
+ * Download remote clipboard files before publishing native URLs. General
+ * pasteboards do not provide the drag-session contract required by
+ * NSFilePromiseReceiver, so exposing promises there produces entries that
+ * cannot be materialized by ordinary pasteboard consumers.
+ */
+static void
+cocoa_clipboard_materialize_remote_files(cocoa_server_clipboard* clipboard)
+{
+    NSString* directory = nil;
+    NSMutableArray* urls = nil;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t index = 0u;
+    int cancelled = 0;
+
+    @autoreleasepool
+    {
+        if (!clipboard)
+            return;
+        directory = cocoa_clipboard_create_download_directory();
+        urls = [[NSMutableArray alloc] init];
+        if (!directory || !urls)
+            status = LIBRDP_STATUS_NO_MEMORY;
+        for (index = 0u;
+             status == LIBRDP_STATUS_OK &&
+             index < clipboard->remote_file_count;
+             index++)
+        {
+            cocoa_clipboard_remote_file* file =
+                &clipboard->remote_files[index];
+            NSString* name = nil;
+            NSString* path = nil;
+            NSURL* url = nil;
+
+            pthread_mutex_lock(&clipboard->lock);
+            cancelled = clipboard->file_transfer_cancelled ||
+                        clipboard->stopping;
+            pthread_mutex_unlock(&clipboard->lock);
+            if (cancelled)
+            {
+                status = LIBRDP_STATUS_CANCELLED;
+                break;
+            }
+            if (!cocoa_clipboard_file_name_valid(file->name))
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
+            }
+            name = [NSString stringWithUTF8String:file->name];
+            path = name ? [directory stringByAppendingPathComponent:name] : nil;
+            url = path ? [NSURL fileURLWithPath:path] : nil;
+            if (!url)
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
+            }
+            status = cocoa_clipboard_write_remote_file_contents(
+                clipboard, file->index, file->size, url);
+            if (status == LIBRDP_STATUS_OK)
+                [urls addObject:url];
+        }
+        pthread_mutex_lock(&clipboard->lock);
+        if (clipboard->file_transfer_cancelled || clipboard->stopping)
+            status = LIBRDP_STATUS_CANCELLED;
+        if (status == LIBRDP_STATUS_OK)
+        {
+            clipboard->remote_file_directory = directory;
+            directory = nil;
+            [clipboard->remote_file_urls addObjectsFromArray:urls];
+        }
+        clipboard->file_download_status = status;
+        clipboard->file_download_complete = 1;
+        pthread_mutex_unlock(&clipboard->lock);
+        if (directory)
+            [[NSFileManager defaultManager] removeItemAtPath:directory
+                                                       error:nil];
+        [directory release];
+        [urls release];
+        cocoa_clipboard_wakeup(clipboard);
+    }
+}
+
 static librdp_status
-cocoa_clipboard_write_promised_file(cocoa_server_clipboard* clipboard,
-                                    uint32_t index,
-                                    uint64_t file_size,
-                                    NSURL* destination)
+cocoa_clipboard_start_file_download(cocoa_server_clipboard* clipboard)
 {
-    NSFileCoordinator* coordinator = nil;
-    __block librdp_status status = LIBRDP_STATUS_IO_ERROR;
-    __block int invoked = 0;
-    NSError* error = nil;
-
-    if (!clipboard || !destination)
+    if (!clipboard || clipboard->remote_file_count == 0u ||
+        !clipboard->file_queue)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    coordinator =
-        [[[NSFileCoordinator alloc] initWithFilePresenter:nil] autorelease];
-    if (!coordinator)
-        return LIBRDP_STATUS_NO_MEMORY;
-    [coordinator
-        coordinateWritingItemAtURL:destination
-                           options:0
-                             error:&error
-                        byAccessor:^(NSURL* coordinated_url) {
-                          invoked = 1;
-                          status = cocoa_clipboard_write_promised_file_contents(
-                              clipboard, index, file_size, coordinated_url);
-                        }];
-    if (!invoked || error)
-        return LIBRDP_STATUS_IO_ERROR;
-    return status;
-}
-
-@implementation CocoaServerFilePromiseDelegate
-- (id)initWithClipboard:(cocoa_server_clipboard*)clipboard
-                   name:(NSString*)name
-                  index:(uint32_t)index
-                   size:(uint64_t)size
-{
-    self = [super init];
-    if (self)
+    pthread_mutex_lock(&clipboard->lock);
+    if (clipboard->file_download_started)
     {
-        _clipboard = clipboard;
-        _name = [name copy];
-        _index = index;
-        _size = size;
+        pthread_mutex_unlock(&clipboard->lock);
+        return LIBRDP_STATUS_OK;
     }
-    return self;
+    clipboard->file_download_started = 1;
+    clipboard->file_download_complete = 0;
+    clipboard->file_download_status = LIBRDP_STATUS_AGAIN;
+    pthread_mutex_unlock(&clipboard->lock);
+    [clipboard->file_queue addOperationWithBlock:^{
+      cocoa_clipboard_materialize_remote_files(clipboard);
+    }];
+    return LIBRDP_STATUS_OK;
 }
-
-- (void)dealloc
-{
-    [_name release];
-    [super dealloc];
-}
-
-- (void)invalidate
-{
-    _clipboard = NULL;
-}
-
-- (NSString*)filePromiseProvider:(NSFilePromiseProvider*)provider
-                 fileNameForType:(NSString*)fileType
-{
-    (void)provider;
-    (void)fileType;
-    return _name;
-}
-
-- (NSOperationQueue*)operationQueueForFilePromiseProvider:
-    (NSFilePromiseProvider*)provider
-{
-    (void)provider;
-    return _clipboard ? _clipboard->promise_queue : nil;
-}
-
-- (void)filePromiseProvider:(NSFilePromiseProvider*)provider
-          writePromiseToURL:(NSURL*)url
-          completionHandler:(void (^)(NSError* error))completionHandler
-{
-    librdp_status status = LIBRDP_STATUS_CANCELLED;
-
-    (void)provider;
-    if (_clipboard)
-    {
-        status =
-            cocoa_clipboard_write_promised_file(_clipboard, _index, _size, url);
-    }
-    completionHandler(
-        status == LIBRDP_STATUS_OK ? nil : cocoa_clipboard_error(status));
-}
-@end
 
 static librdp_status
 cocoa_clipboard_publish_native(cocoa_server_clipboard* clipboard)
 {
     NSMutableArray* objects = nil;
+    NSArray* file_urls = nil;
     NSPasteboardItem* item = nil;
     size_t index = 0u;
     int item_has_data = 0;
+    int download_pending = 0;
 
     if (!clipboard || !clipboard->pasteboard)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     objects = [NSMutableArray array];
     item = [[[NSPasteboardItem alloc] init] autorelease];
-    cocoa_clipboard_reset_promises(clipboard);
     for (index = 0u; index < clipboard->remote_format_count; index++)
     {
         cocoa_clipboard_remote_format* format =
@@ -1033,34 +1067,28 @@ cocoa_clipboard_publish_native(cocoa_server_clipboard* clipboard)
     }
     if (item_has_data)
         [objects addObject:item];
-    for (index = 0u; index < clipboard->remote_file_count; index++)
+    pthread_mutex_lock(&clipboard->lock);
+    file_urls = [clipboard->remote_file_urls copy];
+    download_pending = clipboard->file_download_started &&
+                       clipboard->file_download_status ==
+                           LIBRDP_STATUS_AGAIN;
+    pthread_mutex_unlock(&clipboard->lock);
+    if (file_urls)
+        [objects addObjectsFromArray:file_urls];
+    if ([objects count] == 0u && download_pending)
     {
-        cocoa_clipboard_remote_file* file = &clipboard->remote_files[index];
-        NSString* name = [NSString stringWithUTF8String:file->name];
-        CocoaServerFilePromiseDelegate* delegate = nil;
-        NSFilePromiseProvider* provider = nil;
-
-        if (!name)
-            continue;
-        delegate = [[[CocoaServerFilePromiseDelegate alloc]
-            initWithClipboard:clipboard
-                         name:name
-                        index:file->index
-                         size:file->size] autorelease];
-        provider = [[[NSFilePromiseProvider alloc]
-            initWithFileType:@"public.data"
-                    delegate:delegate] autorelease];
-        if (!delegate || !provider)
-            continue;
-        [clipboard->promise_objects addObject:delegate];
-        [clipboard->promise_objects addObject:provider];
-        [objects addObject:provider];
+        [file_urls release];
+        return LIBRDP_STATUS_AGAIN;
     }
     [clipboard->pasteboard clearContents];
     if ([objects count] > 0u && ![clipboard->pasteboard writeObjects:objects])
+    {
+        [file_urls release];
         return LIBRDP_STATUS_IO_ERROR;
+    }
     clipboard->remote_change_count = [clipboard->pasteboard changeCount];
     clipboard->observed_change_count = clipboard->remote_change_count;
+    [file_urls release];
     return LIBRDP_STATUS_OK;
 }
 
@@ -1098,6 +1126,8 @@ static void cocoa_clipboard_prefetch(cocoa_server_clipboard* clipboard)
         format->state = COCOA_CLIPBOARD_FETCH_FAILED;
     }
     clipboard->prefetch_pending = 0;
+    if (clipboard->remote_file_count > 0u)
+        (void)cocoa_clipboard_start_file_download(clipboard);
     (void)cocoa_clipboard_publish_native(clipboard);
 }
 
@@ -1571,6 +1601,24 @@ cocoa_clipboard_dispatch_file_request(cocoa_server_clipboard* clipboard)
     }
 }
 
+static void
+cocoa_clipboard_publish_completed_download(cocoa_server_clipboard* clipboard)
+{
+    int publish = 0;
+
+    if (!clipboard)
+        return;
+    pthread_mutex_lock(&clipboard->lock);
+    if (clipboard->file_download_complete)
+    {
+        clipboard->file_download_complete = 0;
+        publish = 1;
+    }
+    pthread_mutex_unlock(&clipboard->lock);
+    if (publish)
+        (void)cocoa_clipboard_publish_native(clipboard);
+}
+
 static librdp_status cocoa_clipboard_dispatch(void* opaque,
                                               unsigned int max_events)
 {
@@ -1582,6 +1630,7 @@ static librdp_status cocoa_clipboard_dispatch(void* opaque,
     cocoa_clipboard_drain(clipboard);
     cocoa_clipboard_dispatch_file_request(clipboard);
     cocoa_clipboard_prefetch(clipboard);
+    cocoa_clipboard_publish_completed_download(clipboard);
     [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
                              beforeDate:[NSDate date]];
     change_count = [clipboard->pasteboard changeCount];
@@ -1646,17 +1695,17 @@ cocoa_server_clipboard_create(NSPasteboard* pasteboard)
     clipboard->observed_change_count = -1;
     clipboard->remote_change_count = -1;
     clipboard->pasteboard = [pasteboard retain];
-    clipboard->promise_queue = [[NSOperationQueue alloc] init];
-    clipboard->promise_objects = [[NSMutableArray alloc] init];
+    clipboard->file_queue = [[NSOperationQueue alloc] init];
+    clipboard->remote_file_urls = [[NSMutableArray alloc] init];
     clipboard->local_files = server_clipboard_files_new();
-    if (clipboard->promise_queue)
+    if (clipboard->file_queue)
     {
-        [clipboard->promise_queue setMaxConcurrentOperationCount:1];
-        [clipboard->promise_queue
+        [clipboard->file_queue setMaxConcurrentOperationCount:1];
+        [clipboard->file_queue
             setQualityOfService:NSQualityOfServiceUtility];
     }
-    if (!clipboard->pasteboard || !clipboard->promise_queue ||
-        !clipboard->promise_objects || !clipboard->local_files ||
+    if (!clipboard->pasteboard || !clipboard->file_queue ||
+        !clipboard->remote_file_urls || !clipboard->local_files ||
         pthread_mutex_init(&clipboard->lock, NULL) != 0)
     {
         cocoa_server_clipboard_free(clipboard);
@@ -1724,8 +1773,9 @@ void cocoa_server_clipboard_free(cocoa_server_clipboard* clipboard)
         pthread_cond_destroy(&clipboard->condition);
     if (clipboard->lock_ready)
         pthread_mutex_destroy(&clipboard->lock);
-    [clipboard->promise_objects release];
-    [clipboard->promise_queue release];
+    [clipboard->remote_file_directory release];
+    [clipboard->remote_file_urls release];
+    [clipboard->file_queue release];
     [clipboard->pasteboard release];
     memset(clipboard, 0, sizeof(*clipboard));
     free(clipboard);

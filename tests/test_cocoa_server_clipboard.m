@@ -5,8 +5,8 @@
 /*
  * Module: deterministic Cocoa server clipboard adapter tests.
  * Coverage: isolated pasteboard discovery, text/HTML/PNG conversion, local
- * file metadata and range reads, remote ownership, feedback suppression and
- * pending-request cancellation.
+ * file metadata and range reads, remote file materialization, ownership,
+ * feedback suppression and pending-request cancellation.
  * Bug classes: global clipboard mutation, format confusion, unbounded native
  * data, stale request correlation, ownership loops and file lifetime errors.
  * Determinism: a process-scoped named pasteboard and temporary regular file
@@ -421,6 +421,125 @@ static int test_remote_content(cocoa_server_clipboard* clipboard,
     return 1;
 }
 
+static int test_remote_file_transfer(cocoa_server_clipboard* clipboard,
+                                     NSPasteboard* pasteboard,
+                                     test_clipboard_state* state)
+{
+    static const uint8_t contents[] = {
+        (uint8_t)'r', (uint8_t)'e', (uint8_t)'m',
+        (uint8_t)'o', (uint8_t)'t', (uint8_t)'e',
+    };
+    const server_platform_clipboard_format file_format = {
+        LIBRDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW,
+        "text/uri-list",
+    };
+    server_platform_clipboard_offer offer;
+    server_platform_clipboard_data response;
+    librdp_clipboard_file_metadata metadata;
+    uint8_t* encoded = NULL;
+    size_t encoded_len = 0u;
+    size_t handled_requests = 0u;
+    unsigned int attempt = 0u;
+    NSArray* urls = nil;
+    NSData* downloaded = nil;
+
+    CHECK(clipboard != NULL && pasteboard != nil && state != NULL);
+    CHECK(librdp_clipboard_file_metadata_init(&metadata) ==
+          LIBRDP_STATUS_OK);
+    metadata.name = "remote.bin";
+    metadata.file_size = sizeof(contents);
+    CHECK(librdp_clipboard_file_group_encode(
+              &metadata, 1u, NULL, 0u, &encoded_len) == LIBRDP_STATUS_OK);
+    encoded = (uint8_t*)malloc(encoded_len);
+    CHECK(encoded != NULL);
+    CHECK(librdp_clipboard_file_group_encode(&metadata,
+                                             1u,
+                                             encoded,
+                                             encoded_len,
+                                             &encoded_len) ==
+          LIBRDP_STATUS_OK);
+
+    memset(&offer, 0, sizeof(offer));
+    offer.peer_id = 31u;
+    offer.generation = 5u;
+    offer.ownership_generation = 9u;
+    offer.formats = &file_format;
+    offer.format_count = 1u;
+    state->request_events = 0u;
+    state->file_request_events = 0u;
+    CHECK(cocoa_server_clipboard_vtable.publish_formats(clipboard, &offer) ==
+          LIBRDP_STATUS_OK);
+    CHECK(test_dispatch(clipboard));
+    CHECK(state->request_events == 1u);
+
+    memset(&response, 0, sizeof(response));
+    response.peer_id = offer.peer_id;
+    response.generation = offer.generation;
+    response.ownership_generation = offer.ownership_generation;
+    response.request_id = state->request.request_id;
+    response.format_id = state->request.format_id;
+    response.status = LIBRDP_STATUS_OK;
+    response.data = encoded;
+    response.data_len = encoded_len;
+    response.final_chunk = 1;
+    CHECK(cocoa_server_clipboard_vtable.write_data(clipboard, &response) ==
+          LIBRDP_STATUS_OK);
+
+    for (attempt = 0u; attempt < 300u; attempt++)
+    {
+        CHECK(test_dispatch(clipboard));
+        if (state->file_request_events > handled_requests)
+        {
+            const server_platform_clipboard_file_request* request =
+                &state->file_request;
+            size_t offset = 0u;
+            size_t remaining = 0u;
+            size_t chunk = 0u;
+
+            CHECK(request->position < sizeof(contents));
+            offset = (size_t)request->position;
+            remaining = sizeof(contents) - offset;
+            chunk = request->requested_bytes < remaining
+                        ? request->requested_bytes
+                        : remaining;
+
+            CHECK(request->peer_id == offer.peer_id);
+            CHECK(request->generation == offer.generation);
+            CHECK(request->ownership_generation ==
+                  offer.ownership_generation);
+            CHECK(chunk > 0u);
+            memset(&response, 0, sizeof(response));
+            response.peer_id = request->peer_id;
+            response.generation = request->generation;
+            response.ownership_generation =
+                request->ownership_generation;
+            response.request_id = request->request_id;
+            response.stream_id = request->stream_id;
+            response.status = LIBRDP_STATUS_OK;
+            response.data = contents + offset;
+            response.data_len = chunk;
+            response.final_chunk = 1;
+            CHECK(cocoa_server_clipboard_vtable.write_data(
+                      clipboard, &response) == LIBRDP_STATUS_OK);
+            handled_requests = state->file_request_events;
+        }
+        urls = [pasteboard
+            readObjectsForClasses:@[ [NSURL class] ]
+                          options:@{
+                              NSPasteboardURLReadingFileURLsOnlyKey : @YES
+                          }];
+        if ([urls count] == 1u)
+            break;
+        usleep(10000u);
+    }
+    CHECK([urls count] == 1u);
+    downloaded = [NSData dataWithContentsOfURL:[urls objectAtIndex:0]];
+    CHECK(downloaded != nil && [downloaded length] == sizeof(contents));
+    CHECK(memcmp([downloaded bytes], contents, sizeof(contents)) == 0);
+    free(encoded);
+    return 1;
+}
+
 int main(void)
 {
     const uint8_t file_data[] = {
@@ -474,6 +593,9 @@ int main(void)
                                       file_data,
                                       sizeof(file_data)));
         MAIN_CHECK(test_remote_content(clipboard, pasteboard, &state));
+        MAIN_CHECK(test_remote_file_transfer(clipboard,
+                                             pasteboard,
+                                             &state));
         ok = 1;
 
     cleanup_pool:
