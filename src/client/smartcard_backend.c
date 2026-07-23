@@ -169,6 +169,17 @@ static int rdp_smartcard_mock_wait(uint32_t delay_ms,
     }
 }
 
+/*
+ * Hold a mock connect operation until the timeout path requests cancellation.
+ * This gives timeout/drain tests a scheduling-independent provider boundary.
+ */
+static void rdp_smartcard_mock_wait_for_cancel(const atomic_uint* cancelled)
+{
+    while (cancelled &&
+           atomic_load_explicit(cancelled, memory_order_acquire) == 0u)
+        rdp_smartcard_sleep_ms(1u);
+}
+
 static void rdp_smartcard_timespec_after_ms(struct timespec* out, uint32_t timeout_ms)
 {
     long add_ns = 0;
@@ -1221,6 +1232,8 @@ static LONG rdp_smartcard_mock_connect(void* user_data,
         *handle = mock->next_handle ? mock->next_handle : (SCARDHANDLE)2u;
         *active_protocol = mock->next_protocol;
     }
+    if (mock->wait_for_connect_cancel)
+        rdp_smartcard_mock_wait_for_cancel(&mock->cancelled);
     if (rdp_smartcard_mock_wait(mock->hang_connect_ms,
                                 &mock->cancelled,
                                 mock->ignore_connect_cancel))

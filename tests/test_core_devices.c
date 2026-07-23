@@ -153,6 +153,7 @@ int test_worker_backend_stalls(void)
     rdp_smartcard_backend_set_timeout(&session->smartcard_backend, 25u);
     smartcard_mock.hang_connect_ms = 250u;
     smartcard_mock.ignore_connect_cancel = 1;
+    smartcard_mock.wait_for_connect_cancel = 1;
     WORKER_CHECK(rdp_smartcard_backend_connect(
                      &session->smartcard_backend,
                      smartcard_mock.next_context,
@@ -358,6 +359,7 @@ static int test_smartcard_backend_mock(void)
     atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
     disconnect_calls = atomic_load_explicit(&mock.disconnect_calls, memory_order_relaxed);
     mock.ignore_connect_cancel = 1;
+    mock.wait_for_connect_cancel = 1;
     mock.hang_connect_ms = 100u;
     handle = 0;
     active_protocol = 0;
