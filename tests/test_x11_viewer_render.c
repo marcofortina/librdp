@@ -31,6 +31,7 @@
 #define TEST_RENDER_PIXELS \
     ((size_t)TEST_RENDER_WIDTH * TEST_RENDER_HEIGHT)
 #define TEST_RENDER_BYTES (TEST_RENDER_PIXELS * 4u)
+#define TEST_XVFB_START_TIMEOUT_MS 10000
 
 static int check_int(int condition, const char* expression, int line)
 {
@@ -350,7 +351,9 @@ static int test_start_xvfb(int disable_xshm,
     while (used + 1u < sizeof(display_number))
     {
         ssize_t count = 0;
-        int ready = poll(&descriptor, 1u, 1000);
+        int ready = poll(&descriptor,
+                         1u,
+                         TEST_XVFB_START_TIMEOUT_MS);
 
         if (ready < 0 && errno == EINTR)
             continue;
