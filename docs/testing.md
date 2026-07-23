@@ -76,6 +76,50 @@ Backend-facing protocol code should be tested with controlled inputs rather than
 
 For file-like and device-like behavior, prefer temporary in-memory packet models or temporary files created by the test process. Do not depend on specific local hardware.
 
+## Client and server integration checks
+
+The test build registers deterministic client/server checks for Standard
+RDP Security, TLS, NLA, graphics, input, channels, redirection, cancellation,
+and reconnect behavior. They use loopback transports and controlled providers,
+so they are included in an ordinary CTest run and require no external server.
+
+Run the smoke groups alone with:
+
+```sh
+ctest --test-dir build -R '^(smoke_|server_client_smoke_)' --output-on-failure
+```
+
+Tests that require a host service or device use CTest's skipped result when the
+required environment is absent. A skip is not reported as a successful live
+backend test.
+
+## Remote interoperability harness
+
+`interop_smoke` is an opt-in public API test against an RDP endpoint. It is
+skipped unless `LIBRDP_INTEROP_TARGET`, `LIBRDP_INTEROP_USER`, and
+`LIBRDP_INTEROP_PASSWORD` are set. Optional variables select the port, domain,
+security mode, desktop dimensions, run time, requested features, and JSON
+report path.
+
+```sh
+LIBRDP_INTEROP_TARGET=rdp.example.test \
+LIBRDP_INTEROP_USER=test-user \
+LIBRDP_INTEROP_PASSWORD="$RDP_TEST_PASSWORD" \
+LIBRDP_INTEROP_SECURITY=nla \
+LIBRDP_INTEROP_REPORT=/tmp/librdp-interop.json \
+ctest --test-dir build -R '^interop_smoke$' --output-on-failure
+```
+
+`LIBRDP_INTEROP_FEATURES` accepts a comma-separated selection of
+`audio-output`, `audio-input`, `video`, `camera`, `smartcard`, `usb`, `pnp`,
+`webauthn`, `rail`, `cr2`, `echo`, `telemetry`, and `multitransport`. Some
+features require their corresponding `LIBRDP_INTEROP_*` provider variable.
+Unknown feature names fail the test instead of silently reducing coverage.
+
+The report excludes credentials and protocol payloads. Treat the environment
+and process table as sensitive while a live interoperability test is running,
+and remove temporary reports when they are no longer needed.
+
 ## Sanitizers
 
 When using Clang or GCC, configure a separate build directory with the desired sanitizer flags through `CFLAGS` and `LDFLAGS`. Keep sanitizer output outside the source tree.
